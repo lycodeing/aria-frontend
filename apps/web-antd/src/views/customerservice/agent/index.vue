@@ -1,5 +1,10 @@
 <script lang="ts" setup>
-import { computed, ref } from 'vue';
+import type {
+  SessionQueueItem as ApiSessionItem,
+  WsChatMessage,
+} from '#/api/session';
+
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -12,7 +17,6 @@ import {
   Card,
   Descriptions,
   DescriptionsItem,
-  Divider,
   message,
   Modal,
   Progress,
@@ -22,6 +26,49 @@ import {
   Tag,
   Textarea,
 } from 'ant-design-vue';
+
+import { rawRequestClient } from '#/api/request';
+import {
+  acceptSessionApi,
+  closeSessionApi,
+  connectAgentWs,
+  getActiveSessionsApi,
+  getSessionQueueApi,
+  sendWsMessage,
+  subscribeSessionEvents,
+} from '#/api/session';
+
+// ===== 座席 WebSocket 连接管理（每个接入会话一条 WS）=====
+const agentWsMap = new Map<string, WebSocket>();
+
+function connectAgentSession(sessionId: string) {
+  if (agentWsMap.has(sessionId)) return; // 已连接
+  const ws = connectAgentWs(sessionId, (msg: WsChatMessage) => {
+    if (msg.type === 'MESSAGE' && msg.role === 'user') {
+      // 访客发来的新消息 → 推到对应 session 的 msgs
+      const session = sessions.value.find((s) => s.id === sessionId);
+      if (session) {
+        session.msgs.push({
+          id: ++msgId,
+          role: 'user',
+          text: msg.content ?? '',
+        });
+        if (session.active) {
+          nextTick(() => {
+            const el = document.querySelector('[data-msgs-end]');
+            (el as HTMLElement)?.scrollIntoView({ behavior: 'smooth' });
+          });
+        }
+      }
+    }
+  });
+  agentWsMap.set(sessionId, ws);
+}
+
+function disconnectAgentSession(sessionId: string) {
+  agentWsMap.get(sessionId)?.close();
+  agentWsMap.delete(sessionId);
+}
 
 // ===== 座席状态 =====
 const agentOnline = ref(true);
@@ -46,129 +93,42 @@ interface SessionData {
   transferReason: string;
   msgs: Msg[];
   userInfo: { label: string; value: string; vip?: boolean }[];
-  slots: { done: boolean; key: string; value: null | string; }[];
-  chunks: { preview: string; score: number; title: string; }[];
+  slots: { done: boolean; key: string; value: null | string }[];
+  chunks: { preview: string; score: number; title: string }[];
   memory: string;
 }
 
-const sessions = ref<SessionData[]>([
-  {
-    id: 's1',
-    name: '陈小玲',
-    nameChar: '陈',
-    color: '#8b5cf6',
-    min: '8 分钟',
-    active: true,
-    sessionCode: '#sess_cxl001',
-    transferReason: 'AI 置信度低（0.52 < 0.7），关键词：投诉、损坏',
-    msgs: [
-      { id: 1, role: 'ai', text: '您好！请问有什么可以帮您？' },
-      {
-        id: 2,
-        role: 'user',
-        text: '我上周买的东西今天到了，包装严重破损，里面的产品也坏了，我要投诉！',
-      },
-      {
-        id: 3,
-        role: 'ai',
-        text: '非常抱歉给您带来不便，请问您的订单号是多少？',
-      },
-      { id: 4, role: 'user', text: '订单号 202606250078，我要投诉快递公司！' },
-    ],
-    userInfo: [
-      { label: '姓名', value: '陈小玲' },
-      { label: '等级', value: 'VIP 用户', vip: true },
-      { label: '注册时长', value: '2 年 3 月' },
-      { label: '历史工单', value: '4 次' },
-    ],
-    slots: [
-      { key: '订单号', value: '202606250078', done: true },
-      { key: '问题类型', value: '物流损坏', done: true },
-      { key: '处理方式', value: null, done: false },
-    ],
-    chunks: [
-      {
-        title: '退款政策说明 › 物流破损',
-        score: 0.87,
-        preview: '物流损坏商品可申请免费补发或全额退款，需提供破损照片...',
-      },
-      {
-        title: 'FAQ › 快递投诉流程',
-        score: 0.79,
-        preview: '向快递公司提交投诉后，平台会跟进处理结果，通常 3 个工作日...',
-      },
-    ],
-    memory:
-      '用户 2026-04 曾咨询退款流程，最终 AI 自助解决。偏好简洁回答，不喜欢冗长说明。',
-  },
-  {
-    id: 's2',
-    name: '刘明辉',
-    nameChar: '刘',
-    color: '#14b8a6',
-    min: '12 分钟',
-    active: false,
-    sessionCode: '#sess_lmh002',
-    transferReason: '用户主动请求转人工',
-    msgs: [
-      { id: 1, role: 'ai', text: '您好！请问有什么可以帮您？' },
-      { id: 2, role: 'user', text: '我想查询一下最新的套餐价格' },
-      { id: 3, role: 'ai', text: '标准版 ¥299/月，企业版 ¥999/月。' },
-    ],
-    userInfo: [
-      { label: '姓名', value: '刘明辉' },
-      { label: '等级', value: '普通用户' },
-      { label: '注册时长', value: '6 个月' },
-      { label: '历史工单', value: '1 次' },
-    ],
-    slots: [{ key: '咨询类型', value: '价格查询', done: true }],
-    chunks: [
-      {
-        title: '产品手册 › 定价说明',
-        score: 0.92,
-        preview: '标准版月费 ¥299，包含 5 用户席位和 10 万次 API 调用...',
-      },
-    ],
-    memory: '新用户，首次咨询，偏好文字回答。',
-  },
-  {
-    id: 's3',
-    name: '赵小强',
-    nameChar: '赵',
-    color: '#ec4899',
-    min: '5 分钟',
-    active: false,
-    sessionCode: '#sess_zxq003',
-    transferReason: 'AI 置信度低（0.61）',
-    msgs: [
-      { id: 1, role: 'ai', text: '您好！请问有什么可以帮您？' },
-      { id: 2, role: 'user', text: '我的账号被锁定了，无法登录' },
-      { id: 3, role: 'ai', text: '请告知注册手机号，我来帮您核实。' },
-    ],
-    userInfo: [
-      { label: '姓名', value: '赵小强' },
-      { label: '等级', value: '普通用户' },
-      { label: '注册时长', value: '1 年' },
-      { label: '历史工单', value: '2 次' },
-    ],
-    slots: [
-      { key: '问题类型', value: '账号锁定', done: true },
-      { key: '手机号', value: null, done: false },
-    ],
-    chunks: [
-      {
-        title: 'FAQ › 账号安全',
-        score: 0.88,
-        preview: '账号被锁定通常因连续输错密码，可通过手机验证码解锁...',
-      },
-    ],
-    memory: '无历史记忆。',
-  },
-]);
+const sessions = ref<SessionData[]>([]);
 
 // ===== Bug-001 修复：activeSession 计算属性，切换会话时自动更新右侧面板 =====
 const activeSession = computed(() => sessions.value.find((s) => s.active));
 const concurrent = computed(() => sessions.value.length);
+
+// ===== 队列状态 Tab =====
+const queueStateTab = ref<'active' | 'waiting'>('waiting');
+const queueStateTabs = [
+  { key: 'waiting', label: '等待人工', icon: 'lucide:clock' },
+  { key: 'active', label: '人工接待中', icon: 'lucide:headphones' },
+];
+
+// ===== 对话区消息筛选 =====
+const MSG_FILTER_OPTIONS = [
+  { key: '全部', label: '全部' },
+  { key: 'ai', label: 'AI 对话' },
+  { key: 'agent', label: '人工回复' },
+];
+const msgFilter = ref('全部');
+
+const filteredMsgs = computed(() => {
+  if (!activeSession.value) return [];
+  const msgs = activeSession.value.msgs;
+  if (msgFilter.value === '全部') return msgs;
+  if (msgFilter.value === 'ai')
+    return msgs.filter((m) => m.role === 'ai' || m.role === 'user');
+  if (msgFilter.value === 'agent')
+    return msgs.filter((m) => m.role === 'agent' || m.role === 'user');
+  return msgs;
+});
 
 // ===== 等待队列 =====
 interface QueueItem {
@@ -180,26 +140,50 @@ interface QueueItem {
   tag: string;
   tagColor: string;
 }
-const queue = ref<QueueItem[]>([
-  {
-    id: 'q1',
-    name: '李小花',
-    color: '#f87171',
-    waitMin: '4:23',
-    reason: 'AI 置信度低，转接原因：投诉处理',
-    tag: '投诉',
-    tagColor: 'red',
+const queue = ref<QueueItem[]>([]);
+
+// ===== 等待队列分页（每页 5 条，必须在 queue 声明后）=====
+const QUEUE_PAGE_SIZE = 5;
+const queuePage = ref(1);
+const queueTotalPages = computed(() =>
+  Math.max(1, Math.ceil(queue.value.length / QUEUE_PAGE_SIZE)),
+);
+const pagedQueue = computed(() => {
+  const start = (queuePage.value - 1) * QUEUE_PAGE_SIZE;
+  return queue.value.slice(start, start + QUEUE_PAGE_SIZE);
+});
+watch(
+  () => queue.value.length,
+  () => {
+    queuePage.value = 1;
   },
-  {
-    id: 'q2',
-    name: '张大卫',
-    color: '#60a5fa',
-    waitMin: '1:08',
-    reason: '用户主动请求转人工',
-    tag: '退款',
-    tagColor: 'orange',
-  },
-]);
+);
+
+// ===== 从 API 加载等待队列 =====
+async function loadQueue() {
+  try {
+    const items = await getSessionQueueApi();
+    queue.value = items.map((item: ApiSessionItem) => ({
+      id: item.sessionId,
+      name: item.userName,
+      color: '#f87171',
+      waitMin: formatWaitTime(item.waitSince),
+      reason: item.transferReason,
+      tag: item.tag,
+      tagColor:
+        item.tag === '投诉' ? 'red' : item.tag === '退款' ? 'orange' : 'blue',
+    }));
+  } catch {
+    // 加载失败时保持空队列
+  }
+}
+
+function formatWaitTime(waitSince: number): string {
+  const sec = Math.max(0, Math.floor(Date.now() / 1000 - waitSince));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 
 let msgId = 100;
 const msgInput = ref('');
@@ -214,11 +198,13 @@ const QUICK_REPLY = [
 // ===== Bug-002 修复：转交 Modal =====
 const transferVisible = ref(false);
 const transferTarget = ref('');
-const availableAgents = [
-  { id: 'a1', name: '李明', status: '空闲', sessions: 2 },
-  { id: 'a2', name: '王芳', status: '空闲', sessions: 1 },
-  { id: 'a3', name: '张强', status: '忙碌', sessions: 4 },
-];
+const availableAgents: {
+  id: string;
+  name: string;
+  sessions: number;
+  status: string;
+}[] = [];
+// TODO: 后续接入座席列表 API，从后端获取在线座席
 
 function confirmTransfer() {
   if (!transferTarget.value) {
@@ -237,51 +223,80 @@ function confirmTransfer() {
 function switchSession(s: SessionData) {
   sessions.value.forEach((x) => (x.active = false));
   s.active = true;
+  msgFilter.value = '全部'; // 切换会话时重置消息筛选
 }
 
-function acceptQueue(item: QueueItem) {
+async function acceptQueue(item: QueueItem) {
   if (concurrent.value >= MAX_CONCURRENT) {
     message.warning('已达最大并发数（5），请先结束其他会话');
     return;
   }
-  queue.value = queue.value.filter((q) => q.id !== item.id);
-  sessions.value.push({
-    id: item.id,
-    name: item.name,
-    nameChar: item.name[0]!,
-    color: item.color,
-    min: '刚接入',
-    active: false,
-    sessionCode: `#sess_${item.id}`,
-    transferReason: item.reason,
-    msgs: [{ id: ++msgId, role: 'ai', text: '您好！请问有什么可以帮您？' }],
-    userInfo: [{ label: '姓名', value: item.name }],
-    slots: [],
-    chunks: [],
-    memory: '无历史记忆。',
-  });
-  message.success(`已接入会话：${item.name}`);
+  try {
+    await acceptSessionApi(item.id);
+    queue.value = queue.value.filter((q) => q.id !== item.id);
+    const history = (await rawRequestClient.get(
+      `/chat-api/chat/history?sessionId=${item.id}`,
+    )) as Array<{ content: string; role: string }>;
+    const loadedMsgs: Msg[] = (history ?? []).map((h, i) => ({
+      id: i + 1,
+      role: (h.role === 'user' ? 'user' : 'ai') as 'agent' | 'ai' | 'user',
+      text: h.content,
+    }));
+    sessions.value.forEach((s) => (s.active = false));
+    sessions.value.push({
+      id: item.id,
+      name: item.name,
+      nameChar: item.name.at(0) ?? '',
+      color: item.color,
+      min: '刚接入',
+      active: true,
+      sessionCode: `#${item.id}`,
+      transferReason: item.reason,
+      msgs:
+        loadedMsgs.length > 0
+          ? loadedMsgs
+          : [{ id: ++msgId, role: 'ai', text: '您好！请问有什么可以帮您？' }],
+      userInfo: [{ label: '姓名', value: item.name }],
+      slots: [],
+      chunks: [],
+      memory: '无历史记忆。',
+    });
+    // 建立座席 WebSocket 连接，实时接收访客消息
+    connectAgentSession(item.id);
+    // 接入后自动切换到"人工接待中" Tab
+    queueStateTab.value = 'active';
+    message.success(`已接入会话：${item.name}`);
+  } catch {
+    message.error('接入失败，请重试');
+  }
 }
 
 function sendAgent() {
   const text = msgInput.value.trim();
   if (!text || !activeSession.value) return;
+  const sid = activeSession.value.id;
+  const ws = agentWsMap.get(sid);
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    message.warning('WebSocket 未连接，请重新接入会话');
+    return;
+  }
+  sendWsMessage(ws, text);
   activeSession.value.msgs.push({ id: ++msgId, role: 'agent', text });
   msgInput.value = '';
-  setTimeout(() => {
-    activeSession.value?.msgs.push({
-      id: ++msgId,
-      role: 'user',
-      text: '好的，谢谢！请尽快处理，我等补发通知。',
-    });
-  }, 1500);
 }
 
-function doCloseSession() {
+async function doCloseSession() {
   const sid = activeSession.value?.id;
   if (!sid) return;
+  try {
+    await closeSessionApi(sid);
+  } catch {
+    /* 忽略关闭失败，本地状态仍清理 */
+  }
+  disconnectAgentSession(sid); // 断开 WebSocket
   sessions.value = sessions.value.filter((s) => s.id !== sid);
-  if (sessions.value.length > 0) sessions.value[0]!.active = true;
+  if (sessions.value.length > 0 && sessions.value[0])
+    sessions.value[0].active = true;
   message.success('会话已结束，正在生成长期记忆摘要...');
 }
 
@@ -298,13 +313,129 @@ function handleEnter(e: KeyboardEvent) {
     sendAgent();
   }
 }
+
+// ===== 生命周期：加载队列 + 订阅 SSE =====
+let eventSource: EventSource | null = null;
+const sseConnected = ref(false); // SSE 连接状态（绿=在线，灰=断线）
+
+onMounted(async () => {
+  // 1. 加载等待队列
+  await loadQueue();
+
+  // 2. 恢复刷新前已接入的 ACTIVE 会话（防止刷新丢失）
+  try {
+    const activeSessions = await getActiveSessionsApi();
+    for (const item of activeSessions) {
+      const history = (await rawRequestClient.get(
+        `/chat-api/chat/history?sessionId=${item.sessionId}`,
+      )) as Array<{ content: string; role: string }>;
+      const loadedMsgs: Msg[] = (history ?? []).map((h, i) => ({
+        id: i + 1,
+        role: (h.role === 'user' ? 'user' : 'ai') as 'agent' | 'ai' | 'user',
+        text: h.content,
+      }));
+      sessions.value.push({
+        id: item.sessionId,
+        name: item.userName,
+        nameChar: item.userName.at(0) ?? '',
+        color: '#8b5cf6',
+        min: formatWaitTime(item.waitSince),
+        active: false,
+        sessionCode: `#${item.sessionId}`,
+        transferReason: item.transferReason,
+        msgs:
+          loadedMsgs.length > 0
+            ? loadedMsgs
+            : [{ id: 1, role: 'ai', text: '您好！请问有什么可以帮您？' }],
+        userInfo: [{ label: '姓名', value: item.userName }],
+        slots: [],
+        chunks: [],
+        memory: '无历史记忆。',
+      });
+    }
+    // 默认激活第一个恢复的会话，并重建 WebSocket 连接
+    if (sessions.value.length > 0) {
+      if (sessions.value[0]) sessions.value[0].active = true;
+      // 刷新后恢复所有 ACTIVE 会话的 WebSocket 连接
+      for (const item of activeSessions) {
+        connectAgentSession(item.sessionId);
+      }
+    }
+  } catch {
+    /* 恢复失败不影响主流程 */
+  }
+
+  // 3. 订阅 SSE 实时事件
+  eventSource = subscribeSessionEvents(
+    (event) => {
+      sseConnected.value = true; // 收到消息即确认连接正常
+      const sid = event.item?.sessionId;
+      if (!sid) return;
+
+      if (event.type === 'ENQUEUE') {
+        if (!queue.value.some((q) => q.id === sid)) {
+          queue.value.push({
+            id: sid,
+            name: event.item.userName,
+            color: '#f87171',
+            waitMin: '刚进入',
+            reason: event.item.transferReason,
+            tag: event.item.tag,
+            tagColor:
+              event.item.tag === '投诉'
+                ? 'red'
+                : event.item.tag === '退款'
+                  ? 'orange'
+                  : 'blue',
+          });
+          message.info(`新会话请求：${event.item.userName}`);
+        }
+      } else if (event.type === 'ACCEPTED') {
+        queue.value = queue.value.filter((q) => q.id !== sid);
+      } else if (event.type === 'CLOSED') {
+        queue.value = queue.value.filter((q) => q.id !== sid);
+        const closedIdx = sessions.value.findIndex((s) => s.id === sid);
+        if (closedIdx !== -1) {
+          disconnectAgentSession(sid);
+          sessions.value.splice(closedIdx, 1);
+          if (
+            sessions.value.length > 0 &&
+            !sessions.value.some((s) => s.active) &&
+            sessions.value[0]
+          ) {
+            sessions.value[0].active = true;
+          }
+          message.warning(`会话 ${event.item.userName} 已被关闭`);
+        }
+      }
+    },
+    () => {
+      sseConnected.value = false;
+    }, // onerror
+    () => {
+      sseConnected.value = true;
+    }, // onopen
+  );
+});
+
+onUnmounted(() => {
+  eventSource?.close();
+  // 关闭所有座席 WebSocket 连接
+  agentWsMap.forEach((ws) => ws.close());
+  agentWsMap.clear();
+});
 </script>
 
 <template>
   <Page title="座席工作台" description="实时接待转接会话，查看 AI 对话上下文">
-    <div class="flex gap-4" style="height: calc(100vh - 160px)">
+    <!--
+      h-full   → 填满 Page 的 flex-1 内容区，不依赖 100vh 计算
+      min-h-0  → 关键！flex 子项默认 min-height:auto 会撑开父容器触发滚动，必须归零
+      overflow-hidden → 防止任何子节点溢出触发父级滚动条
+    -->
+    <div class="flex h-full min-h-0 gap-4 overflow-hidden">
       <!-- 左栏：状态 + 队列 + 处理中 -->
-      <div class="flex w-56 shrink-0 flex-col gap-3">
+      <div class="flex w-56 min-h-0 shrink-0 flex-col gap-3">
         <!-- 座席状态 -->
         <Card
           :bordered="false"
@@ -339,91 +470,195 @@ function handleEnter(e: KeyboardEvent) {
         >
           <template #title>
             <div class="flex items-center gap-2">
-              <span class="text-sm font-semibold">等待队列</span>
-              <Badge :count="queue.length" color="red" />
+              <span class="text-sm font-semibold">会话队列</span>
+              <!-- count=0 时不显示徽标，有队列时显示橙红色数字 -->
+              <Badge :count="queue.length" :overflow-count="99" />
+              <!-- SSE 连接状态点：绿=在线，灰=断线 -->
+              <Badge
+                :status="sseConnected ? 'processing' : 'default'"
+                :title="sseConnected ? 'SSE 实时连接正常' : 'SSE 连接断开'"
+              />
             </div>
           </template>
-          <div v-if="queue.length" class="space-y-2">
-            <div
-              v-for="item in queue"
-              :key="item.id"
-              class="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3"
+
+          <!-- 状态 Tab：等待人工 / 人工接待中 -->
+          <div class="mb-2 flex rounded-lg bg-gray-100 p-0.5">
+            <span
+              v-for="tab in queueStateTabs"
+              :key="tab.key"
+              class="flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md py-1 text-xs transition"
+              :style="
+                queueStateTab === tab.key
+                  ? 'background:#fff;color:#4f46e5;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,0.1)'
+                  : 'color:#6b7280'
+              "
+              @click="queueStateTab = tab.key as 'waiting' | 'active'"
             >
-              <div class="flex items-center gap-2">
-                <Avatar :size="28" :style="{ backgroundColor: item.color }">
-{{
-                  item.name[0]
-                }}
-</Avatar>
-                <div class="min-w-0 flex-1">
-                  <p class="text-xs font-medium text-gray-700">
-                    {{ item.name }}
-                  </p>
-                  <p class="text-xs text-amber-600">等待 {{ item.waitMin }}</p>
-                </div>
-                <Tag :color="item.tagColor" class="shrink-0 text-xs">
-{{
-                  item.tag
-                }}
-</Tag>
-              </div>
-              <p class="truncate text-xs text-gray-500">{{ item.reason }}</p>
-              <Button
-                type="primary"
-                size="small"
-                block
-                @click="acceptQueue(item)"
+              <Icon :icon="tab.icon" class="text-xs" />
+              {{ tab.label }}
+              <span
+                v-if="tab.key === 'waiting' && queue.length"
+                class="ml-0.5 rounded-full bg-red-500 px-1 text-white"
+                style="font-size: 10px; line-height: 16px"
+                >{{ queue.length }}</span>
+              <span
+                v-if="tab.key === 'active' && sessions.length"
+                class="ml-0.5 rounded-full bg-indigo-500 px-1 text-white"
+                style="font-size: 10px; line-height: 16px"
+                >{{ sessions.length }}</span>
+            </span>
+          </div>
+
+          <!-- 等待人工 Tab -->
+          <template v-if="queueStateTab === 'waiting'">
+            <div v-if="queue.length" class="space-y-2">
+              <div
+                v-for="item in pagedQueue"
+                :key="item.id"
+                class="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3"
               >
-                <template #icon>
-<Icon
-                    icon="ant-design:customer-service-outlined"
-/>
-</template>接入会话
-              </Button>
-            </div>
-          </div>
-          <a-empty v-else description="暂无等待" :image="null" class="py-4" />
-
-          <Divider class="my-3 text-xs text-gray-400">处理中</Divider>
-
-          <!-- Bug-001 修复：点击后 activeSession 联动右侧面板 -->
-          <div class="space-y-2">
-            <div
-              v-for="s in sessions"
-              :key="s.id"
-              class="cursor-pointer rounded-xl border p-2.5 transition" :class="[
-                s.active
-                  ? 'border-indigo-300 bg-indigo-50'
-                  : 'border-gray-100 bg-white hover:border-gray-200',
-              ]"
-              @click="switchSession(s)"
-            >
-              <div class="flex items-center gap-2">
-                <Avatar :size="26" :style="{ backgroundColor: s.color }">
-{{
-                  s.nameChar
-                }}
-</Avatar>
-                <div class="min-w-0 flex-1">
-                  <p class="text-xs font-medium text-gray-700">{{ s.name }}</p>
-                  <p
-                    class="text-xs" :class="[
-                      s.active
-                        ? 'font-medium text-indigo-600'
-                        : 'text-gray-400',
-                    ]"
-                  >
-                    {{ s.active ? '当前会话' : s.min }}
-                  </p>
+                <div class="flex items-center gap-2">
+                  <Avatar :size="28" :style="{ backgroundColor: item.color }">
+                    {{ item.name[0] }}
+                  </Avatar>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs font-medium text-gray-700">
+                      {{ item.name }}
+                    </p>
+                    <p class="text-xs text-amber-600">
+                      等待 {{ item.waitMin }}
+                    </p>
+                  </div>
+                  <Tag :color="item.tagColor" class="shrink-0 text-xs">
+                    {{ item.tag }}
+                  </Tag>
                 </div>
-                <span
-                  class="h-2 w-2 rounded-full" :class="[
-                    s.active ? 'bg-emerald-500' : 'bg-gray-300',
-                  ]"
-                ></span>
+                <p class="truncate text-xs text-gray-500">{{ item.reason }}</p>
+                <Button
+                  type="primary"
+                  size="small"
+                  block
+                  @click="acceptQueue(item)"
+                >
+                  <template #icon>
+                    <Icon
+                      icon="ant-design:customer-service-outlined"
+                    />
+</template>接入会话
+                </Button>
+              </div>
+
+              <!-- 分页控件 -->
+              <div
+                v-if="queueTotalPages > 1"
+                class="flex items-center justify-between pt-1"
+              >
+                <button
+                  class="rounded px-2 py-0.5 text-xs transition"
+                  :class="
+                    queuePage <= 1
+                      ? 'cursor-not-allowed text-gray-300'
+                      : 'text-indigo-500 hover:bg-indigo-50'
+                  "
+                  :disabled="queuePage <= 1"
+                  @click="queuePage > 1 && queuePage--"
+                >
+                  ← 上一页
+                </button>
+                <span class="text-xs text-gray-400">{{ queuePage }} / {{ queueTotalPages }}</span>
+                <button
+                  class="rounded px-2 py-0.5 text-xs transition"
+                  :class="
+                    queuePage >= queueTotalPages
+                      ? 'cursor-not-allowed text-gray-300'
+                      : 'text-indigo-500 hover:bg-indigo-50'
+                  "
+                  :disabled="queuePage >= queueTotalPages"
+                  @click="queuePage < queueTotalPages && queuePage++"
+                >
+                  下一页 →
+                </button>
               </div>
             </div>
-          </div>
+
+            <!-- 空队列提示 -->
+            <div
+              v-else
+              class="flex flex-col items-center justify-center py-6 text-center"
+            >
+              <div
+                class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50"
+              >
+                <Icon icon="lucide:coffee" class="text-xl text-emerald-400" />
+              </div>
+              <p class="text-xs font-medium text-gray-500">暂无等待用户</p>
+              <p class="mt-1 text-xs text-gray-400">轻松一下，队列空空如也</p>
+              <div class="mt-3 flex items-center gap-1.5">
+                <span class="relative flex h-2 w-2">
+                  <span
+                    class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
+                  ></span>
+                  <span
+                    class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"
+                  ></span>
+                </span>
+                <span class="text-xs text-emerald-500">实时监听中</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- 人工接待中 Tab -->
+          <template v-else>
+            <div v-if="sessions.length" class="space-y-2">
+              <div
+                v-for="s in sessions"
+                :key="s.id"
+                class="cursor-pointer rounded-xl border p-2.5 transition"
+                :class="[
+                  s.active
+                    ? 'border-indigo-300 bg-indigo-50'
+                    : 'border-gray-100 bg-white hover:border-gray-200',
+                ]"
+                @click="switchSession(s)"
+              >
+                <div class="flex items-center gap-2">
+                  <Avatar :size="26" :style="{ backgroundColor: s.color }">
+                    {{ s.nameChar }}
+                  </Avatar>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs font-medium text-gray-700">
+                      {{ s.name }}
+                    </p>
+                    <p
+                      class="text-xs"
+                      :class="[
+                        s.active
+                          ? 'font-medium text-indigo-600'
+                          : 'text-gray-400',
+                      ]"
+                    >
+                      {{ s.active ? '当前会话' : s.min }}
+                    </p>
+                  </div>
+                  <span
+                    class="h-2 w-2 rounded-full"
+                    :class="[s.active ? 'bg-emerald-500' : 'bg-gray-300']"
+                  ></span>
+                </div>
+              </div>
+            </div>
+            <div
+              v-else
+              class="flex flex-col items-center justify-center py-6 text-center"
+            >
+              <div
+                class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-50"
+              >
+                <Icon icon="lucide:inbox" class="text-xl text-gray-300" />
+              </div>
+              <p class="text-xs text-gray-400">暂无进行中的会话</p>
+            </div>
+          </template>
         </Card>
       </div>
 
@@ -435,12 +670,9 @@ function handleEnter(e: KeyboardEvent) {
         <div
           class="flex shrink-0 items-center gap-3 border-b border-gray-100 px-4 py-3"
         >
-          <Avatar
-            :size="36"
-            :style="{ backgroundColor: activeSession.color }"
-            >
-{{ activeSession.nameChar }}
-</Avatar>
+          <Avatar :size="36" :style="{ backgroundColor: activeSession.color }">
+            {{ activeSession.nameChar }}
+          </Avatar>
           <div>
             <p class="text-sm font-medium text-gray-800">
               {{ activeSession.name }}
@@ -459,26 +691,46 @@ function handleEnter(e: KeyboardEvent) {
             </Button>
             <Button type="primary" size="small" @click="closeSession">
               <template #icon>
-<Icon icon="ant-design:check-outlined" />
+                <Icon icon="ant-design:check-outlined" />
 </template>结束会话
             </Button>
           </div>
         </div>
 
+        <!-- 消息类型筛选 Tab + 会话状态 — 固定在消息区外，始终可见 -->
+        <div
+          class="flex shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4 py-2"
+        >
+          <div class="flex gap-1">
+            <span
+              v-for="opt in MSG_FILTER_OPTIONS"
+              :key="opt.key"
+              class="cursor-pointer rounded-full border px-2.5 py-0.5 text-xs transition"
+              :style="
+                msgFilter === opt.key
+                  ? 'background:#4f46e5;color:#fff;border-color:#4f46e5'
+                  : 'background:#f0f0f0;color:#6b7280;border-color:#e5e7eb'
+              "
+              @click="msgFilter = opt.key"
+              >{{ opt.label }}</span>
+          </div>
+          <Tag color="processing" class="text-xs">进行中</Tag>
+        </div>
+
         <div class="flex-1 space-y-3 overflow-y-auto bg-gray-50 p-4">
           <div class="flex justify-center">
             <Tag color="default" class="text-xs">
-以下为 AI 对话历史（共
-              {{
-                activeSession.msgs.filter((m) => m.role !== 'agent').length
-              }}
-              轮）
-</Tag>
+              共
+              {{ activeSession.msgs.filter((m) => m.role !== 'agent').length }}
+              轮对话
+            </Tag>
           </div>
+
           <div
-            v-for="m in activeSession.msgs"
+            v-for="m in filteredMsgs"
             :key="m.id"
-            class="flex gap-2" :class="[m.role === 'user' ? 'flex-row-reverse' : '']"
+            class="flex gap-2"
+            :class="[m.role !== 'user' ? 'flex-row-reverse' : '']"
           >
             <Avatar
               :size="28"
@@ -502,18 +754,21 @@ function handleEnter(e: KeyboardEvent) {
               }}
             </Avatar>
             <div
-              class="max-w-xs rounded-xl px-3 py-2 text-sm leading-relaxed" :class="[
+              class="max-w-xs rounded-xl px-3 py-2 text-sm leading-relaxed"
+              :class="[
                 m.role === 'user'
-                  ? 'rounded-tr-none bg-indigo-500 text-white'
+                  ? 'rounded-tl-none bg-white border border-gray-200 text-gray-700'
                   : m.role === 'agent'
-                    ? 'rounded-tl-none border border-gray-200 bg-white'
-                    : 'rounded-tl-none bg-gray-100 text-gray-500 opacity-70',
+                    ? 'rounded-tr-none bg-indigo-500 text-white'
+                    : 'rounded-tr-none bg-indigo-50 text-indigo-800 opacity-80',
               ]"
             >
               {{ m.text }}
             </div>
           </div>
         </div>
+        <!-- 滚动锚点 -->
+        <div data-msgs-end></div>
 
         <div
           class="flex shrink-0 gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-2"
@@ -524,9 +779,9 @@ function handleEnter(e: KeyboardEvent) {
             class="shrink-0 cursor-pointer text-xs"
             color="default"
             @click="quickReply(q)"
-            >
-{{ q }}
-</Tag>
+          >
+            {{ q }}
+          </Tag>
         </div>
 
         <div class="shrink-0 border-t border-gray-100 px-4 py-3">
@@ -544,8 +799,8 @@ function handleEnter(e: KeyboardEvent) {
               @click="sendAgent"
             >
               <template #icon>
-<Icon icon="ant-design:send-outlined" />
-</template>
+                <Icon icon="ant-design:send-outlined" />
+              </template>
             </Button>
           </div>
         </div>
@@ -553,9 +808,53 @@ function handleEnter(e: KeyboardEvent) {
 
       <div
         v-else
-        class="flex flex-1 items-center justify-center rounded-xl bg-white shadow-sm"
+        class="flex flex-1 flex-col items-center justify-center rounded-xl bg-white shadow-sm"
       >
-        <a-empty description="暂无会话，请从等待队列接入" />
+        <div
+          class="flex h-20 w-20 items-center justify-center rounded-full bg-indigo-50"
+        >
+          <Icon
+            icon="lucide:message-square-dashed"
+            class="text-4xl text-indigo-300"
+          />
+        </div>
+        <h3 class="mt-5 text-base font-semibold text-gray-700">
+          暂无进行中的会话
+        </h3>
+        <p
+          class="mt-2 max-w-xs text-center text-sm text-gray-400 leading-relaxed"
+        >
+          左侧「等待人工」队列中有用户时，<br />点击「接入会话」即可开始服务
+        </p>
+        <div class="mt-6 flex gap-3">
+          <div
+            class="flex flex-col items-center rounded-xl border border-gray-100 bg-gray-50 px-5 py-3"
+          >
+            <span class="text-xl font-bold text-indigo-500">{{
+              queue.length
+            }}</span>
+            <span class="mt-0.5 text-xs text-gray-400">等待接入</span>
+          </div>
+          <div
+            class="flex flex-col items-center rounded-xl border border-gray-100 bg-gray-50 px-5 py-3"
+          >
+            <span class="text-xl font-bold text-emerald-500">{{
+              MAX_CONCURRENT - concurrent
+            }}</span>
+            <span class="mt-0.5 text-xs text-gray-400">可接入数</span>
+          </div>
+        </div>
+        <div class="mt-5 flex items-center gap-1.5">
+          <span class="relative flex h-2 w-2">
+            <span
+              class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
+            ></span>
+            <span
+              class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"
+            ></span>
+          </span>
+          <span class="text-xs text-emerald-500">实时监听中，新会话将自动推送</span>
+        </div>
       </div>
 
       <!-- 右栏：上下文面板（Bug-001 修复：随 activeSession 联动） -->
@@ -586,9 +885,8 @@ function handleEnter(e: KeyboardEvent) {
             <div
               v-for="s in activeSession.slots"
               :key="s.key"
-              class="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs" :class="[
-                s.done ? 'bg-emerald-50' : 'bg-gray-50',
-              ]"
+              class="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs"
+              :class="[s.done ? 'bg-emerald-50' : 'bg-gray-50']"
             >
               <Icon
                 v-if="s.done"
@@ -631,8 +929,8 @@ function handleEnter(e: KeyboardEvent) {
               <p class="mb-1 font-medium text-indigo-600">📄 {{ c.title }}</p>
               <p class="line-clamp-2 text-gray-500">{{ c.preview }}</p>
               <Tag color="success" class="mt-1 text-xs">
-相关度 {{ c.score }}
-</Tag>
+                相关度 {{ c.score }}
+              </Tag>
             </div>
           </div>
         </Card>
@@ -657,11 +955,12 @@ function handleEnter(e: KeyboardEvent) {
         将 <strong>{{ activeSession?.name }}</strong> 的会话转交给以下坐席：
       </p>
       <RadioGroup v-model:value="transferTarget" class="w-full">
-        <div class="space-y-2">
+        <div v-if="availableAgents.length" class="space-y-2">
           <div
             v-for="agent in availableAgents"
             :key="agent.id"
-            class="flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition" :class="[
+            class="flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition"
+            :class="[
               transferTarget === agent.id
                 ? 'border-indigo-300 bg-indigo-50'
                 : 'border-gray-100',
@@ -670,10 +969,8 @@ function handleEnter(e: KeyboardEvent) {
           >
             <Radio :value="agent.id" />
             <Avatar :size="32" style="background-color: #6366f1">
-{{
-              agent.name[0]
-            }}
-</Avatar>
+              {{ agent.name[0] }}
+            </Avatar>
             <div class="flex-1">
               <p class="text-sm font-medium">{{ agent.name }}</p>
               <p class="text-xs text-gray-400">
@@ -681,11 +978,17 @@ function handleEnter(e: KeyboardEvent) {
               </p>
             </div>
             <Tag :color="agent.status === '空闲' ? 'success' : 'warning'">
-{{
-              agent.status
-            }}
-</Tag>
+              {{ agent.status }}
+            </Tag>
           </div>
+        </div>
+        <div
+          v-else
+          class="flex flex-col items-center justify-center py-8 text-center"
+        >
+          <Icon icon="lucide:users" class="mb-2 text-2xl text-gray-300" />
+          <p class="text-sm text-gray-400">暂无可转交的座席</p>
+          <p class="mt-1 text-xs text-gray-300">座席列表接口待接入</p>
         </div>
       </RadioGroup>
     </Modal>

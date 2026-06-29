@@ -115,7 +115,8 @@ async function replyFor(text: string) {
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const reader = response.body!.getReader();
+    if (!response.body) throw new Error('No response body');
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
 
     while (true) {
@@ -252,9 +253,9 @@ function handleEnter(e: KeyboardEvent) {
               color: #fff;
               background-color: #4f46e5;
             "
-            >
-AI
-</Avatar>
+          >
+            AI
+          </Avatar>
           <div>
             <p class="text-sm font-semibold text-gray-800">智能客服助手</p>
             <p class="flex items-center gap-1 text-xs text-emerald-500">
@@ -279,7 +280,7 @@ AI
                 }
               "
             >
-              {{ isAuth ? `✅ ${ authLabel}` : `🔓 ${ authLabel}` }}
+              {{ isAuth ? `✅ ${authLabel}` : `🔓 ${authLabel}` }}
             </span>
           </div>
         </div>
@@ -311,9 +312,9 @@ AI
                 color: #4f46e5;
                 background-color: #e0e7ff;
               "
-              >
-AI
-</Avatar>
+            >
+              AI
+            </Avatar>
             <div
               class="max-w-md rounded-2xl rounded-tl-sm bg-gray-50 px-4 py-3 text-sm leading-relaxed text-gray-700"
             >
@@ -327,7 +328,8 @@ AI
           <div
             v-for="m in msgs"
             :key="m.id"
-            class="flex gap-3" :class="[m.role === 'user' ? 'flex-row-reverse' : '']"
+            class="flex gap-3"
+            :class="[m.role === 'user' ? 'flex-row-reverse' : '']"
           >
             <Avatar
               :size="32"
@@ -352,7 +354,10 @@ AI
             >
               {{ m.role === 'user' ? '我' : 'AI' }}
             </Avatar>
-            <div class="max-w-sm" :class="[m.role === 'user' ? 'items-end' : '']">
+            <div
+              class="max-w-sm"
+              :class="[m.role === 'user' ? 'items-end' : '']"
+            >
               <div
                 :class="
                   m.role === 'user'
@@ -415,14 +420,20 @@ AI
         </div>
 
         <!-- 快捷问题 -->
-        <div class="flex shrink-0 gap-2 overflow-x-auto px-4 pb-2">
-          <span
-            v-for="q in QUICK"
-            :key="q"
-            class="shrink-0 cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:border-indigo-300 hover:text-indigo-600"
-            style=" color: #475569;background: #f8fafc; border-color: #e2e8f0"
-            @click="quickAsk(q)"
-            >{{ q }}</span>
+        <div class="shrink-0 border-t border-gray-50 px-4 pt-2 pb-1">
+          <p class="mb-1.5 flex items-center gap-1 text-xs text-gray-400">
+            <Icon icon="lucide:zap" class="text-amber-400" />
+            试试这些问题
+          </p>
+          <div class="flex gap-2 overflow-x-auto pb-1">
+            <span
+              v-for="q in QUICK"
+              :key="q"
+              class="shrink-0 cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600"
+              style="color: #475569; background: #f8fafc; border-color: #e2e8f0"
+              @click="quickAsk(q)"
+              >{{ q }}</span>
+          </div>
         </div>
 
         <!-- 输入框 -->

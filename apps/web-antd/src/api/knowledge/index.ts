@@ -1,5 +1,8 @@
+import { rawRequestClient } from '#/api/request';
 
-import { requestClient } from '#/api/request';
+// rawRequestClient baseURL 为空，路径直接命中 vite proxy /knowledge-api 规则
+// 避免与 /api (auth) 代理冲突
+const requestClient = rawRequestClient;
 
 // -------------------------------------------------------
 // 类型定义
@@ -70,13 +73,12 @@ export async function uploadDocApi(
   const formData = new FormData();
   formData.append('file', file);
   formData.append('kbId', kbId);
-  // 直接用 axios 发 multipart，requestClient 不含 token 注入时可能有问题
+  // rawRequestClient 同样注入了 Authorization token（使用相同的 createRequestClient 工厂）
+  // baseURL 为空，路径直接命中 /knowledge-api vite proxy，不被 /api (auth) 代理拦截
   return requestClient.post(
     '/knowledge-api/api/knowledge/docs/upload',
     formData,
-    {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    },
+    // 不手动设置 Content-Type，让浏览器自动携带 boundary 参数
   );
 }
 

@@ -111,3 +111,9 @@ export const requestClient = createRequestClient(apiURL, {
 });
 
 export const baseRequestClient = new RequestClient({ baseURL: apiURL });
+
+// 用于直接命中 vite proxy 规则（/knowledge-api、/chat-api 等），
+// baseURL 为空，路径不会被 /api 代理拦截
+export const rawRequestClient = createRequestClient('', {
+  responseReturn: 'data',
+});
