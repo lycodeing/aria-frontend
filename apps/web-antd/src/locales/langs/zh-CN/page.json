@@ -11,5 +11,11 @@
     "title": "概览",
     "analytics": "分析页",
     "workspace": "工作台"
+  },
+  "customerservice": {
+    "title": "智能客服",
+    "chat": "在线咨询",
+    "knowledge": "知识库",
+    "agent": "座席工作台"
   }
 }

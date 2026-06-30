@@ -94,4 +94,22 @@ const coreRoutes: RouteRecordRaw[] = [
   },
 ];
 
+/**
+ * 独立对话页 —— 无需登录，无 BasicLayout，可嵌入或直接分享给用户
+ * 访问地址：/chat
+ */
+const chatWidgetRoute: RouteRecordRaw = {
+  component: () => import('#/views/chat-widget/index.vue'),
+  meta: {
+    hideInBreadcrumb: true,
+    hideInMenu: true,
+    hideInTab: true,
+    title: '智能客服',
+  },
+  name: 'ChatWidget',
+  path: '/chat',
+};
+
+coreRoutes.push(chatWidgetRoute);
+
 export { coreRoutes, fallbackNotFoundRoute };
