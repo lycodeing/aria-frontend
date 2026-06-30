@@ -68,14 +68,18 @@ const HISTORY_KEY_PREFIX = 'chat_history_';
 /** sessionStorage 中跟踪 lastSeq 的 key 前缀（按 sessionId 隔离） */
 const LAST_SEQ_KEY_PREFIX = 'chat_last_seq_';
 
-/** 读取 sessionId 对应的 lastSeq，缺省返回 0 */
+/** 读取 sessionId 对应的 lastSeq，缺省或脏数据返回 0 */
 function readLastSeq(sid: string): number {
   const raw = sessionStorage.getItem(LAST_SEQ_KEY_PREFIX + sid);
-  return raw ? Number(raw) : 0;
+  if (!raw) return 0;
+  const n = Number(raw);
+  // 非有限数（NaN / Infinity）或负数视为脏数据，重置为 0
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 /** 写入 lastSeq（仅在 newSeq 大于当前值时更新，防止乱序写入回退） */
 function writeLastSeq(sid: string, newSeq: number) {
+  if (!Number.isFinite(newSeq) || newSeq <= 0) return;
   const current = readLastSeq(sid);
   if (newSeq > current) {
     sessionStorage.setItem(LAST_SEQ_KEY_PREFIX + sid, String(newSeq));
@@ -196,25 +200,34 @@ function handleVisitorWsMessage(msg: WsChatMessage) {
 
 /**
  * WS 重连成功后，按 lastSeq 拉增量历史消息，补齐离线期间漏收的座席回复。
- * 仅 agent 角色消息会渲染到聊天窗口（user 消息由本地 echo 显示）。
+ *
+ * 实现要点：
+ * - 入口快照 sinceSeq，避免 fetch 进行中 WS 推送写入 lastSeq 导致 `item.seq > readLastSeq` 误判跳过
+ * - 并发锁 fetchInflight：短时间多次重连只允许一个增量请求
+ * - 仅渲染 agent 角色（assistant 走 AI 路径已由本地 echo 显示，避免重复）
+ * - null/空 content 跳过，防止渲染空气泡
  */
+let fetchInflight = false;
 async function fetchMissingMessages(sid: string) {
-  const sinceSeq = readLastSeq(sid);
-  if (sinceSeq <= 0) {
-    return;
-  }
+  if (fetchInflight) return;
+  const sinceSeqSnapshot = readLastSeq(sid);
+  if (sinceSeqSnapshot <= 0) return;
+  fetchInflight = true;
   try {
-    const missing = await getVisitorHistoryApi(sid, sinceSeq);
+    const missing = await getVisitorHistoryApi(sid, sinceSeqSnapshot);
     for (const item of missing) {
-      if (item.seq != null && item.seq > readLastSeq(sid)) {
-        if (item.role === 'agent' || item.role === 'assistant') {
-          addMsg('agent', item.content);
-        }
-        writeLastSeq(sid, item.seq);
+      if (item.seq == null || item.seq <= sinceSeqSnapshot) continue;
+      if (!item.content) continue;
+      // 转人工后 AI 不再回复，访客端仅渲染 agent；assistant 历史已在 localStorage 中
+      if (item.role === 'agent') {
+        addMsg('agent', item.content);
       }
+      writeLastSeq(sid, item.seq); // max 比较保证不回退
     }
-  } catch {
-    // 拉增量失败不阻断主流程，下次重连仍可补齐
+  } catch (err) {
+    console.warn('[WS] fetchMissingMessages failed', sid, err);
+  } finally {
+    fetchInflight = false;
   }
 }
 

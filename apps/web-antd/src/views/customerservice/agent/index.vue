@@ -46,10 +46,14 @@ const LAST_SEQ_KEY_PREFIX = 'agent_last_seq_';
 
 function readLastSeq(sid: string): number {
   const raw = localStorage.getItem(LAST_SEQ_KEY_PREFIX + sid);
-  return raw ? Number(raw) : 0;
+  if (!raw) return 0;
+  const n = Number(raw);
+  // 非有限数（NaN / Infinity）或负数视为脏数据，重置为 0
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 function writeLastSeq(sid: string, newSeq: number) {
+  if (!Number.isFinite(newSeq) || newSeq <= 0) return;
   const current = readLastSeq(sid);
   if (newSeq > current) {
     localStorage.setItem(LAST_SEQ_KEY_PREFIX + sid, String(newSeq));
@@ -58,27 +62,35 @@ function writeLastSeq(sid: string, newSeq: number) {
 
 /**
  * 按 sessionId 拉增量历史，补齐 WS 断线期间漏收的访客消息。
- * 仅 user 角色消息会推送到对应会话的 msgs（座席自己的消息由本地 echo 显示）。
+ *
+ * 实现要点：
+ * - 入口快照 sinceSeq，避免 fetch 进行中 WS 推送写入更大 lastSeq 导致误判跳过本批
+ * - 按 sessionId 维度并发锁，防止短时间多次重连发起多次请求
+ * - 仅渲染 user 角色（座席自己的消息由本地 echo 显示，AI 不参与座席端会话）
+ * - null/空 content 跳过
  */
+const fetchInflight = new Set<string>();
 async function fetchMissingForSession(sid: string) {
-  const sinceSeq = readLastSeq(sid);
-  if (sinceSeq <= 0) {
-    return;
-  }
+  if (fetchInflight.has(sid)) return;
+  const sinceSeqSnapshot = readLastSeq(sid);
+  if (sinceSeqSnapshot <= 0) return;
+  fetchInflight.add(sid);
   try {
-    const missing = await getSessionHistoryApi(sid, sinceSeq);
+    const missing = await getSessionHistoryApi(sid, sinceSeqSnapshot);
     const session = sessions.value.find((s) => s.id === sid);
     if (!session) return;
     for (const item of missing) {
-      if (item.seq != null && item.seq > readLastSeq(sid)) {
-        if (item.role === 'user') {
-          session.msgs.push({ id: ++msgId, role: 'user', text: item.content });
-        }
-        writeLastSeq(sid, item.seq);
+      if (item.seq == null || item.seq <= sinceSeqSnapshot) continue;
+      if (!item.content) continue;
+      if (item.role === 'user') {
+        session.msgs.push({ id: ++msgId, role: 'user', text: item.content });
       }
+      writeLastSeq(sid, item.seq);
     }
-  } catch {
-    // 增量拉取失败不阻断，下次重连仍可补齐
+  } catch (err) {
+    console.warn('[WS:Agent] fetchMissingForSession failed', sid, err);
+  } finally {
+    fetchInflight.delete(sid);
   }
 }
 
