@@ -151,7 +151,9 @@ const loadingAgents = ref(false);
 // 排序规则：按当前会话数升序，引导转给负载较低的同事
 watch(transferVisible, async (visible) => {
   if (!visible) return;
+  // 重置状态，防止上次的数据闪烁
   transferTarget.value = '';
+  availableAgents.value = [];
   loadingAgents.value = true;
   try {
     const agents = await getOnlineAgentsApi();
@@ -368,6 +370,8 @@ onMounted(async () => {
       // TRANSFER 事件：根据 fromAgentId / toAgentId 区分发起方与接收方
       const myId = currentAgentId.value;
       const sid = event.item.sessionId;
+      // 空 token 守卫：myId 为空时不应处理任何 from/to 匹配，避免空串误判
+      if (!myId) return;
 
       if (event.fromAgentId === myId) {
         // 发起方：本地已在 confirmTransfer 中清理过，此处保持静默
@@ -375,6 +379,11 @@ onMounted(async () => {
       }
 
       if (event.toAgentId === myId) {
+        // 幂等校验：onMounted 恢复 ACTIVE 会话时可能已包含该 sid，
+        // SSE 事件不应再次 push 同一会话，避免左侧列表出现重复项
+        if (sessions.value.some((s) => s.id === sid)) {
+          return;
+        }
         // 接收方：自动接入转交过来的会话（已 ACTIVE，无需调用 acceptApi）
         if (concurrent.value >= MAX_CONCURRENT) {
           message.warning(`收到转交会话 ${event.item.userName}，但已达最大并发数`);
