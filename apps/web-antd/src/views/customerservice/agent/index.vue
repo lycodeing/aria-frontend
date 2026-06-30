@@ -140,9 +140,17 @@ const availableAgents: {
   sessions: number;
   status: string;
 }[] = [];
-// TODO: 后续接入座席列表 API，从后端获取在线座席
+// TODO(FEAT-转交): 接入 GET /api/v1/sessions/agents/online 获取在线座席列表
+// 当前 availableAgents 永远为空，转交功能尚未实现，confirmTransfer 会提示用户
 
 function confirmTransfer() {
+  // availableAgents 为空时，该分支永远不会执行真实转交
+  // 转交功能需后端实现 "在线座席列表" 接口后方可启用
+  if (availableAgents.length === 0) {
+    message.warning('转交功能暂未开放，请等待后续版本支持');
+    transferVisible.value = false;
+    return;
+  }
   if (!transferTarget.value) {
     message.warning('请选择转交坐席');
     return;
