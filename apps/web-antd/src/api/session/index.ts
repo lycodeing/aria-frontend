@@ -41,7 +41,17 @@ export interface WsChatMessage {
   sessionId: string;
   role?: 'agent' | 'user';
   content?: string;
+  /** session 内单调递增序号（仅 MESSAGE 类型有效），用于断线重连后的 sinceSeq 增量同步 */
+  seq?: number;
   timestamp?: number;
+}
+
+/** 历史消息项（含 seq 字段，支持增量同步） */
+export interface ChatHistoryItem {
+  role: string;
+  content: string;
+  /** session 内单调递增序号，老数据可能为 null */
+  seq?: null | number;
 }
 
 /** 获取等待队列（座席端，需 token） */
@@ -66,11 +76,33 @@ export async function closeSessionApi(sessionId: string): Promise<void> {
   return agentClient.post(`/chat-api/sessions/${sessionId}/close`);
 }
 
-/** 获取会话历史消息（座席接入时加载上下文，需 token） */
+/**
+ * 获取会话历史消息（座席端，需 token）。
+ *
+ * @param sessionId 会话唯一标识
+ * @param sinceSeq  起始 seq（不含），> 0 时走增量模式，缺省=0 拉全量历史
+ */
 export async function getSessionHistoryApi(
   sessionId: string,
-): Promise<Array<{ role: string; content: string }>> {
-  return agentClient.get('/chat-api/chat/history', { params: { sessionId } });
+  sinceSeq = 0,
+): Promise<ChatHistoryItem[]> {
+  return agentClient.get('/chat-api/chat/history', {
+    params: { sessionId, sinceSeq },
+  });
+}
+
+/**
+ * 获取会话历史消息（访客端，无需 token，公开接口）。
+ *
+ * 同 {@link getSessionHistoryApi}，但走 publicClient，适用于 chat-widget 嵌入第三方页面。
+ */
+export async function getVisitorHistoryApi(
+  sessionId: string,
+  sinceSeq = 0,
+): Promise<ChatHistoryItem[]> {
+  return publicClient.get('/chat-api/chat/history', {
+    params: { sessionId, sinceSeq },
+  });
 }
 
 /** 用户请求转人工（访客公开接口，无需 token） */

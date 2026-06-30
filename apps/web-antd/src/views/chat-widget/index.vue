@@ -20,6 +20,7 @@ import {
 
 import {
   connectVisitorWs,
+  getVisitorHistoryApi,
   sendSmsCodeApi,
   sendWsMessage,
   transferToAgentApi,
@@ -64,6 +65,22 @@ const WS_RETRY_DELAY_MS = [1000, 3000, 8000]; // 指数退避
 
 // ===== 本地历史持久化 =====
 const HISTORY_KEY_PREFIX = 'chat_history_';
+/** sessionStorage 中跟踪 lastSeq 的 key 前缀（按 sessionId 隔离） */
+const LAST_SEQ_KEY_PREFIX = 'chat_last_seq_';
+
+/** 读取 sessionId 对应的 lastSeq，缺省返回 0 */
+function readLastSeq(sid: string): number {
+  const raw = sessionStorage.getItem(LAST_SEQ_KEY_PREFIX + sid);
+  return raw ? Number(raw) : 0;
+}
+
+/** 写入 lastSeq（仅在 newSeq 大于当前值时更新，防止乱序写入回退） */
+function writeLastSeq(sid: string, newSeq: number) {
+  const current = readLastSeq(sid);
+  if (newSeq > current) {
+    sessionStorage.setItem(LAST_SEQ_KEY_PREFIX + sid, String(newSeq));
+  }
+}
 
 function saveHistory() {
   if (!sessionId.value) return;
@@ -122,13 +139,14 @@ function connectVisitorWsWithRetry(sid: string) {
     sid,
     handleVisitorWsMessage,
     () => {
-      // 连接成功
+      // 连接成功（含首次连接和重连后），凭 lastSeq 拉增量补齐空窗消息
       wsStatus.value = 'connected';
       wsRetryCount = 0;
       if (wsRetryTimer) {
         clearTimeout(wsRetryTimer);
         wsRetryTimer = null;
       }
+      void fetchMissingMessages(sid);
     },
     (event: CloseEvent) => {
       visitorWs = null;
@@ -165,10 +183,38 @@ function connectVisitorWsWithRetry(sid: string) {
 
 // ===== 访客 WS 消息处理 =====
 function handleVisitorWsMessage(msg: WsChatMessage) {
+  // 跟踪 seq：每条 MESSAGE 类型消息都更新 lastSeq，重连时凭此拉增量
+  if (msg.type === 'MESSAGE' && typeof msg.seq === 'number') {
+    writeLastSeq(sessionId.value, msg.seq);
+  }
   if (msg.type === 'MESSAGE' && msg.role === 'agent') {
     addMsg('agent', msg.content ?? '');
   } else if (msg.type === 'AGENT_JOINED') {
     addMsg('agent', '👤 人工客服已接入，请直接输入您的问题。');
+  }
+}
+
+/**
+ * WS 重连成功后，按 lastSeq 拉增量历史消息，补齐离线期间漏收的座席回复。
+ * 仅 agent 角色消息会渲染到聊天窗口（user 消息由本地 echo 显示）。
+ */
+async function fetchMissingMessages(sid: string) {
+  const sinceSeq = readLastSeq(sid);
+  if (sinceSeq <= 0) {
+    return;
+  }
+  try {
+    const missing = await getVisitorHistoryApi(sid, sinceSeq);
+    for (const item of missing) {
+      if (item.seq != null && item.seq > readLastSeq(sid)) {
+        if (item.role === 'agent' || item.role === 'assistant') {
+          addMsg('agent', item.content);
+        }
+        writeLastSeq(sid, item.seq);
+      }
+    }
+  } catch {
+    // 拉增量失败不阻断主流程，下次重连仍可补齐
   }
 }
 

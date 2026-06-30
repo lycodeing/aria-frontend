@@ -41,13 +41,57 @@ import { type QueueItem, useSessionQueue } from '#/composables/useSessionQueue';
 const accessStore = useAccessStore();
 const currentAgentId = computed(() => accessStore.accessToken ?? '');
 
+// ===== 座席端 lastSeq 跟踪（按 sessionId 隔离，localStorage 跨重启持久化） =====
+const LAST_SEQ_KEY_PREFIX = 'agent_last_seq_';
+
+function readLastSeq(sid: string): number {
+  const raw = localStorage.getItem(LAST_SEQ_KEY_PREFIX + sid);
+  return raw ? Number(raw) : 0;
+}
+
+function writeLastSeq(sid: string, newSeq: number) {
+  const current = readLastSeq(sid);
+  if (newSeq > current) {
+    localStorage.setItem(LAST_SEQ_KEY_PREFIX + sid, String(newSeq));
+  }
+}
+
+/**
+ * 按 sessionId 拉增量历史，补齐 WS 断线期间漏收的访客消息。
+ * 仅 user 角色消息会推送到对应会话的 msgs（座席自己的消息由本地 echo 显示）。
+ */
+async function fetchMissingForSession(sid: string) {
+  const sinceSeq = readLastSeq(sid);
+  if (sinceSeq <= 0) {
+    return;
+  }
+  try {
+    const missing = await getSessionHistoryApi(sid, sinceSeq);
+    const session = sessions.value.find((s) => s.id === sid);
+    if (!session) return;
+    for (const item of missing) {
+      if (item.seq != null && item.seq > readLastSeq(sid)) {
+        if (item.role === 'user') {
+          session.msgs.push({ id: ++msgId, role: 'user', text: item.content });
+        }
+        writeLastSeq(sid, item.seq);
+      }
+    }
+  } catch {
+    // 增量拉取失败不阻断，下次重连仍可补齐
+  }
+}
+
 // ===== Composable：WebSocket 连接管理 =====
-const { connectSession: connectAgentSession, disconnectSession: disconnectAgentSession, sendMessage: sendAgentMessage } = useAgentWebSocket(
-  (sessionId, content) => {
-    // 访客发来的新消息 → 推到对应 session 的 msgs
+const { connectSession: connectAgentSession, disconnectSession: disconnectAgentSession, sendMessage: sendAgentMessage } = useAgentWebSocket({
+  onUserMessage: (sessionId, msg) => {
+    // 跟踪 seq：每条 MESSAGE 都更新 lastSeq，重连时凭此拉增量
+    if (typeof msg.seq === 'number') {
+      writeLastSeq(sessionId, msg.seq);
+    }
     const session = sessions.value.find((s) => s.id === sessionId);
     if (session) {
-      session.msgs.push({ id: ++msgId, role: 'user', text: content });
+      session.msgs.push({ id: ++msgId, role: 'user', text: msg.content ?? '' });
       if (session.active) {
         nextTick(() => {
           const el = document.querySelector('[data-msgs-end]');
@@ -56,7 +100,11 @@ const { connectSession: connectAgentSession, disconnectSession: disconnectAgentS
       }
     }
   },
-);
+  onReconnect: (sessionId) => {
+    // WS 连接成功（含首次连接和重连），按 sessionId 凭 lastSeq 拉增量
+    void fetchMissingForSession(sessionId);
+  },
+});
 
 // ===== 座席状态 =====
 const agentOnline = ref(true);
@@ -213,12 +261,22 @@ async function addSessionLocal(params: {
   transferReason: string;
   minLabel: string;
 }) {
+  // 首次接入时从全量历史初始化 lastSeq，避免后续 WS 重连重复拉全量
   const history = await getSessionHistoryApi(params.id).catch(() => []);
-  const loadedMsgs: Msg[] = history.map((h, i) => ({
-    id: i + 1,
-    role: (h.role === 'user' ? 'user' : 'ai') as 'agent' | 'ai' | 'user',
-    text: h.content,
-  }));
+  let maxSeq = 0;
+  const loadedMsgs: Msg[] = history.map((h, i) => {
+    if (typeof h.seq === 'number' && h.seq > maxSeq) {
+      maxSeq = h.seq;
+    }
+    return {
+      id: i + 1,
+      role: (h.role === 'user' ? 'user' : 'ai') as 'agent' | 'ai' | 'user',
+      text: h.content,
+    };
+  });
+  if (maxSeq > 0) {
+    writeLastSeq(params.id, maxSeq);
+  }
   sessions.value.forEach((s) => (s.active = false));
   sessions.value.push({
     id: params.id,
