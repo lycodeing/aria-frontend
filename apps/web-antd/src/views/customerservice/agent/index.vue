@@ -4,6 +4,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
+import { useAccessStore } from '@vben/stores';
 
 import { Icon } from '@iconify/vue';
 import {
@@ -19,6 +20,7 @@ import {
   Progress,
   Radio,
   RadioGroup,
+  Spin,
   Switch,
   Tag,
   Textarea,
@@ -34,6 +36,10 @@ import {
 } from '#/api/session';
 import { useAgentWebSocket } from '#/composables/useAgentWebSocket';
 import { type QueueItem, useSessionQueue } from '#/composables/useSessionQueue';
+
+// ===== 当前座席身份（与后端 resolveAgentId 保持一致：token 即 agentId）=====
+const accessStore = useAccessStore();
+const currentAgentId = computed(() => accessStore.accessToken ?? '');
 
 // ===== Composable：WebSocket 连接管理 =====
 const { connectSession: connectAgentSession, disconnectSession: disconnectAgentSession, sendMessage: sendAgentMessage } = useAgentWebSocket(
@@ -140,15 +146,18 @@ const transferTarget = ref('');
 const availableAgents = ref<OnlineAgentItem[]>([]);
 const loadingAgents = ref(false);
 
-// 打开 Modal 时加载在线座席列表（过滤掉自己）
+// 打开 Modal 时加载在线座席列表
+// 过滤规则：① 排除当前座席自己；② 排除已达并发上限的座席
+// 排序规则：按当前会话数升序，引导转给负载较低的同事
 watch(transferVisible, async (visible) => {
   if (!visible) return;
   transferTarget.value = '';
   loadingAgents.value = true;
   try {
     const agents = await getOnlineAgentsApi();
-    // 过滤掉会话数已达上限的座席，并按会话数升序排列
-    availableAgents.value = agents.filter((a) => a.sessions < MAX_CONCURRENT);
+    availableAgents.value = agents
+      .filter((a) => a.id !== currentAgentId.value && a.sessions < MAX_CONCURRENT)
+      .sort((a, b) => a.sessions - b.sessions);
   } catch {
     message.error('获取在线座席失败，请重试');
     availableAgents.value = [];
@@ -191,6 +200,45 @@ function switchSession(s: SessionData) {
   msgFilter.value = '全部'; // 切换会话时重置消息筛选
 }
 
+/**
+ * 把会话加入本地 sessions 列表并建立 WebSocket 连接。
+ * 提取为公共方法，供主动接入（acceptQueue）和被动接收转交（onTransfer）复用。
+ */
+async function addSessionLocal(params: {
+  id: string;
+  name: string;
+  color: string;
+  transferReason: string;
+  minLabel: string;
+}) {
+  const history = await getSessionHistoryApi(params.id).catch(() => []);
+  const loadedMsgs: Msg[] = history.map((h, i) => ({
+    id: i + 1,
+    role: (h.role === 'user' ? 'user' : 'ai') as 'agent' | 'ai' | 'user',
+    text: h.content,
+  }));
+  sessions.value.forEach((s) => (s.active = false));
+  sessions.value.push({
+    id: params.id,
+    name: params.name,
+    nameChar: params.name.at(0) ?? '',
+    color: params.color,
+    min: params.minLabel,
+    active: true,
+    sessionCode: `#${params.id}`,
+    transferReason: params.transferReason,
+    msgs:
+      loadedMsgs.length > 0
+        ? loadedMsgs
+        : [{ id: ++msgId, role: 'ai', text: '您好！请问有什么可以帮您？' }],
+    userInfo: [{ label: '姓名', value: params.name }],
+    slots: [],
+    chunks: [],
+    memory: '无历史记忆。',
+  });
+  connectAgentSession(params.id);
+}
+
 async function acceptQueue(item: QueueItem) {
   if (concurrent.value >= MAX_CONCURRENT) {
     message.warning('已达最大并发数（5），请先结束其他会话');
@@ -198,33 +246,13 @@ async function acceptQueue(item: QueueItem) {
   }
   try {
     await acceptItem(item);
-    // 并行加载历史消息（通过 API 层抽象，不直接使用 rawRequestClient）
-    const history = await getSessionHistoryApi(item.id).catch(() => []);
-    const loadedMsgs: Msg[] = history.map((h, i) => ({
-      id: i + 1,
-      role: (h.role === 'user' ? 'user' : 'ai') as 'agent' | 'ai' | 'user',
-      text: h.content,
-    }));
-    sessions.value.forEach((s) => (s.active = false));
-    sessions.value.push({
+    await addSessionLocal({
       id: item.id,
       name: item.name,
-      nameChar: item.name.at(0) ?? '',
       color: item.color,
-      min: '刚接入',
-      active: true,
-      sessionCode: `#${item.id}`,
       transferReason: item.reason,
-      msgs:
-        loadedMsgs.length > 0
-          ? loadedMsgs
-          : [{ id: ++msgId, role: 'ai', text: '您好！请问有什么可以帮您？' }],
-      userInfo: [{ label: '姓名', value: item.name }],
-      slots: [],
-      chunks: [],
-      memory: '无历史记忆。',
+      minLabel: '刚接入',
     });
-    connectAgentSession(item.id);
     queueStateTab.value = 'active';
     message.success(`已接入会话：${item.name}`);
   } catch {
@@ -336,11 +364,36 @@ onMounted(async () => {
         message.warning(`会话 ${closedName} 已被关闭`);
       }
     },
-    (transferredItem) => {
-      // TRANSFER 事件：若 toAgentId 对应当前座席，自动接入转交过来的会话
-      // Phase-1：通过 item.agentId 判断是否转给自己（toAgentId 在后端 SessionEvent 中）
-      // 这里简化处理：弹出通知，由座席手动从队列刷新后接入
-      message.info(`会话 ${transferredItem.name} 已转交，请从队列中接入`);
+    async (event) => {
+      // TRANSFER 事件：根据 fromAgentId / toAgentId 区分发起方与接收方
+      const myId = currentAgentId.value;
+      const sid = event.item.sessionId;
+
+      if (event.fromAgentId === myId) {
+        // 发起方：本地已在 confirmTransfer 中清理过，此处保持静默
+        return;
+      }
+
+      if (event.toAgentId === myId) {
+        // 接收方：自动接入转交过来的会话（已 ACTIVE，无需调用 acceptApi）
+        if (concurrent.value >= MAX_CONCURRENT) {
+          message.warning(`收到转交会话 ${event.item.userName}，但已达最大并发数`);
+          return;
+        }
+        try {
+          await addSessionLocal({
+            id: sid,
+            name: event.item.userName,
+            color: '#8b5cf6',
+            transferReason: event.item.transferReason,
+            minLabel: '刚转入',
+          });
+          queueStateTab.value = 'active';
+          message.success(`已自动接入转交会话：${event.item.userName}`);
+        } catch {
+          message.error('自动接入转交会话失败');
+        }
+      }
     },
   );
 });
@@ -899,18 +952,24 @@ onMounted(async () => {
                 当前 {{ agent.sessions }} 个会话
               </p>
             </div>
-            <Tag :color="agent.status === '空闲' ? 'success' : 'warning'">
-              {{ agent.status }}
+            <Tag :color="agent.sessions === 0 ? 'success' : 'warning'">
+              {{ agent.sessions === 0 ? '空闲' : '忙碌' }}
             </Tag>
           </div>
+        </div>
+        <div
+          v-else-if="loadingAgents"
+          class="flex justify-center py-8"
+        >
+          <Spin />
         </div>
         <div
           v-else
           class="flex flex-col items-center justify-center py-8 text-center"
         >
           <Icon icon="lucide:users" class="mb-2 text-2xl text-gray-300" />
-          <p class="text-sm text-gray-400">暂无可转交的座席</p>
-          <p class="mt-1 text-xs text-gray-300">座席列表接口待接入</p>
+          <p class="text-sm text-gray-400">当前无可转交的座席</p>
+          <p class="mt-1 text-xs text-gray-300">其他座席离线或已达并发上限</p>
         </div>
       </RadioGroup>
     </Modal>

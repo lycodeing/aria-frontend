@@ -122,8 +122,19 @@ export async function transferSessionApi(
  * 后端 AgentHandshakeInterceptor 同样从 ?token= 参数中取值校验。
  * 返回 EventSource 实例，调用方负责在 onUnmounted 中调用 close()。
  */
+/**
+ * SSE 事件 payload。
+ * TRANSFER 事件含 fromAgentId / toAgentId，其他事件为 null。
+ */
+export interface SessionSseEvent {
+  type: 'ACCEPTED' | 'CLOSED' | 'ENQUEUE' | 'TRANSFER';
+  item: SessionQueueItem;
+  fromAgentId?: null | string;
+  toAgentId?: null | string;
+}
+
 export function subscribeSessionEvents(
-  onEvent: (event: { item: SessionQueueItem; type: string }) => void,
+  onEvent: (event: SessionSseEvent) => void,
   onError?: () => void,
   onOpen?: () => void,
 ): EventSource {

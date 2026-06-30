@@ -1,4 +1,7 @@
-import type { SessionQueueItem as ApiSessionItem } from '#/api/session';
+import type {
+  SessionQueueItem as ApiSessionItem,
+  SessionSseEvent,
+} from '#/api/session';
 
 import { computed, onUnmounted, ref, watch } from 'vue';
 
@@ -123,7 +126,7 @@ export function useSessionQueue(pageSize = 5) {
   function subscribeQueue(
     onEnqueue?: (item: QueueItem) => void,
     onClosed?: (sessionId: string) => void,
-    onTransfer?: (item: QueueItem) => void,
+    onTransfer?: (event: SessionSseEvent) => void,
   ) {
     // 防止多次调用时 EventSource 泄漏：先关闭旧连接
     eventSource?.close();
@@ -153,9 +156,9 @@ export function useSessionQueue(pageSize = 5) {
             onClosed?.(sid);
           }
         } else if (event.type === 'TRANSFER') {
-          // 转交事件：从等待队列移除，通知调用方（含目标座席 ID）
+          // 转交事件：从等待队列移除，通知调用方（含 fromAgentId / toAgentId）
           queue.value = queue.value.filter((q) => q.id !== sid);
-          onTransfer?.(toQueueItem(event.item));
+          onTransfer?.(event);
         }
       },
       () => {
