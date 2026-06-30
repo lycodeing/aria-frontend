@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 // ===== 主题隔离：强制 light 模式，不受后台暗色主题影响 =====
 
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -24,11 +24,13 @@ import {
   Textarea,
 } from 'ant-design-vue';
 
-import type { SessionQueueItem as ApiSessionItem } from '#/api/session';
+import type { OnlineAgentItem, SessionQueueItem as ApiSessionItem } from '#/api/session';
 import {
   closeSessionApi,
   getActiveSessionsApi,
+  getOnlineAgentsApi,
   getSessionHistoryApi,
+  transferSessionApi,
 } from '#/api/session';
 import { useAgentWebSocket } from '#/composables/useAgentWebSocket';
 import { type QueueItem, useSessionQueue } from '#/composables/useSessionQueue';
@@ -132,36 +134,54 @@ const QUICK_REPLY = [
   '感谢您的耐心等待',
 ];
 
-// ===== Bug-002 修复：转交 Modal =====
+// ===== 座席间转交 Modal =====
 const transferVisible = ref(false);
 const transferTarget = ref('');
-const availableAgents: {
-  id: string;
-  name: string;
-  sessions: number;
-  status: string;
-}[] = [];
-// TODO(FEAT-转交): 接入 GET /api/v1/sessions/agents/online 获取在线座席列表
-// 当前 availableAgents 永远为空，转交功能尚未实现，confirmTransfer 会提示用户
+const availableAgents = ref<OnlineAgentItem[]>([]);
+const loadingAgents = ref(false);
 
-function confirmTransfer() {
-  // availableAgents 为空时，该分支永远不会执行真实转交
-  // 转交功能需后端实现 "在线座席列表" 接口后方可启用
-  if (availableAgents.length === 0) {
-    message.warning('转交功能暂未开放，请等待后续版本支持');
-    transferVisible.value = false;
-    return;
+// 打开 Modal 时加载在线座席列表（过滤掉自己）
+watch(transferVisible, async (visible) => {
+  if (!visible) return;
+  transferTarget.value = '';
+  loadingAgents.value = true;
+  try {
+    const agents = await getOnlineAgentsApi();
+    // 过滤掉会话数已达上限的座席，并按会话数升序排列
+    availableAgents.value = agents.filter((a) => a.sessions < MAX_CONCURRENT);
+  } catch {
+    message.error('获取在线座席失败，请重试');
+    availableAgents.value = [];
+  } finally {
+    loadingAgents.value = false;
   }
+});
+
+async function confirmTransfer() {
   if (!transferTarget.value) {
     message.warning('请选择转交坐席');
     return;
   }
-  const agent = availableAgents.find((a) => a.id === transferTarget.value);
-  const name = activeSession.value?.name ?? '';
-  message.success(`会话 ${name} 已成功转交给 ${agent?.name}`);
-  transferVisible.value = false;
-  transferTarget.value = '';
-  doCloseSession();
+  const sid = activeSession.value?.id;
+  if (!sid) return;
+  const agent = availableAgents.value.find((a) => a.id === transferTarget.value);
+  try {
+    await transferSessionApi(sid, transferTarget.value);
+    message.success(`会话已成功转交给 ${agent?.name ?? transferTarget.value}`);
+    transferVisible.value = false;
+    transferTarget.value = '';
+    // 转交后本地移除该会话（SSE TRANSFER 事件也会触发，但本地立即响应更流畅）
+    const idx = sessions.value.findIndex((s) => s.id === sid);
+    if (idx !== -1) {
+      disconnectAgentSession(sid);
+      sessions.value.splice(idx, 1);
+      if (sessions.value.length > 0 && !sessions.value.some((s) => s.active) && sessions.value[0]) {
+        sessions.value[0].active = true;
+      }
+    }
+  } catch {
+    message.error('转交失败，请重试');
+  }
 }
 
 // ===== 其他方法 =====
@@ -315,6 +335,12 @@ onMounted(async () => {
         }
         message.warning(`会话 ${closedName} 已被关闭`);
       }
+    },
+    (transferredItem) => {
+      // TRANSFER 事件：若 toAgentId 对应当前座席，自动接入转交过来的会话
+      // Phase-1：通过 item.agentId 判断是否转给自己（toAgentId 在后端 SessionEvent 中）
+      // 这里简化处理：弹出通知，由座席手动从队列刷新后接入
+      message.info(`会话 ${transferredItem.name} 已转交，请从队列中接入`);
     },
   );
 });

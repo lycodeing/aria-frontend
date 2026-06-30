@@ -83,6 +83,38 @@ export async function transferToAgentApi(params: {
   return publicClient.post('/chat-api/chat/transfer', params);
 }
 
+// -------------------------------------------------------
+// 座席间转交功能
+// -------------------------------------------------------
+
+/** 在线座席信息 */
+export interface OnlineAgentItem {
+  /** 座席 ID */
+  id: string;
+  /** 座席显示名称 */
+  name: string;
+  /** 当前 ACTIVE 会话数 */
+  sessions: number;
+}
+
+/** 获取在线座席列表（用于转交 Modal） */
+export async function getOnlineAgentsApi(): Promise<OnlineAgentItem[]> {
+  return agentClient.get('/chat-api/sessions/agents/online');
+}
+
+/**
+ * 转交会话给指定座席（需 token）。
+ * 后端会广播 TRANSFER SSE 事件，目标座席前端收到后自动接入。
+ */
+export async function transferSessionApi(
+  sessionId: string,
+  targetAgentId: string,
+): Promise<void> {
+  return agentClient.post(`/chat-api/sessions/${sessionId}/transfer`, {
+    targetAgentId,
+  });
+}
+
 /**
  * 座席订阅 SSE 事件流（队列变化通知）。
  *

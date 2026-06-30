@@ -123,6 +123,7 @@ export function useSessionQueue(pageSize = 5) {
   function subscribeQueue(
     onEnqueue?: (item: QueueItem) => void,
     onClosed?: (sessionId: string) => void,
+    onTransfer?: (item: QueueItem) => void,
   ) {
     // 防止多次调用时 EventSource 泄漏：先关闭旧连接
     eventSource?.close();
@@ -151,6 +152,10 @@ export function useSessionQueue(pageSize = 5) {
           if (event.type === 'CLOSED') {
             onClosed?.(sid);
           }
+        } else if (event.type === 'TRANSFER') {
+          // 转交事件：从等待队列移除，通知调用方（含目标座席 ID）
+          queue.value = queue.value.filter((q) => q.id !== sid);
+          onTransfer?.(toQueueItem(event.item));
         }
       },
       () => {
@@ -161,7 +166,7 @@ export function useSessionQueue(pageSize = 5) {
         const delay = Math.min(1000 * 2 ** sseRetryCount, 30_000);
         sseRetryCount++;
         sseRetryTimer = setTimeout(
-          () => subscribeQueue(onEnqueue, onClosed),
+          () => subscribeQueue(onEnqueue, onClosed, onTransfer),
           delay,
         );
       },
