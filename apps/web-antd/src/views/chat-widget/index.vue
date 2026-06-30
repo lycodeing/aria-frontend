@@ -20,8 +20,10 @@ import {
 
 import {
   connectVisitorWs,
+  sendSmsCodeApi,
   sendWsMessage,
   transferToAgentApi,
+  verifySmsCodeApi,
 } from '#/api/session';
 
 // ===== 类型 =====
@@ -399,10 +401,17 @@ function sendCode() {
     return;
   }
   phoneErr.value = '';
-  codeSent.value = true;
-  codeVal.value = '';
-  startCountdown();
-  message.success('验证码已发送，请注意查收');
+  // 调用真实短信发送接口
+  sendSmsCodeApi(phone.value)
+    .then(() => {
+      codeSent.value = true;
+      codeVal.value = '';
+      startCountdown();
+      message.success('验证码已发送，请注意查收');
+    })
+    .catch(() => {
+      phoneErr.value = '发送验证码失败，请稍后重试';
+    });
 }
 
 function startCountdown() {
@@ -418,30 +427,31 @@ function verifyCode() {
     codeErr.value = '请输入 6 位验证码';
     return;
   }
-  // TODO: 替换为真实后端验证接口，当前为客户端 mock，任意 6 位非 000000 均通过
-  if (codeVal.value === '000000') {
-    codeErr.value = '验证码错误，请重试';
-    codeVal.value = '';
-    return;
-  }
   codeErr.value = '';
   verifying.value = true;
-  setTimeout(() => {
-    verifying.value = false;
-    authVisible.value = false;
-    isAuth.value = true;
-    authLabel.value = `已登录 · ${phone.value.slice(0, 3)}****${phone.value.slice(-4)}`;
-    addMsg(
-      'ai',
-      `✅ 身份验证成功！账号已关联，历史订单信息已加载。${pendingMsg ? '\n\n正在处理您刚才的问题...' : ''}`,
-    );
-    if (pendingMsg) {
-      const p = pendingMsg;
-      pendingMsg = '';
-      setTimeout(() => replyFor(p), 800);
-    }
-    message.success('验证成功，长期记忆已加载');
-  }, 1200);
+  // 调用真实后端验证接口，由服务端判断验证码是否正确
+  verifySmsCodeApi(phone.value, codeVal.value)
+    .then(() => {
+      verifying.value = false;
+      authVisible.value = false;
+      isAuth.value = true;
+      authLabel.value = `已登录 · ${phone.value.slice(0, 3)}****${phone.value.slice(-4)}`;
+      addMsg(
+        'ai',
+        `✅ 身份验证成功！账号已关联，历史订单信息已加载。${pendingMsg ? '\n\n正在处理您刚才的问题...' : ''}`,
+      );
+      if (pendingMsg) {
+        const p = pendingMsg;
+        pendingMsg = '';
+        setTimeout(() => replyFor(p), 800);
+      }
+      message.success('验证成功，长期记忆已加载');
+    })
+    .catch(() => {
+      verifying.value = false;
+      codeErr.value = '验证码错误，请重试';
+      codeVal.value = '';
+    });
 }
 
 function closeAuth() {

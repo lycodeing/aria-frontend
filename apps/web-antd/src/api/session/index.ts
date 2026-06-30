@@ -1,4 +1,6 @@
 // src/api/session/index.ts
+import { useAccessStore } from '@vben/stores';
+
 import { rawRequestClient, requestClient } from '#/api/request';
 
 /**
@@ -7,6 +9,23 @@ import { rawRequestClient, requestClient } from '#/api/request';
  */
 const agentClient = requestClient;
 const publicClient = rawRequestClient;
+
+// -------------------------------------------------------
+// 访客身份验证（手机号 + 短信验证码）
+// -------------------------------------------------------
+
+/** 发送短信验证码 */
+export async function sendSmsCodeApi(phone: string): Promise<void> {
+  return publicClient.post('/chat-api/auth/sms/send', { phone });
+}
+
+/** 校验短信验证码，成功返回访客 token */
+export async function verifySmsCodeApi(
+  phone: string,
+  code: string,
+): Promise<{ token: string }> {
+  return publicClient.post('/chat-api/auth/sms/verify', { phone, code });
+}
 
 export interface SessionQueueItem {
   sessionId: string;
@@ -59,6 +78,9 @@ export async function transferToAgentApi(params: {
 
 /**
  * 座席订阅 SSE 事件流（队列变化通知）。
+ *
+ * 浏览器原生 EventSource 不支持自定义请求头，鉴权 token 通过 query param 传递。
+ * 后端 AgentHandshakeInterceptor 同样从 ?token= 参数中取值校验。
  * 返回 EventSource 实例，调用方负责在 onUnmounted 中调用 close()。
  */
 export function subscribeSessionEvents(
@@ -66,7 +88,13 @@ export function subscribeSessionEvents(
   onError?: () => void,
   onOpen?: () => void,
 ): EventSource {
-  const es = new EventSource('/chat-api/sessions/events');
+  // 从 Pinia store 取座席 token，附加到 URL query param 实现鉴权
+  const accessStore = useAccessStore();
+  const token = accessStore.accessToken ?? '';
+  const url = token
+    ? `/chat-api/sessions/events?token=${encodeURIComponent(token)}`
+    : '/chat-api/sessions/events';
+  const es = new EventSource(url);
   es.addEventListener('open', () => onOpen?.());
   es.addEventListener('message', (e) => {
     try {
@@ -116,7 +144,10 @@ export function connectVisitorWs(
 
 /**
  * 座席端 WebSocket 连接。
- * 路径：/ws/agent/{sessionId}（经 Vite proxy 转发到 localhost:8082）
+ * 路径：/ws/agent/{sessionId}?token=xxx（经 Vite proxy 转发到 localhost:8082）
+ *
+ * 后端 AgentHandshakeInterceptor 在握手阶段从 ?token= 参数校验座席身份。
+ * WebSocket 握手不支持自定义 Header，因此统一使用 query param 携带 token。
  */
 export function connectAgentWs(
   sessionId: string,
@@ -124,7 +155,12 @@ export function connectAgentWs(
   onOpen?: () => void,
   onClose?: () => void,
 ): WebSocket {
-  const ws = new WebSocket(buildWsUrl(`/ws/agent/${sessionId}`));
+  const accessStore = useAccessStore();
+  const token = accessStore.accessToken ?? '';
+  const path = token
+    ? `/ws/agent/${sessionId}?token=${encodeURIComponent(token)}`
+    : `/ws/agent/${sessionId}`;
+  const ws = new WebSocket(buildWsUrl(path));
   ws.addEventListener('open', () => onOpen?.());
   ws.addEventListener('message', (e) => {
     try {

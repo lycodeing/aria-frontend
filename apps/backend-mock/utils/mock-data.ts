@@ -36,6 +36,31 @@ export const MOCK_USERS: UserInfo[] = [
     username: 'jack',
     homePath: '/analytics',
   },
+  // ===== 智能客服多角色测试用户 =====
+  {
+    id: 10,
+    password: 'Test@123456',
+    realName: '超级管理员',
+    roles: ['super_admin'],
+    username: 'superadmin',
+    homePath: '/analytics',
+  },
+  {
+    id: 11,
+    password: 'Test@123456',
+    realName: '客服管理员',
+    roles: ['kf_manager'],
+    username: 'kfmanager',
+    homePath: '/customerservice/chat',
+  },
+  {
+    id: 12,
+    password: 'Test@123456',
+    realName: '普通客服',
+    roles: ['kf_staff'],
+    username: 'kfstaff',
+    homePath: '/customerservice/chat',
+  },
 ];
 
 export const MOCK_CODES = [
@@ -53,6 +78,30 @@ export const MOCK_CODES = [
     // user
     codes: ['AC_1000001', 'AC_1000002'],
     username: 'jack',
+  },
+  // ===== 智能客服测试用户权限码 =====
+  {
+    // 超级管理员：全部按钮权限
+    username: 'superadmin',
+    codes: [
+      'knowledge:doc:upload', 'knowledge:doc:review', 'knowledge:doc:offline', 'knowledge:doc:delete',
+      'agent:session:accept', 'agent:session:close', 'agent:session:transfer',
+      'system:user:create', 'system:user:update', 'system:user:delete', 'system:user:reset-pwd', 'system:user:assign-role',
+      'system:role:create', 'system:role:update', 'system:role:delete', 'system:role:assign-menu',
+    ],
+  },
+  {
+    // 客服管理员：知识库+座席操作权限，无系统管理
+    username: 'kfmanager',
+    codes: [
+      'knowledge:doc:upload', 'knowledge:doc:review', 'knowledge:doc:offline',
+      'agent:session:accept', 'agent:session:close', 'agent:session:transfer',
+    ],
+  },
+  {
+    // 普通客服：无按钮权限
+    username: 'kfstaff',
+    codes: [],
   },
 ];
 
@@ -176,6 +225,70 @@ const createDemosMenus = (role: 'admin' | 'super' | 'user') => {
   ];
 };
 
+// ===== 智能客服菜单定义 =====
+const customerServiceMenus = {
+  // 完整智能客服菜单（含全部子菜单）
+  full: {
+    meta: { icon: 'lucide:bot', order: 10, title: '智能客服' },
+    name: 'CustomerService',
+    path: '/customerservice',
+    children: [
+      {
+        name: 'CustomerServiceChat',
+        path: '/customerservice/chat',
+        component: '/customerservice/chat/index',
+        meta: { icon: 'lucide:message-circle', title: '对话', keepAlive: true },
+      },
+      {
+        name: 'CustomerServiceKnowledge',
+        path: '/customerservice/knowledge',
+        component: '/customerservice/knowledge/index',
+        meta: { icon: 'lucide:book-open', title: '知识库', keepAlive: true },
+      },
+      {
+        name: 'CustomerServiceAgent',
+        path: '/customerservice/agent',
+        component: '/customerservice/agent/index',
+        meta: { icon: 'lucide:headphones', title: '座席工作台', keepAlive: true },
+      },
+    ],
+  },
+  // 仅对话（普通客服）
+  chatOnly: {
+    meta: { icon: 'lucide:bot', order: 10, title: '智能客服' },
+    name: 'CustomerService',
+    path: '/customerservice',
+    children: [
+      {
+        name: 'CustomerServiceChat',
+        path: '/customerservice/chat',
+        component: '/customerservice/chat/index',
+        meta: { icon: 'lucide:message-circle', title: '对话', keepAlive: true },
+      },
+    ],
+  },
+};
+
+const systemMenus = {
+  meta: { icon: 'lucide:settings', order: 90, title: '系统管理' },
+  name: 'System',
+  path: '/system',
+  children: [
+    {
+      name: 'SystemUser',
+      path: '/system/user',
+      component: '/system/user/index',
+      meta: { icon: 'lucide:users', title: '用户管理' },
+    },
+    {
+      name: 'SystemRole',
+      path: '/system/role',
+      component: '/system/role/index',
+      meta: { icon: 'lucide:shield', title: '角色管理' },
+    },
+  ],
+};
+
 export const MOCK_MENUS = [
   {
     menus: [...dashboardMenus, ...createDemosMenus('super')],
@@ -188,6 +301,30 @@ export const MOCK_MENUS = [
   {
     menus: [...dashboardMenus, ...createDemosMenus('user')],
     username: 'jack',
+  },
+  // ===== 智能客服测试用户菜单 =====
+  {
+    // 超级管理员：仪表板 + 智能客服全部 + 系统管理
+    username: 'superadmin',
+    menus: [
+      ...dashboardMenus,
+      customerServiceMenus.full,
+      systemMenus,
+    ],
+  },
+  {
+    // 客服管理员：智能客服全部（无系统管理、无仪表板）
+    username: 'kfmanager',
+    menus: [
+      customerServiceMenus.full,
+    ],
+  },
+  {
+    // 普通客服：仅对话
+    username: 'kfstaff',
+    menus: [
+      customerServiceMenus.chatOnly,
+    ],
   },
 ];
 
