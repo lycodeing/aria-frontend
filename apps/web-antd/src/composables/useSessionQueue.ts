@@ -154,8 +154,9 @@ export function useSessionQueue(pageSize = 5) {
         }
       },
       () => {
-        // SSE 断线：指数退避重连（1s → 2s → 4s → ... 最大 30s）
+        // SSE 断线：必须先 close 旧连接，防止浏览器自动重连与 setTimeout 重连并存（双重连接）
         sseConnected.value = false;
+        eventSource?.close();
         eventSource = null;
         const delay = Math.min(1000 * 2 ** sseRetryCount, 30_000);
         sseRetryCount++;

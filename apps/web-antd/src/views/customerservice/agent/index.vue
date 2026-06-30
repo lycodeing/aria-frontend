@@ -24,13 +24,14 @@ import {
   Textarea,
 } from 'ant-design-vue';
 
+import type { SessionQueueItem as ApiSessionItem } from '#/api/session';
 import {
   closeSessionApi,
   getActiveSessionsApi,
   getSessionHistoryApi,
 } from '#/api/session';
 import { useAgentWebSocket } from '#/composables/useAgentWebSocket';
-import { useSessionQueue } from '#/composables/useSessionQueue';
+import { type QueueItem, useSessionQueue } from '#/composables/useSessionQueue';
 
 // ===== Composable：WebSocket 连接管理 =====
 const { connectSession: connectAgentSession, disconnectSession: disconnectAgentSession, sendMessage: sendAgentMessage } = useAgentWebSocket(
@@ -258,7 +259,7 @@ onMounted(async () => {
   // 1. 并行加载等待队列 + 已接入会话（Promise.all 替代串行）
   const [, activeSessions] = await Promise.all([
     loadQueue(),
-    getActiveSessionsApi().catch(() => [] as typeof activeSessions),
+    getActiveSessionsApi().catch(() => [] as ApiSessionItem[]),
   ]);
 
   // 2. 并行加载所有 ACTIVE 会话的历史消息（Promise.all 替代 for await 串行）
