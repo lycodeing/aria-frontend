@@ -84,18 +84,34 @@ export const MOCK_CODES = [
     // 超级管理员：全部按钮权限
     username: 'superadmin',
     codes: [
-      'knowledge:doc:upload', 'knowledge:doc:review', 'knowledge:doc:offline', 'knowledge:doc:delete',
-      'agent:session:accept', 'agent:session:close', 'agent:session:transfer',
-      'system:user:create', 'system:user:update', 'system:user:delete', 'system:user:reset-pwd', 'system:user:assign-role',
-      'system:role:create', 'system:role:update', 'system:role:delete', 'system:role:assign-menu',
+      'knowledge:doc:upload',
+      'knowledge:doc:review',
+      'knowledge:doc:offline',
+      'knowledge:doc:delete',
+      'agent:session:accept',
+      'agent:session:close',
+      'agent:session:transfer',
+      'system:user:create',
+      'system:user:update',
+      'system:user:delete',
+      'system:user:reset-pwd',
+      'system:user:assign-role',
+      'system:role:create',
+      'system:role:update',
+      'system:role:delete',
+      'system:role:assign-menu',
     ],
   },
   {
     // 客服管理员：知识库+座席操作权限，无系统管理
     username: 'kfmanager',
     codes: [
-      'knowledge:doc:upload', 'knowledge:doc:review', 'knowledge:doc:offline',
-      'agent:session:accept', 'agent:session:close', 'agent:session:transfer',
+      'knowledge:doc:upload',
+      'knowledge:doc:review',
+      'knowledge:doc:offline',
+      'agent:session:accept',
+      'agent:session:close',
+      'agent:session:transfer',
     ],
   },
   {
@@ -249,7 +265,11 @@ const customerServiceMenus = {
         name: 'CustomerServiceAgent',
         path: '/customerservice/agent',
         component: '/customerservice/agent/index',
-        meta: { icon: 'lucide:headphones', title: '座席工作台', keepAlive: true },
+        meta: {
+          icon: 'lucide:headphones',
+          title: '座席工作台',
+          keepAlive: true,
+        },
       },
     ],
   },
@@ -306,25 +326,17 @@ export const MOCK_MENUS = [
   {
     // 超级管理员：仪表板 + 智能客服全部 + 系统管理
     username: 'superadmin',
-    menus: [
-      ...dashboardMenus,
-      customerServiceMenus.full,
-      systemMenus,
-    ],
+    menus: [...dashboardMenus, customerServiceMenus.full, systemMenus],
   },
   {
     // 客服管理员：智能客服全部（无系统管理、无仪表板）
     username: 'kfmanager',
-    menus: [
-      customerServiceMenus.full,
-    ],
+    menus: [customerServiceMenus.full],
   },
   {
     // 普通客服：仅对话
     username: 'kfstaff',
-    menus: [
-      customerServiceMenus.chatOnly,
-    ],
+    menus: [customerServiceMenus.chatOnly],
   },
 ];
 
