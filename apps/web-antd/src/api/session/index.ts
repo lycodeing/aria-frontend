@@ -61,9 +61,16 @@ export async function acceptSessionApi(
   return agentClient.post(`/chat-api/sessions/${sessionId}/accept`);
 }
 
-/** 结束会话（需 token） */
+/** 获取结束会话（需 token） */
 export async function closeSessionApi(sessionId: string): Promise<void> {
   return agentClient.post(`/chat-api/sessions/${sessionId}/close`);
+}
+
+/** 获取会话历史消息（座席接入时加载上下文，需 token） */
+export async function getSessionHistoryApi(
+  sessionId: string,
+): Promise<Array<{ role: string; content: string }>> {
+  return agentClient.get('/chat-api/chat/history', { params: { sessionId } });
 }
 
 /** 用户请求转人工（访客公开接口，无需 token） */

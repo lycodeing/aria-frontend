@@ -22,7 +22,7 @@ function resolveTagColor(tag: string): string {
   return TAG_COLOR_MAP[tag] ?? 'blue';
 }
 
-function formatWaitTime(waitSince: number): string {
+export function formatWaitTime(waitSince: number): string {
   const sec = Math.max(0, Math.floor(Date.now() / 1000 - waitSince));
   const m = Math.floor(sec / 60);
   const s = sec % 60;
@@ -34,6 +34,7 @@ export interface QueueItem {
   name: string;
   color: string;
   waitMin: string;
+  waitSince: number; // 保留原始时间戳供定时刷新使用
   reason: string;
   tag: string;
   tagColor: string;
@@ -46,11 +47,9 @@ export interface QueueItem {
  * - 维护 queue ref（QueueItem[]）
  * - 分页计算属性（pagedQueue / totalPages）
  * - loadQueue() 从 API 加载初始队列
- * - 订阅 SSE 事件（ENQUEUE / ACCEPTED / CLOSED）
- * - 组件卸载时自动关闭 EventSource
- *
- * 使用方：
- *   const { queue, pagedQueue, queuePage, queueTotalPages, loadQueue } = useSessionQueue()
+ * - subscribeQueue() 订阅 SSE 事件，内置指数退避重连（最大 30s）
+ * - 每秒定时刷新队列中所有项的等待时间显示
+ * - 组件卸载时自动关闭 EventSource 和定时器
  */
 export function useSessionQueue(pageSize = 5) {
   const queue = ref<QueueItem[]>([]);
@@ -79,6 +78,7 @@ export function useSessionQueue(pageSize = 5) {
       name: item.userName,
       color: '#f87171',
       waitMin: formatWaitTime(item.waitSince),
+      waitSince: item.waitSince,
       reason: item.transferReason,
       tag: item.tag,
       tagColor: resolveTagColor(item.tag),
@@ -94,23 +94,84 @@ export function useSessionQueue(pageSize = 5) {
     }
   }
 
-  // SSE 订阅
-  let eventSource: EventSource | null = null;
+  // ---- 等待时间定时刷新 ----
+  let waitTimer: ReturnType<typeof setInterval> | null = null;
 
-  function subscribeQueue(onEnqueue?: (item: QueueItem) => void) {
-    eventSource = subscribeSessionEvents((event) => {
-      if (event.type === 'ENQUEUE') {
-        const item = event.item;
-        if (!queue.value.some((q) => q.id === item.sessionId)) {
-          const qi = toQueueItem(item);
-          queue.value.push(qi);
-          antMessage.info(`新会话请求：${item.userName}`);
-          onEnqueue?.(qi);
+  function startWaitTimer() {
+    stopWaitTimer();
+    // 每秒更新所有队列项的 waitMin 显示
+    waitTimer = setInterval(() => {
+      queue.value.forEach((item) => {
+        item.waitMin = formatWaitTime(item.waitSince);
+      });
+    }, 1000);
+  }
+
+  function stopWaitTimer() {
+    if (waitTimer !== null) {
+      clearInterval(waitTimer);
+      waitTimer = null;
+    }
+  }
+
+  // ---- SSE 订阅（含指数退避重连） ----
+  let eventSource: EventSource | null = null;
+  let sseRetryCount = 0;
+  let sseRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  const sseConnected = ref(false); // SSE 连接状态（供模板显示状态点使用）
+
+  function subscribeQueue(
+    onEnqueue?: (item: QueueItem) => void,
+    onClosed?: (sessionId: string) => void,
+  ) {
+    // 防止多次调用时 EventSource 泄漏：先关闭旧连接
+    eventSource?.close();
+    eventSource = null;
+    if (sseRetryTimer !== null) {
+      clearTimeout(sseRetryTimer);
+      sseRetryTimer = null;
+    }
+
+    eventSource = subscribeSessionEvents(
+      (event) => {
+        sseRetryCount = 0; // 成功收到消息，重置重试计数
+        const sid = event.item?.sessionId;
+        if (!sid) return;
+
+        if (event.type === 'ENQUEUE') {
+          const item = event.item;
+          if (!queue.value.some((q) => q.id === item.sessionId)) {
+            const qi = toQueueItem(item);
+            queue.value.push(qi);
+            antMessage.info(`新会话请求：${item.userName}`);
+            onEnqueue?.(qi);
+          }
+        } else if (event.type === 'ACCEPTED' || event.type === 'CLOSED') {
+          queue.value = queue.value.filter((q) => q.id !== sid);
+          if (event.type === 'CLOSED') {
+            onClosed?.(sid);
+          }
         }
-      } else if (event.type === 'ACCEPTED' || event.type === 'CLOSED') {
-        queue.value = queue.value.filter((q) => q.id !== event.item.sessionId);
-      }
-    });
+      },
+      () => {
+        // SSE 断线：指数退避重连（1s → 2s → 4s → ... 最大 30s）
+        sseConnected.value = false;
+        eventSource = null;
+        const delay = Math.min(1000 * 2 ** sseRetryCount, 30_000);
+        sseRetryCount++;
+        sseRetryTimer = setTimeout(
+          () => subscribeQueue(onEnqueue, onClosed),
+          delay,
+        );
+      },
+      () => {
+        sseRetryCount = 0; // 连接成功，重置重试计数
+        sseConnected.value = true;
+      },
+    );
+
+    // 启动等待时间定时刷新
+    startWaitTimer();
   }
 
   async function acceptItem(item: QueueItem): Promise<ApiSessionItem> {
@@ -121,13 +182,15 @@ export function useSessionQueue(pageSize = 5) {
       userName: item.name,
       transferReason: item.reason,
       tag: item.tag,
-      waitSince: 0,
+      waitSince: item.waitSince,
       status: 'ACTIVE',
     };
   }
 
   onUnmounted(() => {
     eventSource?.close();
+    stopWaitTimer();
+    if (sseRetryTimer !== null) clearTimeout(sseRetryTimer);
   });
 
   return {
@@ -135,6 +198,7 @@ export function useSessionQueue(pageSize = 5) {
     queuePage,
     queueTotalPages,
     pagedQueue,
+    sseConnected,
     loadQueue,
     subscribeQueue,
     acceptItem,

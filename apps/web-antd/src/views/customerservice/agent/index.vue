@@ -1,10 +1,7 @@
 <script lang="ts" setup>
-import type {
-  SessionQueueItem as ApiSessionItem,
-  WsChatMessage,
-} from '#/api/session';
+// ===== 主题隔离：强制 light 模式，不受后台暗色主题影响 =====
 
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -27,48 +24,30 @@ import {
   Textarea,
 } from 'ant-design-vue';
 
-import { rawRequestClient } from '#/api/request';
 import {
-  acceptSessionApi,
   closeSessionApi,
-  connectAgentWs,
   getActiveSessionsApi,
-  getSessionQueueApi,
-  sendWsMessage,
-  subscribeSessionEvents,
+  getSessionHistoryApi,
 } from '#/api/session';
+import { useAgentWebSocket } from '#/composables/useAgentWebSocket';
+import { useSessionQueue } from '#/composables/useSessionQueue';
 
-// ===== 座席 WebSocket 连接管理（每个接入会话一条 WS）=====
-const agentWsMap = new Map<string, WebSocket>();
-
-function connectAgentSession(sessionId: string) {
-  if (agentWsMap.has(sessionId)) return; // 已连接
-  const ws = connectAgentWs(sessionId, (msg: WsChatMessage) => {
-    if (msg.type === 'MESSAGE' && msg.role === 'user') {
-      // 访客发来的新消息 → 推到对应 session 的 msgs
-      const session = sessions.value.find((s) => s.id === sessionId);
-      if (session) {
-        session.msgs.push({
-          id: ++msgId,
-          role: 'user',
-          text: msg.content ?? '',
+// ===== Composable：WebSocket 连接管理 =====
+const { connectSession: connectAgentSession, disconnectSession: disconnectAgentSession, sendMessage: sendAgentMessage } = useAgentWebSocket(
+  (sessionId, content) => {
+    // 访客发来的新消息 → 推到对应 session 的 msgs
+    const session = sessions.value.find((s) => s.id === sessionId);
+    if (session) {
+      session.msgs.push({ id: ++msgId, role: 'user', text: content });
+      if (session.active) {
+        nextTick(() => {
+          const el = document.querySelector('[data-msgs-end]');
+          (el as HTMLElement)?.scrollIntoView({ behavior: 'smooth' });
         });
-        if (session.active) {
-          nextTick(() => {
-            const el = document.querySelector('[data-msgs-end]');
-            (el as HTMLElement)?.scrollIntoView({ behavior: 'smooth' });
-          });
-        }
       }
     }
-  });
-  agentWsMap.set(sessionId, ws);
-}
-
-function disconnectAgentSession(sessionId: string) {
-  agentWsMap.get(sessionId)?.close();
-  agentWsMap.delete(sessionId);
-}
+  },
+);
 
 // ===== 座席状态 =====
 const agentOnline = ref(true);
@@ -130,60 +109,17 @@ const filteredMsgs = computed(() => {
   return msgs;
 });
 
-// ===== 等待队列 =====
-interface QueueItem {
-  id: string;
-  name: string;
-  color: string;
-  waitMin: string;
-  reason: string;
-  tag: string;
-  tagColor: string;
-}
-const queue = ref<QueueItem[]>([]);
-
-// ===== 等待队列分页（每页 5 条，必须在 queue 声明后）=====
-const QUEUE_PAGE_SIZE = 5;
-const queuePage = ref(1);
-const queueTotalPages = computed(() =>
-  Math.max(1, Math.ceil(queue.value.length / QUEUE_PAGE_SIZE)),
-);
-const pagedQueue = computed(() => {
-  const start = (queuePage.value - 1) * QUEUE_PAGE_SIZE;
-  return queue.value.slice(start, start + QUEUE_PAGE_SIZE);
-});
-watch(
-  () => queue.value.length,
-  () => {
-    queuePage.value = 1;
-  },
-);
-
-// ===== 从 API 加载等待队列 =====
-async function loadQueue() {
-  try {
-    const items = await getSessionQueueApi();
-    queue.value = items.map((item: ApiSessionItem) => ({
-      id: item.sessionId,
-      name: item.userName,
-      color: '#f87171',
-      waitMin: formatWaitTime(item.waitSince),
-      reason: item.transferReason,
-      tag: item.tag,
-      tagColor:
-        item.tag === '投诉' ? 'red' : item.tag === '退款' ? 'orange' : 'blue',
-    }));
-  } catch {
-    // 加载失败时保持空队列
-  }
-}
-
-function formatWaitTime(waitSince: number): string {
-  const sec = Math.max(0, Math.floor(Date.now() / 1000 - waitSince));
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
+// ===== Composable：等待队列 + SSE 实时通知 =====
+const {
+  queue,
+  queuePage,
+  queueTotalPages,
+  pagedQueue,
+  sseConnected,
+  loadQueue,
+  subscribeQueue,
+  acceptItem,
+} = useSessionQueue();
 
 let msgId = 100;
 const msgInput = ref('');
@@ -232,12 +168,10 @@ async function acceptQueue(item: QueueItem) {
     return;
   }
   try {
-    await acceptSessionApi(item.id);
-    queue.value = queue.value.filter((q) => q.id !== item.id);
-    const history = (await rawRequestClient.get(
-      `/chat-api/chat/history?sessionId=${item.id}`,
-    )) as Array<{ content: string; role: string }>;
-    const loadedMsgs: Msg[] = (history ?? []).map((h, i) => ({
+    await acceptItem(item);
+    // 并行加载历史消息（通过 API 层抽象，不直接使用 rawRequestClient）
+    const history = await getSessionHistoryApi(item.id).catch(() => []);
+    const loadedMsgs: Msg[] = history.map((h, i) => ({
       id: i + 1,
       role: (h.role === 'user' ? 'user' : 'ai') as 'agent' | 'ai' | 'user',
       text: h.content,
@@ -261,9 +195,7 @@ async function acceptQueue(item: QueueItem) {
       chunks: [],
       memory: '无历史记忆。',
     });
-    // 建立座席 WebSocket 连接，实时接收访客消息
     connectAgentSession(item.id);
-    // 接入后自动切换到"人工接待中" Tab
     queueStateTab.value = 'active';
     message.success(`已接入会话：${item.name}`);
   } catch {
@@ -275,12 +207,11 @@ function sendAgent() {
   const text = msgInput.value.trim();
   if (!text || !activeSession.value) return;
   const sid = activeSession.value.id;
-  const ws = agentWsMap.get(sid);
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
+  const ok = sendAgentMessage(sid, text);
+  if (!ok) {
     message.warning('WebSocket 未连接，请重新接入会话');
     return;
   }
-  sendWsMessage(ws, text);
   activeSession.value.msgs.push({ id: ++msgId, role: 'agent', text });
   msgInput.value = '';
 }
@@ -315,21 +246,23 @@ function handleEnter(e: KeyboardEvent) {
 }
 
 // ===== 生命周期：加载队列 + 订阅 SSE =====
-let eventSource: EventSource | null = null;
-const sseConnected = ref(false); // SSE 连接状态（绿=在线，灰=断线）
-
 onMounted(async () => {
-  // 1. 加载等待队列
-  await loadQueue();
+  // 1. 并行加载等待队列 + 已接入会话（Promise.all 替代串行）
+  const [, activeSessions] = await Promise.all([
+    loadQueue(),
+    getActiveSessionsApi().catch(() => [] as typeof activeSessions),
+  ]);
 
-  // 2. 恢复刷新前已接入的 ACTIVE 会话（防止刷新丢失）
-  try {
-    const activeSessions = await getActiveSessionsApi();
-    for (const item of activeSessions) {
-      const history = (await rawRequestClient.get(
-        `/chat-api/chat/history?sessionId=${item.sessionId}`,
-      )) as Array<{ content: string; role: string }>;
-      const loadedMsgs: Msg[] = (history ?? []).map((h, i) => ({
+  // 2. 并行加载所有 ACTIVE 会话的历史消息（Promise.all 替代 for await 串行）
+  if (activeSessions.length > 0) {
+    const histories = await Promise.all(
+      activeSessions.map((item) =>
+        getSessionHistoryApi(item.sessionId).catch(() => []),
+      ),
+    );
+    activeSessions.forEach((item, idx) => {
+      const history = histories[idx] ?? [];
+      const loadedMsgs: Msg[] = history.map((h, i) => ({
         id: i + 1,
         role: (h.role === 'user' ? 'user' : 'ai') as 'agent' | 'ai' | 'user',
         text: h.content,
@@ -339,7 +272,7 @@ onMounted(async () => {
         name: item.userName,
         nameChar: item.userName.at(0) ?? '',
         color: '#8b5cf6',
-        min: formatWaitTime(item.waitSince),
+        min: '接待中',
         active: false,
         sessionCode: `#${item.sessionId}`,
         transferReason: item.transferReason,
@@ -352,78 +285,32 @@ onMounted(async () => {
         chunks: [],
         memory: '无历史记忆。',
       });
-    }
-    // 默认激活第一个恢复的会话，并重建 WebSocket 连接
-    if (sessions.value.length > 0) {
-      if (sessions.value[0]) sessions.value[0].active = true;
-      // 刷新后恢复所有 ACTIVE 会话的 WebSocket 连接
-      for (const item of activeSessions) {
-        connectAgentSession(item.sessionId);
-      }
-    }
-  } catch {
-    /* 恢复失败不影响主流程 */
+    });
+    // 激活第一个恢复会话，并重建所有 WebSocket 连接
+    if (sessions.value[0]) sessions.value[0].active = true;
+    activeSessions.forEach((item) => connectAgentSession(item.sessionId));
   }
 
-  // 3. 订阅 SSE 实时事件
-  eventSource = subscribeSessionEvents(
-    (event) => {
-      sseConnected.value = true; // 收到消息即确认连接正常
-      const sid = event.item?.sessionId;
-      if (!sid) return;
-
-      if (event.type === 'ENQUEUE') {
-        if (!queue.value.some((q) => q.id === sid)) {
-          queue.value.push({
-            id: sid,
-            name: event.item.userName,
-            color: '#f87171',
-            waitMin: '刚进入',
-            reason: event.item.transferReason,
-            tag: event.item.tag,
-            tagColor:
-              event.item.tag === '投诉'
-                ? 'red'
-                : event.item.tag === '退款'
-                  ? 'orange'
-                  : 'blue',
-          });
-          message.info(`新会话请求：${event.item.userName}`);
+  // 3. 订阅 SSE（composable 内置指数退避重连 + 等待时间定时刷新）
+  subscribeQueue(
+    undefined, // onEnqueue：composable 已处理入队通知
+    (sid) => {
+      // CLOSED 事件：同步清理本地 sessions
+      const closedIdx = sessions.value.findIndex((s) => s.id === sid);
+      if (closedIdx !== -1) {
+        const closedName = sessions.value[closedIdx]?.name ?? '';
+        disconnectAgentSession(sid);
+        sessions.value.splice(closedIdx, 1);
+        if (sessions.value.length > 0 && !sessions.value.some((s) => s.active) && sessions.value[0]) {
+          sessions.value[0].active = true;
         }
-      } else if (event.type === 'ACCEPTED') {
-        queue.value = queue.value.filter((q) => q.id !== sid);
-      } else if (event.type === 'CLOSED') {
-        queue.value = queue.value.filter((q) => q.id !== sid);
-        const closedIdx = sessions.value.findIndex((s) => s.id === sid);
-        if (closedIdx !== -1) {
-          disconnectAgentSession(sid);
-          sessions.value.splice(closedIdx, 1);
-          if (
-            sessions.value.length > 0 &&
-            !sessions.value.some((s) => s.active) &&
-            sessions.value[0]
-          ) {
-            sessions.value[0].active = true;
-          }
-          message.warning(`会话 ${event.item.userName} 已被关闭`);
-        }
+        message.warning(`会话 ${closedName} 已被关闭`);
       }
     },
-    () => {
-      sseConnected.value = false;
-    }, // onerror
-    () => {
-      sseConnected.value = true;
-    }, // onopen
   );
 });
 
-onUnmounted(() => {
-  eventSource?.close();
-  // 关闭所有座席 WebSocket 连接
-  agentWsMap.forEach((ws) => ws.close());
-  agentWsMap.clear();
-});
+// onUnmounted 由 composable 自动处理（eventSource.close + agentWsMap.clear）
 </script>
 
 <template>
