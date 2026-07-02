@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -19,6 +19,7 @@ import {
   Table,
   Tag,
   Tooltip,
+  TreeSelect,
 } from 'ant-design-vue';
 
 import {
@@ -100,7 +101,21 @@ function confirmDelete(row: MenuVO) {
   });
 }
 
-// 菜单类型配色
+// 将菜单树转为 TreeSelect 所需格式（只含目录和菜单，不含按钮）
+function toTreeSelectNodes(items: MenuVO[]): any[] {
+  return items
+    .filter(m => m.menuType !== 'BUTTON')
+    .map(m => ({
+      title: m.menuName,
+      value: m.id,
+      children: m.children ? toTreeSelectNodes(m.children) : [],
+    }));
+}
+
+// 顶级菜单选项（parentId=0）
+const parentOptions = computed(() => [
+  { title: '顶级菜单（根节点）', value: 0, children: toTreeSelectNodes(list.value) },
+]);
 const TYPE_COLOR: Record<string, string> = { DIRECTORY: 'processing', MENU: 'success', BUTTON: 'warning' };
 const TYPE_LABEL: Record<string, string> = { DIRECTORY: '目录', MENU: '菜单', BUTTON: '按钮' };
 
@@ -255,8 +270,14 @@ onMounted(loadList);
               <SelectOption value="BUTTON">按钮/接口</SelectOption>
             </Select>
           </FormItem>
-          <FormItem label="上级菜单 ID" class="flex-1">
-            <InputNumber v-model:value="form.parentId" :min="0" style="width:100%" />
+          <FormItem label="上级菜单" class="flex-1">
+            <TreeSelect
+              v-model:value="form.parentId"
+              :tree-data="parentOptions"
+              :tree-default-expand-all="true"
+              placeholder="请选择上级菜单"
+              style="width:100%"
+            />
           </FormItem>
         </div>
         <div class="flex gap-3">
