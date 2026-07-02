@@ -119,6 +119,14 @@ const parentOptions = computed(() => [
 const TYPE_COLOR: Record<string, string> = { DIRECTORY: 'processing', MENU: 'success', BUTTON: 'warning' };
 const TYPE_LABEL: Record<string, string> = { DIRECTORY: '目录', MENU: '菜单', BUTTON: '按钮' };
 
+function onExpand(expanded: boolean, record: MenuVO) {
+  if (expanded) {
+    expandedRowKeys.value = [...expandedRowKeys.value, record.id];
+  } else {
+    expandedRowKeys.value = expandedRowKeys.value.filter(k => k !== record.id);
+  }
+}
+
 const columns = [
   { title: '菜单名称', key: 'name',  width: 220 },
   { title: '类型',    key: 'type',   width: 72  },
@@ -149,10 +157,7 @@ onMounted(loadList);
       :pagination="false"
       :expanded-row-keys="expandedRowKeys"
       size="small"
-      @expand="(expanded: boolean, record: MenuVO) => {
-        if (expanded) expandedRowKeys.value.push(record.id)
-        else expandedRowKeys.value = expandedRowKeys.value.filter(k => k !== record.id)
-      }"
+      @expand="onExpand"
     >
       <template #bodyCell="{ column, record }">
 
