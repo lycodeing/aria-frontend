@@ -49,16 +49,6 @@ const routes: RouteRecordRaw[] = [
           title: $t('page.customerservice.agent'),
         },
       },
-      {
-        name: 'CustomerServiceAiModels',
-        path: '/customerservice/ai-models',
-        component: () => import('#/views/customerservice/ai-models/index.vue'),
-        meta: {
-          authority: ['super_admin'],
-          icon: 'lucide:cpu',
-          title: $t('page.customerservice.aiModels'),
-        },
-      },
     ],
   },
 ];
