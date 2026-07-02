@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
+import { Icon } from '@iconify/vue';
 import {
   Button,
   Form,
@@ -17,6 +18,7 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
 } from 'ant-design-vue';
 
 import {
@@ -39,13 +41,12 @@ const loading = ref(false);
 
 async function loadList() {
   loading.value = true;
-  try {
-    list.value = (await getAllMenuTreeApi() as any) ?? [];
-  } catch { message.error('加载失败'); }
+  try { list.value = (await getAllMenuTreeApi() as any) ?? []; }
+  catch { message.error('加载失败'); }
   finally { loading.value = false; }
 }
 
-// ===== 新增/编辑 =====
+// ===== 弹窗 =====
 const modalOpen  = ref(false);
 const editingId  = ref<null | number>(null);
 const submitting = ref(false);
@@ -62,35 +63,26 @@ function openCreate(parentId = 0) {
   Object.assign(form, emptyForm(), { parentId });
   modalOpen.value = true;
 }
-
 function openEdit(row: MenuVO) {
   editingId.value = row.id;
   Object.assign(form, { ...row });
   modalOpen.value = true;
 }
-
 async function submit() {
   if (!form.menuName || !form.menuKey) { message.warning('请填写菜单名称和标识'); return; }
   submitting.value = true;
   try {
-    if (editingId.value) {
-      await updateMenuApi(editingId.value, { ...form });
-      message.success('更新成功');
-    } else {
-      await createMenuApi({ ...form });
-      message.success('创建成功');
-    }
-    modalOpen.value = false;
-    loadList();
-  } catch (e: any) {
-    message.error(e?.response?.data?.msg ?? '操作失败');
-  } finally { submitting.value = false; }
+    editingId.value
+      ? (await updateMenuApi(editingId.value, { ...form }), message.success('更新成功'))
+      : (await createMenuApi({ ...form }), message.success('创建成功'));
+    modalOpen.value = false; loadList();
+  } catch (e: any) { message.error(e?.response?.data?.msg ?? '操作失败'); }
+  finally { submitting.value = false; }
 }
-
 function confirmDelete(row: MenuVO) {
   Modal.confirm({
-    title: `确认删除「${row.menuName}」？`,
-    content: '有子菜单时无法删除，需先删除子菜单。',
+    title: `删除「${row.menuName}」？`,
+    content: '有子菜单时后端会拒绝，需先删除子项。',
     okType: 'danger',
     async onOk() {
       try { await deleteMenuApi(row.id); message.success('已删除'); loadList(); }
@@ -99,17 +91,18 @@ function confirmDelete(row: MenuVO) {
   });
 }
 
-const MENU_TYPE_COLOR: Record<string, string> = { DIRECTORY: 'blue', MENU: 'green', BUTTON: 'orange' };
-const MENU_TYPE_LABEL: Record<string, string> = { DIRECTORY: '目录', MENU: '菜单', BUTTON: '按钮' };
+// 菜单类型配色
+const TYPE_COLOR: Record<string, string> = { DIRECTORY: 'processing', MENU: 'success', BUTTON: 'warning' };
+const TYPE_LABEL: Record<string, string> = { DIRECTORY: '目录', MENU: '菜单', BUTTON: '按钮' };
 
 const columns = [
-  { title: '菜单名称', dataIndex: 'menuName', key: 'menuName', width: 200 },
-  { title: '类型',     key: 'menuType',  width: 80 },
-  { title: '标识/路径', key: 'pathInfo', width: 200 },
-  { title: '组件',     dataIndex: 'component', key: 'component' },
-  { title: '排序',     dataIndex: 'sortOrder', key: 'sortOrder', width: 60 },
-  { title: '状态',     key: 'status',    width: 70 },
-  { title: '操作',     key: 'action',    width: 180 },
+  { title: '菜单名称', key: 'name',  width: 220 },
+  { title: '类型',    key: 'type',   width: 72  },
+  { title: '路由路径', key: 'path',  width: 220 },
+  { title: '权限/组件', key: 'perm', },
+  { title: '排序',    dataIndex: 'sortOrder', key: 'sort', width: 60, align: 'center' as const },
+  { title: '状态',    key: 'status', width: 70, align: 'center' as const },
+  { title: '操作',    key: 'action', width: 120, align: 'center' as const },
 ];
 
 onMounted(loadList);
@@ -118,76 +111,172 @@ onMounted(loadList);
 <template>
   <Page title="菜单管理" description="管理系统菜单、路由和按钮权限">
     <template #extra>
-      <Button type="primary" @click="openCreate()">+ 新增菜单</Button>
+      <Button type="primary" @click="openCreate()">
+        <template #icon><Icon icon="lucide:plus" /></template>
+        新增菜单
+      </Button>
     </template>
 
-    <Table :columns="columns" :data-source="list" :loading="loading"
-           row-key="id" :pagination="false" bordered size="small"
-           :default-expand-all-rows="true">
+    <Table
+      :columns="columns"
+      :data-source="list"
+      :loading="loading"
+      row-key="id"
+      :pagination="false"
+      :default-expand-all-rows="true"
+      size="small"
+    >
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'menuType'">
-          <Tag :color="MENU_TYPE_COLOR[record.menuType]">{{ MENU_TYPE_LABEL[record.menuType] }}</Tag>
+
+        <!-- 菜单名称：图标 + 名称 -->
+        <template v-if="column.key === 'name'">
+          <span class="flex items-center gap-1.5">
+            <Icon
+              v-if="record.icon"
+              :icon="record.icon"
+              class="shrink-0 opacity-60"
+              :style="{ fontSize: '15px' }"
+            />
+            <span class="font-medium">{{ record.menuName }}</span>
+          </span>
         </template>
-        <template v-else-if="column.key === 'pathInfo'">
-          <span class="text-xs text-gray-400">{{ record.menuKey }}</span>
-          <span v-if="record.path" class="ml-1 text-xs">{{ record.path }}</span>
-        </template>
-        <template v-else-if="column.key === 'status'">
-          <Tag :color="record.status === 'active' ? 'green' : 'default'">
-            {{ record.status === 'active' ? '启用' : '禁用' }}
+
+        <!-- 类型 tag -->
+        <template v-else-if="column.key === 'type'">
+          <Tag :color="TYPE_COLOR[record.menuType]" style="margin:0">
+            {{ TYPE_LABEL[record.menuType] }}
           </Tag>
         </template>
+
+        <!-- 路由路径 -->
+        <template v-else-if="column.key === 'path'">
+          <div v-if="record.path || record.menuKey" class="flex flex-col gap-0.5">
+            <span v-if="record.path" class="font-mono text-xs">{{ record.path }}</span>
+            <span class="text-xs opacity-40">{{ record.menuKey }}</span>
+          </div>
+        </template>
+
+        <!-- 权限标识 / 组件路径 -->
+        <template v-else-if="column.key === 'perm'">
+          <template v-if="record.menuType === 'BUTTON'">
+            <code class="rounded bg-amber-50 px-1 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+              {{ record.permissionKey }}
+            </code>
+          </template>
+          <template v-else-if="record.component">
+            <Tooltip :title="record.component" placement="topLeft">
+              <span class="max-w-[200px] truncate font-mono text-xs opacity-50 block">
+                {{ record.component }}
+              </span>
+            </Tooltip>
+          </template>
+        </template>
+
+        <!-- 状态 -->
+        <template v-else-if="column.key === 'status'">
+          <span
+            :class="[
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
+              record.status === 'active'
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+            ]"
+          >
+            <span
+              :class="['h-1.5 w-1.5 rounded-full', record.status === 'active' ? 'bg-emerald-500' : 'bg-gray-400']"
+            />
+            {{ record.status === 'active' ? '启用' : '禁用' }}
+          </span>
+        </template>
+
+        <!-- 操作：图标按钮 -->
         <template v-else-if="column.key === 'action'">
           <Space size="small">
-            <Button size="small" @click="openCreate(record.id)">添加子项</Button>
-            <Button size="small" @click="openEdit(record)">编辑</Button>
-            <Button size="small" danger @click="confirmDelete(record)">删除</Button>
+            <Tooltip title="添加子项">
+              <Button
+                type="text" size="small"
+                class="text-blue-500 hover:text-blue-600"
+                @click="openCreate(record.id)"
+              >
+                <template #icon><Icon icon="lucide:plus-circle" /></template>
+              </Button>
+            </Tooltip>
+            <Tooltip title="编辑">
+              <Button
+                type="text" size="small"
+                class="text-slate-500 hover:text-slate-700"
+                @click="openEdit(record)"
+              >
+                <template #icon><Icon icon="lucide:pencil" /></template>
+              </Button>
+            </Tooltip>
+            <Tooltip title="删除">
+              <Button
+                type="text" size="small"
+                class="text-red-400 hover:text-red-600"
+                @click="confirmDelete(record)"
+              >
+                <template #icon><Icon icon="lucide:trash-2" /></template>
+              </Button>
+            </Tooltip>
           </Space>
         </template>
+
       </template>
     </Table>
 
-    <Modal v-model:open="modalOpen" :title="editingId ? '编辑菜单' : '新增菜单'"
-           :confirm-loading="submitting" width="560px" @ok="submit">
-      <Form layout="vertical" style="margin-top:16px">
-        <div style="display:flex;gap:12px">
-          <FormItem label="类型" required style="flex:1">
+    <!-- 新增/编辑弹窗 -->
+    <Modal
+      v-model:open="modalOpen"
+      :title="editingId ? '编辑菜单' : '新增菜单'"
+      :confirm-loading="submitting"
+      width="580px"
+      @ok="submit"
+    >
+      <Form layout="vertical" class="mt-4 space-y-1">
+        <div class="flex gap-3">
+          <FormItem label="类型" required class="flex-1">
             <Select v-model:value="form.menuType">
               <SelectOption value="DIRECTORY">目录</SelectOption>
               <SelectOption value="MENU">菜单</SelectOption>
               <SelectOption value="BUTTON">按钮/接口</SelectOption>
             </Select>
           </FormItem>
-          <FormItem label="上级菜单 ID" style="flex:1">
+          <FormItem label="上级菜单 ID" class="flex-1">
             <InputNumber v-model:value="form.parentId" :min="0" style="width:100%" />
           </FormItem>
         </div>
-        <div style="display:flex;gap:12px">
-          <FormItem label="菜单名称" required style="flex:1">
+        <div class="flex gap-3">
+          <FormItem label="菜单名称" required class="flex-1">
             <Input v-model:value="form.menuName" placeholder="如：用户管理" />
           </FormItem>
-          <FormItem label="菜单标识（name）" required style="flex:1">
+          <FormItem label="路由标识（name）" required class="flex-1">
             <Input v-model:value="form.menuKey" placeholder="如：SystemUser" />
           </FormItem>
         </div>
         <template v-if="form.menuType !== 'BUTTON'">
-          <div style="display:flex;gap:12px">
-            <FormItem label="路由路径" style="flex:1">
+          <div class="flex gap-3">
+            <FormItem label="路由路径" class="flex-1">
               <Input v-model:value="form.path" placeholder="/system/user" />
             </FormItem>
-            <FormItem label="组件路径" style="flex:1">
+            <FormItem label="组件路径" class="flex-1">
               <Input v-model:value="form.component" placeholder="system/user/index" />
             </FormItem>
           </div>
-          <div style="display:flex;gap:12px">
-            <FormItem label="图标" style="flex:1">
-              <Input v-model:value="form.icon" placeholder="lucide:users" />
+          <div class="flex gap-3">
+            <FormItem label="图标" class="flex-1">
+              <Input v-model:value="form.icon" placeholder="lucide:users">
+                <template #prefix>
+                  <Icon v-if="form.icon" :icon="form.icon" class="opacity-50" />
+                  <Icon v-else icon="lucide:image" class="opacity-30" />
+                </template>
+              </Input>
             </FormItem>
-            <FormItem label="排序" style="flex:1">
+            <FormItem label="排序" class="w-24">
               <InputNumber v-model:value="form.sortOrder" :min="0" style="width:100%" />
             </FormItem>
           </div>
-          <div style="display:flex;gap:24px">
+          <div class="flex gap-6">
             <FormItem label="是否显示">
               <Switch v-model:checked="form.isVisible" checked-children="显示" un-checked-children="隐藏" />
             </FormItem>
@@ -202,13 +291,13 @@ onMounted(loadList);
           </FormItem>
         </template>
         <FormItem label="状态">
-          <Select v-model:value="form.status">
+          <Select v-model:value="form.status" style="width:160px">
             <SelectOption value="active">启用</SelectOption>
             <SelectOption value="inactive">禁用</SelectOption>
           </Select>
         </FormItem>
         <FormItem label="备注">
-          <Input v-model:value="form.remark" placeholder="可选" />
+          <Input v-model:value="form.remark" placeholder="可选备注" />
         </FormItem>
       </Form>
     </Modal>
