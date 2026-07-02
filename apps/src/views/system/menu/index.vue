@@ -38,10 +38,19 @@ interface MenuVO {
 
 const list    = ref<MenuVO[]>([]);
 const loading = ref(false);
+const expandedRowKeys = ref<number[]>([]);
+
+// 递归收集所有节点 id 用于展开
+function collectIds(items: MenuVO[]): number[] {
+  return items.flatMap(m => [m.id, ...collectIds(m.children ?? [])]);
+}
 
 async function loadList() {
   loading.value = true;
-  try { list.value = (await getAllMenuTreeApi() as any) ?? []; }
+  try {
+    list.value = (await getAllMenuTreeApi() as any) ?? [];
+    expandedRowKeys.value = collectIds(list.value);
+  }
   catch { message.error('加载失败'); }
   finally { loading.value = false; }
 }
@@ -123,8 +132,12 @@ onMounted(loadList);
       :loading="loading"
       row-key="id"
       :pagination="false"
-      :default-expand-all-rows="true"
+      :expanded-row-keys="expandedRowKeys"
       size="small"
+      @expand="(expanded: boolean, record: MenuVO) => {
+        if (expanded) expandedRowKeys.value.push(record.id)
+        else expandedRowKeys.value = expandedRowKeys.value.filter(k => k !== record.id)
+      }"
     >
       <template #bodyCell="{ column, record }">
 
