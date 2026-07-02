@@ -37,6 +37,16 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        name: 'SystemMenu',
+        path: '/system/menu',
+        component: () => import('#/views/system/menu/index.vue'),
+        meta: {
+          authority: ['super_admin'],
+          icon: 'lucide:layout-list',
+          title: '菜单管理',
+        },
+      },
+      {
         name: 'SystemAiModel',
         path: '/system/ai-model',
         component: () => import('#/views/system/ai-model/index.vue'),
