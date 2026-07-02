@@ -20,6 +20,9 @@ export const overridesPreferences = defineOverridesPreferences({
   // overrides
   app: {
     name: import.meta.env.VITE_APP_TITLE,
+    // backend 模式：菜单从服务端 /menus/me 动态加载，权限由 DB 的 sys_role_menu 控制
+    // frontend 模式（默认）：菜单从前端静态路由文件直接渲染
+    accessMode: 'backend',
   },
   copyright: appCopyrightPreferences,
 });
