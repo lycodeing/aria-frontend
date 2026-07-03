@@ -456,23 +456,52 @@ async function replyFor(text: string) {
     if (!response.body) throw new Error('No response body');
     reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let lineBuffer = '';
+    let currentEvent = '';
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      const raw = decoder.decode(value, { stream: true });
-      for (const line of raw.split('\n')) {
+      lineBuffer += decoder.decode(value, { stream: true });
+      const lines = lineBuffer.split('\n');
+      lineBuffer = lines.pop() ?? '';
+
+      for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed.startsWith('data:')) continue;
-        const data = trimmed.slice(5).trim();
-        if (data === '[DONE]') {
-          streaming.value = false;
-          // S-06：[DONE] 收到后释放 ReadableStream，避免底层流未关闭
-          await reader.cancel();
-          return;
+
+        if (trimmed === '') {
+          currentEvent = '';
+          continue;
         }
-        if (data) {
-          m.text += data;
-          scrollBottom();
+        if (trimmed.startsWith(':')) continue;
+        if (trimmed.startsWith('event:')) {
+          currentEvent = trimmed.slice(6).trim();
+          continue;
+        }
+        if (trimmed.startsWith('data:')) {
+          const data = trimmed.slice(5).trim();
+          if (data === '[DONE]') {
+            streaming.value = false;
+            // S-06：[DONE] 收到后释放 ReadableStream，避免底层流未关闭
+            await reader.cancel();
+            return;
+          }
+          if (currentEvent === 'sources') {
+            try {
+              m.sources = JSON.parse(data);
+            } catch {
+              /* 忽略 */
+            }
+          } else if (currentEvent === 'error') {
+            m.text = data;
+            m.failed = true;
+            streaming.value = false;
+            await reader.cancel();
+            return;
+          } else if (data) {
+            m.text += data;
+            scrollBottom();
+          }
         }
       }
     }

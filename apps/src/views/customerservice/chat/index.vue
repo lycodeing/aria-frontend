@@ -161,23 +161,58 @@ async function replyFor(text: string) {
     if (!response.body) throw new Error('No response body');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let lineBuffer = '';
+    let currentEvent = ''; // 当前 SSE 事件类型，默认为空（普通 data 事件）
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      const raw = decoder.decode(value, { stream: true });
-      // SSE 格式：每行以 "data:" 开头
-      for (const line of raw.split('\n')) {
+      lineBuffer += decoder.decode(value, { stream: true });
+      const lines = lineBuffer.split('\n');
+      // 最后一行可能未结束，暂存到 buffer 等下一个 chunk
+      lineBuffer = lines.pop() ?? '';
+
+      for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed.startsWith('data:')) continue;
-        const data = trimmed.slice(5).trim();
-        if (data === '[DONE]') {
-          streaming.value = false;
-          return;
+
+        // 空行：SSE 事件分隔符，重置事件类型
+        if (trimmed === '') {
+          currentEvent = '';
+          continue;
         }
-        if (data) {
-          m.text += data;
-          scrollBottom();
+
+        // event 行：记录事件类型
+        if (trimmed.startsWith('event:')) {
+          currentEvent = trimmed.slice(6).trim();
+          continue;
+        }
+
+        // comment 行（心跳）：跳过
+        if (trimmed.startsWith(':')) continue;
+
+        // data 行
+        if (trimmed.startsWith('data:')) {
+          const data = trimmed.slice(5).trim();
+          if (data === '[DONE]') {
+            streaming.value = false;
+            return;
+          }
+          if (currentEvent === 'sources') {
+            // 知识库溯源：解析后存入 m.sources，不拼入文本
+            try {
+              m.sources = JSON.parse(data);
+            } catch {
+              /* 解析失败忽略 */
+            }
+          } else if (currentEvent === 'error') {
+            m.text = data;
+            streaming.value = false;
+            return;
+          } else if (data) {
+            // 普通 AI token：拼入回复文本
+            m.text += data;
+            scrollBottom();
+          }
         }
       }
     }
