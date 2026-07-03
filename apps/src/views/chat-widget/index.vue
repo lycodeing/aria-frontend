@@ -441,6 +441,9 @@ async function replyFor(text: string) {
     retryText: text,
   };
   msgs.value.push(m);
+  // Vue 3 deep reactivity: push 后 msgs.value 中的元素已被包装为 reactive proxy，
+  // 必须通过 reactive 引用修改，否则直接操作 plain object 不会触发 UI 更新
+  const rm = msgs.value[msgs.value.length - 1]!;
   scrollBottom();
 
   let reader: null | ReadableStreamDefaultReader<Uint8Array> = null;
@@ -488,18 +491,18 @@ async function replyFor(text: string) {
           }
           if (currentEvent === 'sources') {
             try {
-              m.sources = JSON.parse(data);
+              rm.sources = JSON.parse(data);
             } catch {
               /* 忽略 */
             }
           } else if (currentEvent === 'error') {
-            m.text = data;
-            m.failed = true;
+            rm.text = data;
+            rm.failed = true;
             streaming.value = false;
             await reader.cancel();
             return;
           } else if (data) {
-            m.text += data;
+            rm.text += data;
             scrollBottom();
           }
         }
@@ -510,8 +513,8 @@ async function replyFor(text: string) {
     if (error instanceof Error && error.name === 'AbortError') {
       return;
     }
-    m.text = '抱歉，AI 服务暂时不可用，请点击重试。';
-    m.failed = true;
+    rm.text = '抱歉，AI 服务暂时不可用，请点击重试。';
+    rm.failed = true;
   } finally {
     streaming.value = false;
     // 确保 reader 被释放（finally 覆盖 [DONE] 之外的正常/异常退出路径）

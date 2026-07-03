@@ -11,10 +11,10 @@ export default defineConfig(async () => {
           // 生产环境 nginx 按同样规则路由到不同服务
           // ----------------------------------------------------------------
 
-          // knowledge-service (8081)：路径本身就是 /api/knowledge/**，无需 rewrite
+          // knowledge-service (8084)：路径本身就是 /api/knowledge/**，无需 rewrite
           '/api/knowledge': {
             changeOrigin: true,
-            target: 'http://localhost:8081',
+            target: 'http://localhost:8084',
           },
 
           // conversation-service (8082)：对话 + 会话队列
