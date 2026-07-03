@@ -1,11 +1,12 @@
 <script lang="ts" setup>
-import type { AiModelConfigItem } from '#/api/ai-model';
+import type { AiModelConfigItem, AiModelTestResult } from '#/api/ai-model';
 
 import { computed, onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
 import {
+  Alert,
   Button,
   Form,
   FormItem,
@@ -17,6 +18,7 @@ import {
   Select,
   SelectOption,
   Space,
+  Spin,
   Table,
   TabPane,
   Tabs,
@@ -32,6 +34,7 @@ import {
   PROVIDER_PROTOCOL_MAP,
   PROVIDERS,
   setDefaultAiModelApi,
+  testAiModelApi,
   updateAiModelApi,
 } from '#/api/ai-model';
 
@@ -185,6 +188,32 @@ function confirmDelete(row: AiModelConfigItem) {
 
 onMounted(loadList);
 
+// ===== 测试连接 =====
+const testingId   = ref<number | null>(null);
+const testResult  = ref<AiModelTestResult | null>(null);
+const testVisible = ref(false);
+const testName    = ref('');
+
+async function testConnection(row: AiModelConfigItem) {
+  testingId.value  = row.id;
+  testResult.value = null;
+  testVisible.value = true;
+  testName.value = row.name;
+  try {
+    const res = await testAiModelApi(row.id);
+    testResult.value = res as unknown as AiModelTestResult;
+  } catch (error: unknown) {
+    const err = error as { response?: { data?: { msg?: string } } };
+    testResult.value = {
+      success: false,
+      latencyMs: 0,
+      message: err?.response?.data?.msg ?? '请求失败，请检查网络或服务状态',
+    };
+  } finally {
+    testingId.value = null;
+  }
+}
+
 // ===== 表格列定义（两个 TAB 列结构略有不同） =====
 const chatColumns = [
   { title: '名称', dataIndex: 'name', key: 'name' },
@@ -254,6 +283,13 @@ const columns = computed(() =>
               设为默认
             </Button>
             <Button size="small" @click="openEdit(record as AiModelConfigItem)">编辑</Button>
+            <Button
+              size="small"
+              :loading="testingId === (record as AiModelConfigItem).id"
+              @click="testConnection(record as AiModelConfigItem)"
+            >
+              测试连接
+            </Button>
             <Button
               size="small"
               danger
@@ -381,6 +417,29 @@ const columns = computed(() =>
           <Textarea v-model:value="form.remark" :rows="2" placeholder="可选备注" />
         </FormItem>
       </Form>
+    </Modal>
+
+    <!-- 测试连接结果 Modal -->
+    <Modal
+      v-model:open="testVisible"
+      :title="`测试连接 — ${testName}`"
+      :footer="null"
+      width="440px"
+    >
+      <div style="padding: 16px 0; min-height: 80px; display: flex; align-items: center; justify-content: center;">
+        <Spin v-if="testingId !== null" tip="连接测试中，请稍候…" />
+        <div v-else-if="testResult" style="width: 100%">
+          <Alert
+            :type="testResult.success ? 'success' : 'error'"
+            :message="testResult.success ? '连接成功' : '连接失败'"
+            :description="testResult.message"
+            show-icon
+          />
+          <p style="margin-top: 10px; color: #888; font-size: 12px; text-align: right;">
+            延迟：{{ testResult.latencyMs }} ms
+          </p>
+        </div>
+      </div>
     </Modal>
   </Page>
 </template>

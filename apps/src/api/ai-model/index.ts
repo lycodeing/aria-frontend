@@ -102,3 +102,18 @@ export async function setDefaultAiModelApi(id: number) {
 export async function deleteAiModelApi(id: number) {
   return requestClient.delete<void>(`/admin/ai-models/${id}`);
 }
+
+export interface AiModelTestResult {
+  success: boolean;
+  latencyMs: number;
+  message: string;
+}
+
+/**
+ * 测试模型连通性。
+ * CHAT：向 /v1/chat/completions 发送极简非流式请求，验证 API Key + 地址
+ * EMBEDDING：向 /v1/embeddings 发送一条测试文本，验证向量服务可访问
+ */
+export async function testAiModelApi(id: number) {
+  return requestClient.post<AiModelTestResult>(`/admin/ai-models/${id}/test`);
+}
