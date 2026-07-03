@@ -134,7 +134,7 @@ function sendMsg() {
 
 /**
  * 调用 conversation-service SSE 流式接口获取 AI 回复。
- * 代理规则：/chat-api → http://localhost:8082/api/v1
+ * 代理规则：/api/v1/chat → http://localhost:8082
  */
 async function replyFor(text: string) {
   streaming.value = true;
@@ -150,7 +150,7 @@ async function replyFor(text: string) {
   scrollBottom();
 
   try {
-    const response = await fetch('/chat-api/chat/stream', {
+    const response = await fetch('/api/v1/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: sessionId.value, message: text }),

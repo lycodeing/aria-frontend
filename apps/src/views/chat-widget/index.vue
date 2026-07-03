@@ -445,7 +445,7 @@ async function replyFor(text: string) {
 
   let reader: null | ReadableStreamDefaultReader<Uint8Array> = null;
   try {
-    const response = await fetch('/chat-api/chat/stream', {
+    const response = await fetch('/api/v1/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: sessionId.value, message: text }),

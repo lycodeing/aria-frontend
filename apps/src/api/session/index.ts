@@ -9,7 +9,7 @@ import {
 
 /**
  * agentClient：带 Authorization token（rawRequestClient 已注入 token 拦截器），baseURL 为空，
- *              用于走 vite proxy 的 /chat-api/* 路径（避免 /api 前缀拼接成 /api/chat-api/*）。
+ *              用于走 vite proxy 的 /api/v1/* 路径（避免 /api 前缀拼接成 /api/api/v1/*）。
  *
  * publicClient：I-03 修复 — 独立 RequestClient 实例，不注册 token 拦截器。
  *              /chat 页无需登录，与座席 token 共用 rawRequestClient 会导致访客请求
@@ -24,9 +24,9 @@ void requestClient;
 // 访客身份验证（手机号 + 短信验证码）
 // -------------------------------------------------------
 
-/** 发送短信验证码（后端路径 /api/v1/chat/auth/sms/send，经 /chat-api → /api/v1 重写） */
+/** 发送短信验证码（后端路径 /api/v1/chat/auth/sms/send → conversation-service:8082） */
 export async function sendSmsCodeApi(phone: string): Promise<void> {
-  return publicClient.post('/chat-api/chat/auth/sms/send', { phone });
+  return publicClient.post('/api/v1/chat/auth/sms/send', { phone });
 }
 
 /** 校验短信验证码，成功返回访客 token */
@@ -34,7 +34,7 @@ export async function verifySmsCodeApi(
   phone: string,
   code: string,
 ): Promise<{ token: string }> {
-  return publicClient.post('/chat-api/chat/auth/sms/verify', { phone, code });
+  return publicClient.post('/api/v1/chat/auth/sms/verify', { phone, code });
 }
 
 export interface SessionQueueItem {
@@ -71,24 +71,24 @@ export interface ChatHistoryItem {
 
 /** 获取等待队列（座席端，需 token） */
 export async function getSessionQueueApi(): Promise<SessionQueueItem[]> {
-  return agentClient.get('/chat-api/sessions/queue');
+  return agentClient.get('/api/v1/sessions/queue');
 }
 
 /** 获取进行中的会话（座席端，刷新恢复用，需 token） */
 export async function getActiveSessionsApi(): Promise<SessionQueueItem[]> {
-  return agentClient.get('/chat-api/sessions/active');
+  return agentClient.get('/api/v1/sessions/active');
 }
 
 /** 座席接入会话（需 token） */
 export async function acceptSessionApi(
   sessionId: string,
 ): Promise<SessionQueueItem> {
-  return agentClient.post(`/chat-api/sessions/${sessionId}/accept`);
+  return agentClient.post(`/api/v1/sessions/${sessionId}/accept`);
 }
 
 /** 获取结束会话（需 token） */
 export async function closeSessionApi(sessionId: string): Promise<void> {
-  return agentClient.post(`/chat-api/sessions/${sessionId}/close`);
+  return agentClient.post(`/api/v1/sessions/${sessionId}/close`);
 }
 
 /**
@@ -101,7 +101,7 @@ export async function getSessionHistoryApi(
   sessionId: string,
   sinceSeq = 0,
 ): Promise<ChatHistoryItem[]> {
-  return agentClient.get('/chat-api/chat/history', {
+  return agentClient.get('/api/v1/chat/history', {
     params: { sessionId, sinceSeq },
   });
 }
@@ -115,7 +115,7 @@ export async function getVisitorHistoryApi(
   sessionId: string,
   sinceSeq = 0,
 ): Promise<ChatHistoryItem[]> {
-  return publicClient.get('/chat-api/chat/history', {
+  return publicClient.get('/api/v1/chat/history', {
     params: { sessionId, sinceSeq },
   });
 }
@@ -127,7 +127,7 @@ export async function transferToAgentApi(params: {
   transferReason?: string;
   userName: string;
 }): Promise<SessionQueueItem> {
-  return publicClient.post('/chat-api/chat/transfer', params);
+  return publicClient.post('/api/v1/chat/transfer', params);
 }
 
 // -------------------------------------------------------
@@ -146,7 +146,7 @@ export interface OnlineAgentItem {
 
 /** 获取在线座席列表（用于转交 Modal） */
 export async function getOnlineAgentsApi(): Promise<OnlineAgentItem[]> {
-  return agentClient.get('/chat-api/sessions/agents/online');
+  return agentClient.get('/api/v1/sessions/agents/online');
 }
 
 /**
@@ -157,7 +157,7 @@ export async function transferSessionApi(
   sessionId: string,
   targetAgentId: string,
 ): Promise<void> {
-  return agentClient.post(`/chat-api/sessions/${sessionId}/transfer`, {
+  return agentClient.post(`/api/v1/sessions/${sessionId}/transfer`, {
     targetAgentId,
   });
 }
@@ -189,8 +189,8 @@ export function subscribeSessionEvents(
   const accessStore = useAccessStore();
   const token = accessStore.accessToken ?? '';
   const url = token
-    ? `/chat-api/sessions/events?token=${encodeURIComponent(token)}`
-    : '/chat-api/sessions/events';
+    ? `/api/v1/sessions/events?token=${encodeURIComponent(token)}`
+    : '/api/v1/sessions/events';
   const es = new EventSource(url);
   es.addEventListener('open', () => onOpen?.());
   es.addEventListener('message', (e) => {

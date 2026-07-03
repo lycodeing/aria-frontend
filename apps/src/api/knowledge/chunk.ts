@@ -5,14 +5,14 @@ const requestClient = rawRequestClient;
 /** 禁用 Chunk（retrieval_weight=0） */
 export async function disableChunkApi(chunkId: string): Promise<void> {
   return requestClient.post(
-    `/knowledge-api/api/knowledge/chunks/${chunkId}/disable`,
+    `/api/knowledge/chunks/${chunkId}/disable`,
   );
 }
 
 /** 启用 Chunk（retrieval_weight=1.0） */
 export async function enableChunkApi(chunkId: string): Promise<void> {
   return requestClient.post(
-    `/knowledge-api/api/knowledge/chunks/${chunkId}/enable`,
+    `/api/knowledge/chunks/${chunkId}/enable`,
   );
 }
 
@@ -22,7 +22,7 @@ export async function updateChunkContentApi(
   content: string,
 ): Promise<void> {
   return requestClient.put(
-    `/knowledge-api/api/knowledge/chunks/${chunkId}/content`,
+    `/api/knowledge/chunks/${chunkId}/content`,
     { content },
   );
 }
@@ -34,7 +34,7 @@ export async function addQAChunkApi(
   question: string,
   answer: string,
 ): Promise<void> {
-  return requestClient.post('/knowledge-api/api/knowledge/chunks/qa', {
+  return requestClient.post('/api/knowledge/chunks/qa', {
     docId,
     kbId,
     question,
