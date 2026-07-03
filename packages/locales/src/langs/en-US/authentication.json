@@ -1,10 +1,10 @@
 {
   "welcomeBack": "Welcome Back",
-  "pageTitle": "Plug-and-play Admin system",
-  "pageDesc": "Efficient, versatile frontend template",
+  "pageTitle": "AI Customer Service Platform",
+  "pageDesc": "Chat Management · Knowledge Base · Agent Workbench · All-in-one AI Customer Service",
   "loginSuccess": "Login Successful",
   "loginSuccessDesc": "Welcome Back",
-  "loginSubtitle": "Enter your account details to manage your projects",
+  "loginSubtitle": "Enter your account details to login",
   "selectAccount": "Quick Select Account",
   "username": "Username",
   "password": "Password",
