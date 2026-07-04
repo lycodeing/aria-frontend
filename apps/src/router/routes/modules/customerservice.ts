@@ -49,6 +49,39 @@ const routes: RouteRecordRaw[] = [
           title: $t('page.customerservice.agent'),
         },
       },
+      {
+        name: 'CustomerServiceDIT',
+        path: '/customerservice/dit',
+        meta: {
+          icon: 'lucide:settings-2',
+          order: 40,
+          title: 'DIT配置',
+        },
+        children: [
+          {
+            name: 'CustomerServiceDITDomains',
+            path: '/customerservice/dit/domains',
+            component: () =>
+              import('#/views/customerservice/dit/domains/index.vue'),
+            meta: {
+              authority: ['super_admin', 'kf_manager'],
+              icon: 'lucide:layers',
+              title: '领域与意图',
+            },
+          },
+          {
+            name: 'CustomerServiceDITTools',
+            path: '/customerservice/dit/tools',
+            component: () =>
+              import('#/views/customerservice/dit/tools/index.vue'),
+            meta: {
+              authority: ['super_admin', 'kf_manager'],
+              icon: 'lucide:wrench',
+              title: '工具注册中心',
+            },
+          },
+        ],
+      },
     ],
   },
 ];
