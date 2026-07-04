@@ -3,7 +3,8 @@
 // Vben Admin 通过给 <html> 加 dark class 切换主题，chat 页独立渲染需主动隔离
 import type { WsChatMessage } from '#/api/session';
 
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 
 import { Icon } from '@iconify/vue';
 import {
@@ -42,6 +43,10 @@ interface Msg {
   retryText?: string;
   /** WS 消息是否正在发送中（转人工模式下）*/
   sending?: boolean;
+  subType?: 'candidates' | 'normal' | 'slot_ask' | 'tool_call' | 'tool_done';
+  toolName?: string;
+  toolDurationMs?: number;
+  candidates?: Array<{ id: string; label: string }>;
 }
 
 function nowTime() {
@@ -73,6 +78,15 @@ const wsStatus = ref<'connected' | 'connecting' | 'disconnected'>(
 );
 let visitorWs: null | WebSocket = null;
 let msgId = 0;
+const route = useRoute();
+const domainCode = computed(() => (route.query.domain as string) || '');
+const slotInputText = ref('');
+function submitSlotInput() {
+  if (!slotInputText.value.trim()) return;
+  const text = slotInputText.value.trim();
+  slotInputText.value = '';
+  replyFor(text);
+}
 const sessionId = ref('');
 
 // WS 自动重连控制
@@ -211,7 +225,7 @@ function connectVisitorWsWithRetry(sid: string) {
 function handleVisitorWsMessage(msg: WsChatMessage) {
   // 跟踪 seq：每条 MESSAGE 类型消息都更新 lastSeq，重连时凭此拉增量
   // 后端 JacksonLongToStringConfig 将 Long 序列化为字符串，需要 Number() 归一化
-  if (msg.type === 'MESSAGE' && msg.seq != null) {
+  if (msg.type === 'MESSAGE' && msg.seq !== null && msg.seq !== undefined) {
     const seqNum = Number(msg.seq);
     if (Number.isFinite(seqNum)) writeLastSeq(sessionId.value, seqNum);
   }
@@ -241,7 +255,10 @@ async function fetchMissingMessages(sid: string) {
     const missing = await getVisitorHistoryApi(sid, sinceSeqSnapshot);
     for (const item of missing) {
       // seq 可能是 string（Long 序列化）或 number，统一归一化
-      const seqNum = item.seq == null ? Number.NaN : Number(item.seq);
+      const seqNum =
+        item.seq === null || item.seq === undefined
+          ? Number.NaN
+          : Number(item.seq);
       if (!Number.isFinite(seqNum) || seqNum <= sinceSeqSnapshot) continue;
       if (!item.content) continue;
       // 转人工后 AI 不再回复，访客端仅渲染 agent；assistant 历史已在 localStorage 中
@@ -443,7 +460,7 @@ async function replyFor(text: string) {
   msgs.value.push(m);
   // Vue 3 deep reactivity: push 后 msgs.value 中的元素已被包装为 reactive proxy，
   // 必须通过 reactive 引用修改，否则直接操作 plain object 不会触发 UI 更新
-  const rm = msgs.value[msgs.value.length - 1]!;
+  const rm = msgs.value[msgs.value.length - 1] as Msg;
   scrollBottom();
 
   let reader: null | ReadableStreamDefaultReader<Uint8Array> = null;
@@ -451,7 +468,11 @@ async function replyFor(text: string) {
     const response = await fetch('/api/v1/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: sessionId.value, message: text }),
+      body: JSON.stringify({
+        sessionId: sessionId.value,
+        message: text,
+        ...(domainCode.value ? { domainCode: domainCode.value } : {}),
+      }),
       signal, // S-06：绑定 AbortSignal，组件卸载时自动取消
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -501,6 +522,71 @@ async function replyFor(text: string) {
             streaming.value = false;
             await reader.cancel();
             return;
+          } else if (currentEvent === 'tool_call') {
+            try {
+              const payload = JSON.parse(data);
+              const idx = msgs.value.findIndex(
+                (m) => m.subType === 'tool_call' && m.toolName === payload.tool,
+              );
+              const toolMsg: Msg = {
+                id: msgId++,
+                role: 'ai',
+                text: `正在查询 ${payload.tool}...`,
+                subType: 'tool_call',
+                toolName: payload.tool,
+                time: nowTime(),
+              };
+              if (idx !== -1) msgs.value[idx] = toolMsg;
+              else msgs.value.push(toolMsg);
+            } catch {
+              /* ignore */
+            }
+          } else if (currentEvent === 'tool_done') {
+            try {
+              const payload = JSON.parse(data);
+              const idx = msgs.value.findIndex(
+                (m) => m.subType === 'tool_call' && m.toolName === payload.tool,
+              );
+              if (idx !== -1) {
+                const existing = msgs.value[idx];
+                if (existing) {
+                  msgs.value[idx] = {
+                    ...existing,
+                    subType: 'tool_done',
+                    text: `✅ ${payload.tool} 查询完成（${payload.duration_ms}ms）`,
+                    toolDurationMs: payload.duration_ms,
+                  };
+                }
+              }
+            } catch {
+              /* ignore */
+            }
+          } else if (currentEvent === 'slot_ask') {
+            msgs.value.push({
+              id: msgId++,
+              role: 'ai',
+              text: data,
+              subType: 'slot_ask',
+              time: nowTime(),
+            });
+            await nextTick();
+            scrollBottom();
+          } else if (currentEvent === 'candidates') {
+            try {
+              const list = JSON.parse(data);
+              msgs.value.push({
+                id: msgId++,
+                role: 'ai',
+                text: '请选择：',
+                subType: 'candidates',
+                candidates: Array.isArray(list) ? list : [],
+                time: nowTime(),
+              });
+              await nextTick();
+              scrollBottom();
+            } catch {
+              /* ignore */
+            }
           } else if (data) {
             rm.text += data;
             scrollBottom();
@@ -842,14 +928,68 @@ function clearHistory() {
               </span>
               <!-- Markdown 渲染 -->
               <template v-else-if="!m.failed">
-                <div
-                  v-if="m.role === 'ai'"
-                  class="widget-ai-md"
-                  v-html="marked.parse(m.text)"
-                ></div>
+                <template v-if="m.role === 'ai'">
+                  <!-- Tool call running -->
+                  <template v-if="m.subType === 'tool_call'">
+                    <div class="tool-bubble tool-running">🔄 {{ m.text }}</div>
+                  </template>
+
+                  <!-- Tool call done -->
+                  <template v-else-if="m.subType === 'tool_done'">
+                    <div class="tool-bubble tool-done">{{ m.text }}</div>
+                  </template>
+
+                  <!-- Slot ask -->
+                  <template v-else-if="m.subType === 'slot_ask'">
+                    <div class="slot-ask-bubble">
+                      <p>{{ m.text }}</p>
+                      <div class="slot-input-row">
+                        <a-input
+                          v-model:value="slotInputText"
+                          placeholder="请输入..."
+                          size="small"
+                          style="flex: 1"
+                          @press-enter="submitSlotInput"
+                        />
+                        <a-button
+                          type="primary"
+                          size="small"
+                          @click="submitSlotInput"
+                        >
+                          确认
+                        </a-button>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- Candidates -->
+                  <template v-else-if="m.subType === 'candidates'">
+                    <div class="candidates-bubble">
+                      <p>{{ m.text }}</p>
+                      <div class="candidates-list">
+                        <div
+                          v-for="c in m.candidates"
+                          :key="c.id"
+                          class="candidate-item"
+                          @click="replyFor(c.label)"
+                        >
+                          {{ c.label }}
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- Normal AI text -->
+                  <template v-else>
+                    <div
+                      class="widget-ai-md"
+                      v-html="marked.parse(m.text)"
+                    ></div>
+                  </template>
+                </template>
                 <span
                   v-else
-                  style="word-break: break-word; white-space: pre-wrap"
+                  style="overflow-wrap: break-word; white-space: pre-wrap"
                   >{{ m.text }}</span>
                 <span
                   v-if="
@@ -1187,5 +1327,67 @@ function clearHistory() {
 .widget-ai-md a {
   color: #4f46e5;
   text-decoration: underline;
+}
+
+.tool-bubble {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+
+.tool-bubble.tool-running {
+  color: #d46b08;
+  background: #fff7e6;
+}
+
+.tool-bubble.tool-done {
+  color: #389e0d;
+  background: #f6ffed;
+}
+
+.slot-ask-bubble {
+  padding: 10px 12px;
+  background: #e6f7ff;
+  border: 1px solid #91d5ff;
+  border-radius: 8px;
+}
+
+.slot-input-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.candidates-bubble {
+  padding: 10px 12px;
+  background: #f0f5ff;
+  border: 1px solid #adc6ff;
+  border-radius: 8px;
+}
+
+.candidates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.candidate-item {
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.candidate-item:hover {
+  color: #1677ff;
+  background: #e6f7ff;
+  border-color: #1677ff;
 }
 </style>
