@@ -9,8 +9,11 @@ import type {
 
 import { computed, onMounted, ref } from 'vue';
 
+import { Page } from '@vben/common-ui';
+
 import {
   Button,
+  Card,
   Descriptions,
   DescriptionsItem,
   Drawer,
@@ -65,6 +68,16 @@ const selectedIntent = computed(
   () => intents.value.find((i) => i.id === selectedIntentId.value) || null,
 );
 
+const selectedIntentExamples = computed(() => {
+  if (!selectedIntent.value?.exampleQueries) return [];
+  try {
+    const arr = JSON.parse(selectedIntent.value.exampleQueries);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+});
+
 // ---- 抽屉状态 ----
 const domainDrawerVisible = ref(false);
 const intentDrawerVisible = ref(false);
@@ -100,6 +113,7 @@ const slotColumns = [
     title: '解析策略',
     dataIndex: 'resolveStrategy',
     key: 'resolveStrategy',
+    width: 180,
   },
   { title: '操作', key: 'actions', width: 120 },
 ];
@@ -165,6 +179,15 @@ function toolName(toolId: number) {
   return allTools.value.find((t) => t.id === toolId)?.name || String(toolId);
 }
 
+function parseResolveStrategy(raw: string): string[] {
+  try {
+    const arr = JSON.parse(raw || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
 // ---- 领域 CRUD ----
 function openCreateDomain() {
   editingDomain.value = null;
@@ -225,16 +248,46 @@ function confirmDeleteDomain(d: DomainDTO) {
   });
 }
 
+// ---- 示例句子列表编辑器 ----
+const exampleQueriesList = ref<string[]>([]);
+
+function addExampleQuery() {
+  exampleQueriesList.value.push('');
+}
+
+function removeExampleQuery(index: number) {
+  exampleQueriesList.value.splice(index, 1);
+}
+
+// ---- 解析策略列表编辑器 ----
+const resolveStrategyList = ref<string[]>([]);
+
+function addResolveStrategy() {
+  resolveStrategyList.value.push('');
+}
+
+function removeResolveStrategy(index: number) {
+  resolveStrategyList.value.splice(index, 1);
+}
+
 // ---- 意图 CRUD ----
 function openCreateIntent() {
   editingIntent.value = null;
   intentForm.value = { autoTransfer: false, skipRag: false, sortOrder: 0 };
+  exampleQueriesList.value = [];
   intentDrawerVisible.value = true;
 }
 
 function openEditIntent(i: IntentDTO) {
   editingIntent.value = i;
   intentForm.value = { ...i };
+  // 解析 JSON 数组字符串为列表
+  try {
+    const arr = JSON.parse(i.exampleQueries || '[]');
+    exampleQueriesList.value = Array.isArray(arr) ? arr : [];
+  } catch {
+    exampleQueriesList.value = [];
+  }
   intentDrawerVisible.value = true;
 }
 
@@ -251,6 +304,7 @@ async function saveIntent() {
   const data = {
     ...intentForm.value,
     domainId: selectedDomainId.value!,
+    exampleQueries: JSON.stringify(exampleQueriesList.value.filter(Boolean)),
   } as IntentDTO;
   try {
     if (editingIntent.value?.id) {
@@ -298,12 +352,19 @@ function openCreateSlot() {
     resolveStrategy: '["EXTRACT","SESSION","DISCOVER","ASK_USER"]',
     sortOrder: 0,
   };
+  resolveStrategyList.value = ['EXTRACT', 'SESSION', 'DISCOVER', 'ASK_USER'];
   slotDrawerVisible.value = true;
 }
 
 function openEditSlot(s: SlotDTO) {
   editingSlot.value = s;
   slotForm.value = { ...s };
+  try {
+    const arr = JSON.parse(s.resolveStrategy || '[]');
+    resolveStrategyList.value = Array.isArray(arr) ? arr : [];
+  } catch {
+    resolveStrategyList.value = [];
+  }
   slotDrawerVisible.value = true;
 }
 
@@ -316,6 +377,7 @@ async function saveSlot() {
   const data = {
     ...slotForm.value,
     intentId: selectedIntentId.value!,
+    resolveStrategy: JSON.stringify(resolveStrategyList.value.filter(Boolean)),
   } as SlotDTO;
   try {
     await (editingSlot.value?.id
@@ -401,166 +463,200 @@ function confirmDeleteBinding(b: BindingDTO) {
 </script>
 
 <template>
-  <div class="dit-domains-page">
-    <!-- 左侧领域列表 -->
-    <div class="left-panel">
-      <div class="panel-header">
-        <span class="panel-title">领域列表</span>
-        <Button type="primary" size="small" @click="openCreateDomain">
-          + 新建
-        </Button>
-      </div>
-      <div
-        v-for="d in domains"
-        :key="d.id"
-        class="domain-item"
-        :class="[{ active: selectedDomainId === d.id }]"
-        @click="selectDomain(d.id!)"
+  <Page
+    title="领域与意图管理"
+    description="管理客服领域、意图、槽位及工具绑定配置"
+    auto-content-height
+  >
+    <div class="flex h-full min-h-0 gap-4 overflow-hidden">
+      <!-- 左侧领域列表 -->
+      <Card
+        :bordered="false"
+        class="w-56 shrink-0 overflow-auto shadow-sm"
+        size="small"
       >
-        <span>{{ d.name }}</span>
-        <Space size="small" class="domain-actions">
-          <a @click.stop="openEditDomain(d)">编辑</a>
-          <a style="color: red" @click.stop="confirmDeleteDomain(d)">删除</a>
-        </Space>
-      </div>
-    </div>
+        <template #title>领域列表</template>
+        <template #extra>
+          <Button type="primary" size="small" @click="openCreateDomain">
+            + 新建
+          </Button>
+        </template>
+        <div
+          v-for="d in domains"
+          :key="d.id"
+          class="domain-item"
+          :class="[{ active: selectedDomainId === d.id }]"
+          @click="selectDomain(d.id!)"
+        >
+          <span>{{ d.name }}</span>
+          <Space size="small" class="domain-actions">
+            <Button type="link" size="small" @click.stop="openEditDomain(d)">编辑</Button>
+            <Button type="link" danger size="small" @click.stop="confirmDeleteDomain(d)">删除</Button>
+          </Space>
+        </div>
+      </Card>
 
-    <!-- 右侧详情 -->
-    <div class="right-panel">
-      <template v-if="selectedDomainId">
-        <!-- 意图列表 -->
-        <div class="intent-list-header">
-          <span class="panel-title">意图列表</span>
+      <!-- 右侧详情 -->
+      <Card
+        :bordered="false"
+        class="flex-1 overflow-auto shadow-sm"
+        size="small"
+      >
+        <template #title>
+          <span v-if="selectedDomainId">意图列表</span>
+          <span v-else>请选择领域</span>
+        </template>
+        <template v-if="selectedDomainId" #extra>
           <Button size="small" @click="openCreateIntent">+ 新建意图</Button>
-        </div>
-        <div class="intent-list">
-          <div
-            v-for="i in intents"
-            :key="i.id"
-            class="intent-item"
-            :class="[{ active: selectedIntentId === i.id }]"
-            @click="selectIntent(i.id!)"
-          >
-            <span>{{ i.name }}
-              <small style="color: #999">({{ i.code }})</small></span>
-            <Space size="small">
-              <Tag v-if="i.autoTransfer" color="orange">转人工</Tag>
-              <Tag v-if="i.skipRag" color="blue">跳过RAG</Tag>
-              <a @click.stop="openEditIntent(i)">编辑</a>
-              <a style="color: red" @click.stop="confirmDeleteIntent(i)">删除</a>
-            </Space>
+        </template>
+
+        <template v-if="selectedDomainId">
+          <!-- 意图列表 -->
+          <div class="intent-list">
+            <div
+              v-for="i in intents"
+              :key="i.id"
+              class="intent-item"
+              :class="[{ active: selectedIntentId === i.id }]"
+              @click="selectIntent(i.id!)"
+            >
+              <span>{{ i.name }}
+                <small style="color: #999">({{ i.code }})</small></span>
+              <Space size="small">
+                <Tag v-if="i.autoTransfer" color="orange">转人工</Tag>
+                <Tag v-if="i.skipRag" color="blue">跳过RAG</Tag>
+                <Button type="link" size="small" @click.stop="openEditIntent(i)">编辑</Button>
+                <Button type="link" danger size="small" @click.stop="confirmDeleteIntent(i)">删除</Button>
+              </Space>
+            </div>
           </div>
-        </div>
-      </template>
+        </template>
 
-      <!-- 意图详情 Tabs -->
-      <template v-if="selectedIntentId && selectedIntent">
-        <Tabs v-model:active-key="activeTab" style="margin-top: 16px">
-          <!-- 基本信息 -->
-          <TabPane key="basic" tab="基本信息">
-            <Descriptions :column="2" bordered size="small">
-              <DescriptionsItem label="意图码">
-                {{ selectedIntent.code }}
-              </DescriptionsItem>
-              <DescriptionsItem label="名称">
-                {{ selectedIntent.name }}
-              </DescriptionsItem>
-              <DescriptionsItem label="自动转人工">
-                <Tag
-                  :color="selectedIntent.autoTransfer ? 'orange' : 'default'"
-                >
-                  {{ selectedIntent.autoTransfer ? '是' : '否' }}
-                </Tag>
-              </DescriptionsItem>
-              <DescriptionsItem label="跳过RAG">
-                <Tag :color="selectedIntent.skipRag ? 'blue' : 'default'">
-                  {{ selectedIntent.skipRag ? '是' : '否' }}
-                </Tag>
-              </DescriptionsItem>
-              <DescriptionsItem label="描述" :span="2">
-                {{ selectedIntent.description }}
-              </DescriptionsItem>
-              <DescriptionsItem label="示例句子" :span="2">
-                {{ selectedIntent.exampleQueries || '-' }}
-              </DescriptionsItem>
-            </Descriptions>
-          </TabPane>
-
-          <!-- 槽位配置 -->
-          <TabPane key="slots" tab="槽位配置">
-            <Button
-              size="small"
-              style="margin-bottom: 8px"
-              @click="openCreateSlot"
-            >
-              + 添加槽位
-            </Button>
-            <Table
-              :data-source="slots"
-              :columns="slotColumns"
-              size="small"
-              :pagination="false"
-              row-key="id"
-            >
-              <template #bodyCell="{ column, record }">
-                <template v-if="column.key === 'required'">
-                  <Tag :color="record.required ? 'red' : 'default'">
-                    {{ record.required ? '必填' : '可选' }}
-                  </Tag>
-                </template>
-                <template v-if="column.key === 'actions'">
-                  <Space>
-                    <a @click="openEditSlot(record as SlotDTO)">编辑</a>
-                    <a
-                      style="color: red"
-                      @click="confirmDeleteSlot(record as SlotDTO)"
-                      >删除</a>
-                  </Space>
-                </template>
-              </template>
-            </Table>
-          </TabPane>
-
-          <!-- 工具绑定 -->
-          <TabPane key="tools" tab="工具绑定">
-            <Button
-              size="small"
-              style="margin-bottom: 8px"
-              @click="openCreateBinding"
-            >
-              + 绑定工具
-            </Button>
-            <Table
-              :data-source="bindings"
-              :columns="bindingColumns"
-              size="small"
-              :pagination="false"
-              row-key="id"
-            >
-              <template #bodyCell="{ column, record }">
-                <template v-if="column.key === 'toolId'">
-                  {{ toolName(record.toolId) }}
-                </template>
-                <template v-if="column.key === 'executionMode'">
+        <!-- 意图详情 Tabs -->
+        <template v-if="selectedIntentId && selectedIntent">
+          <Tabs v-model:active-key="activeTab" style="margin-top: 16px">
+            <!-- 基本信息 -->
+            <TabPane key="basic" tab="基本信息">
+              <Descriptions :column="2" bordered size="small">
+                <DescriptionsItem label="意图码">
+                  {{ selectedIntent.code }}
+                </DescriptionsItem>
+                <DescriptionsItem label="名称">
+                  {{ selectedIntent.name }}
+                </DescriptionsItem>
+                <DescriptionsItem label="自动转人工">
                   <Tag
-                    :color="
-                      record.executionMode === 'REQUIRED' ? 'red' : 'blue'
-                    "
+                    :color="selectedIntent.autoTransfer ? 'orange' : 'default'"
                   >
-                    {{ record.executionMode }}
+                    {{ selectedIntent.autoTransfer ? '是' : '否' }}
                   </Tag>
+                </DescriptionsItem>
+                <DescriptionsItem label="跳过RAG">
+                  <Tag :color="selectedIntent.skipRag ? 'blue' : 'default'">
+                    {{ selectedIntent.skipRag ? '是' : '否' }}
+                  </Tag>
+                </DescriptionsItem>
+                <DescriptionsItem label="描述" :span="2">
+                  {{ selectedIntent.description }}
+                </DescriptionsItem>
+                <DescriptionsItem label="示例句子" :span="2">
+                  <template v-if="selectedIntentExamples.length">
+                    <Space wrap>
+                      <Tag
+                        v-for="(ex, idx) in selectedIntentExamples"
+                        :key="idx"
+                        color="blue"
+                      >
+                        {{ ex }}
+                      </Tag>
+                    </Space>
+                  </template>
+                  <span v-else>-</span>
+                </DescriptionsItem>
+              </Descriptions>
+            </TabPane>
+
+            <!-- 槽位配置 -->
+            <TabPane key="slots" tab="槽位配置">
+              <Button
+                size="small"
+                style="margin-bottom: 8px"
+                @click="openCreateSlot"
+              >
+                + 添加槽位
+              </Button>
+              <Table
+                :data-source="slots"
+                :columns="slotColumns"
+                size="small"
+                :pagination="false"
+                row-key="id"
+              >
+                <template #bodyCell="{ column, record }">
+                  <template v-if="column.key === 'required'">
+                    <Tag :color="record.required ? 'error' : 'default'">
+                      {{ record.required ? '必填' : '可选' }}
+                    </Tag>
+                  </template>
+                  <template v-if="column.key === 'resolveStrategy'">
+                    <Space wrap>
+                      <Tag
+                        v-for="(s, idx) in parseResolveStrategy(record.resolveStrategy)"
+                        :key="idx"
+                        color="purple"
+                      >
+                        {{ s }}
+                      </Tag>
+                    </Space>
+                  </template>
+                  <template v-if="column.key === 'actions'">
+                    <Space>
+                      <Button type="link" size="small" @click="openEditSlot(record as SlotDTO)">编辑</Button>
+                      <Button type="link" danger size="small" @click="confirmDeleteSlot(record as SlotDTO)">删除</Button>
+                    </Space>
+                  </template>
                 </template>
-                <template v-if="column.key === 'actions'">
-                  <a
-                    style="color: red"
-                    @click="confirmDeleteBinding(record as BindingDTO)"
-                    >解除</a>
+              </Table>
+            </TabPane>
+
+            <!-- 工具绑定 -->
+            <TabPane key="tools" tab="工具绑定">
+              <Button
+                size="small"
+                style="margin-bottom: 8px"
+                @click="openCreateBinding"
+              >
+                + 绑定工具
+              </Button>
+              <Table
+                :data-source="bindings"
+                :columns="bindingColumns"
+                size="small"
+                :pagination="false"
+                row-key="id"
+              >
+                <template #bodyCell="{ column, record }">
+                  <template v-if="column.key === 'toolId'">
+                    {{ toolName(record.toolId) }}
+                  </template>
+                  <template v-if="column.key === 'executionMode'">
+                    <Tag
+:color="
+                      record.executionMode === 'REQUIRED' ? 'error' : 'processing'
+                    "
+                    >
+                      {{ record.executionMode }}
+                    </Tag>
+                  </template>
+                  <template v-if="column.key === 'actions'">
+                    <Button type="link" danger size="small" @click="confirmDeleteBinding(record as BindingDTO)">解除</Button>
+                  </template>
                 </template>
-              </template>
-            </Table>
-          </TabPane>
-        </Tabs>
-      </template>
+              </Table>
+            </TabPane>
+          </Tabs>
+        </template>
+      </Card>
     </div>
 
     <!-- 领域抽屉 -->
@@ -570,10 +666,10 @@ function confirmDeleteBinding(b: BindingDTO) {
       width="480"
     >
       <Form layout="vertical">
-        <FormItem label="领域码 *">
+        <FormItem label="领域码" required>
           <Input v-model:value="domainForm.code" placeholder="如：ecommerce" />
         </FormItem>
-        <FormItem label="名称 *">
+        <FormItem label="名称" required>
           <Input v-model:value="domainForm.name" placeholder="如：电商客服" />
         </FormItem>
         <FormItem label="描述">
@@ -606,25 +702,44 @@ function confirmDeleteBinding(b: BindingDTO) {
       width="520"
     >
       <Form layout="vertical">
-        <FormItem label="意图码 *">
+        <FormItem label="意图码" required>
           <Input
             v-model:value="intentForm.code"
             placeholder="如：query_order"
           />
         </FormItem>
-        <FormItem label="名称 *">
+        <FormItem label="名称" required>
           <Input v-model:value="intentForm.name" placeholder="如：查询订单" />
         </FormItem>
-        <FormItem label="描述 *">
+        <FormItem label="描述" required>
           <Textarea v-model:value="intentForm.description" :rows="2" />
         </FormItem>
-        <FormItem label="示例句子 (JSON数组)">
-          <Textarea
-            v-model:value="intentForm.exampleQueries"
-            :rows="3"
-            placeholder="[&quot;帮我查订单&quot;,&quot;我的包裹到哪了&quot;]"
-          />
-        </FormItem>
+        <FormItem label="示例句子">
+            <div class="flex flex-col gap-2">
+              <div
+                v-for="(_, idx) in exampleQueriesList"
+                :key="idx"
+                class="flex items-center gap-2"
+              >
+                <Input
+                  v-model:value="exampleQueriesList[idx]"
+                  placeholder="如：帮我查订单"
+                  class="flex-1"
+                />
+                <Button
+                  type="link"
+                  danger
+                  size="small"
+                  @click="removeExampleQuery(idx)"
+                >
+                  删除
+                </Button>
+              </div>
+              <Button size="small" @click="addExampleQuery">
+                + 添加示例句子
+              </Button>
+            </div>
+          </FormItem>
         <FormItem label="自动转人工">
           <Switch v-model:checked="intentForm.autoTransfer" />
         </FormItem>
@@ -655,7 +770,7 @@ function confirmDeleteBinding(b: BindingDTO) {
       width="480"
     >
       <Form layout="vertical">
-        <FormItem label="槽位名 *">
+        <FormItem label="槽位名" required>
           <Input v-model:value="slotForm.slotName" placeholder="如：order_id" />
         </FormItem>
         <FormItem label="类型">
@@ -666,18 +781,43 @@ function confirmDeleteBinding(b: BindingDTO) {
             <SelectOption value="enum">enum</SelectOption>
           </Select>
         </FormItem>
-        <FormItem label="说明 *">
+        <FormItem label="说明" required>
           <Input v-model:value="slotForm.description" />
         </FormItem>
         <FormItem label="必填">
           <Switch v-model:checked="slotForm.required" />
         </FormItem>
-        <FormItem label="解析策略 (JSON数组)">
-          <Input
-            v-model:value="slotForm.resolveStrategy"
-            placeholder="[&quot;EXTRACT&quot;,&quot;SESSION&quot;,&quot;DISCOVER&quot;,&quot;ASK_USER&quot;]"
-          />
-        </FormItem>
+        <FormItem label="解析策略">
+            <div class="flex flex-col gap-2">
+              <div
+                v-for="(_, idx) in resolveStrategyList"
+                :key="idx"
+                class="flex items-center gap-2"
+              >
+                <Select
+                  v-model:value="resolveStrategyList[idx]"
+                  class="flex-1"
+                  placeholder="选择策略"
+                >
+                  <SelectOption value="EXTRACT">EXTRACT（从用户消息中提取）</SelectOption>
+                  <SelectOption value="SESSION">SESSION（从会话上下文获取）</SelectOption>
+                  <SelectOption value="DISCOVER">DISCOVER（调用发现工具查询）</SelectOption>
+                  <SelectOption value="ASK_USER">ASK_USER（反问用户获取）</SelectOption>
+                </Select>
+                <Button
+                  type="link"
+                  danger
+                  size="small"
+                  @click="removeResolveStrategy(idx)"
+                >
+                  删除
+                </Button>
+              </div>
+              <Button size="small" @click="addResolveStrategy">
+                + 添加策略
+              </Button>
+            </div>
+          </FormItem>
         <FormItem label="发现工具码">
           <Input v-model:value="slotForm.discoverToolCode" />
         </FormItem>
@@ -701,7 +841,7 @@ function confirmDeleteBinding(b: BindingDTO) {
     <!-- 绑定抽屉 -->
     <Drawer v-model:open="bindingDrawerVisible" title="绑定工具" width="420">
       <Form layout="vertical">
-        <FormItem label="工具 *">
+        <FormItem label="工具" required>
           <Select
             v-model:value="bindingForm.toolId"
             style="width: 100%"
@@ -738,45 +878,10 @@ function confirmDeleteBinding(b: BindingDTO) {
         </Button>
       </template>
     </Drawer>
-  </div>
+  </Page>
 </template>
 
 <style scoped>
-.dit-domains-page {
-  display: flex;
-  gap: 16px;
-  height: calc(100vh - 120px);
-  padding: 16px;
-}
-
-.left-panel {
-  flex-shrink: 0;
-  width: 240px;
-  overflow: auto;
-  border: 1px solid #f0f0f0;
-  border-radius: 8px;
-}
-
-.right-panel {
-  flex: 1;
-  padding: 16px;
-  overflow: auto;
-  border: 1px solid #f0f0f0;
-  border-radius: 8px;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.panel-title {
-  font-weight: 600;
-}
-
 .domain-item {
   display: flex;
   align-items: center;
@@ -798,13 +903,6 @@ function confirmDeleteBinding(b: BindingDTO) {
 
 .domain-item:hover .domain-actions {
   opacity: 1;
-}
-
-.intent-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
 }
 
 .intent-list {
