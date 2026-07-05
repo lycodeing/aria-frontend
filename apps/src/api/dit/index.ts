@@ -95,6 +95,17 @@ export const updateToolApi = (id: number, data: Omit<ToolDTO, 'id'>) =>
 export const deleteToolApi = (id: number) =>
   requestClient.delete<void>(`/admin/dit/tools/${id}`);
 
+export interface ToolTestResult {
+  status: string;
+  httpStatus: number | null;
+  rawResponse: string | null;
+  extractedResult: string | null;
+  durationMs: number;
+  errorMsg: string | null;
+}
+export const testToolApi = (id: number, params: Record<string, unknown>) =>
+  requestClient.post<ToolTestResult>(`/admin/dit/tools/${id}/test`, { params });
+
 // ---- 意图-工具绑定 ----
 export interface BindingDTO {
   id?: number;
