@@ -1,7 +1,9 @@
 <script lang="ts" setup>
-import type { ToolDTO } from '#/api/dit';
+import type { ToolDTO, ToolTestResult } from '#/api/dit';
 
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
+
+import { JsonViewer } from '@vben/common-ui';
 
 import {
   Button,
@@ -25,6 +27,7 @@ import {
   createToolApi,
   deleteToolApi,
   listToolsApi,
+  testToolApi,
   updateToolApi,
 } from '#/api/dit';
 
@@ -33,6 +36,142 @@ const drawerVisible = ref(false);
 const editingTool = ref<null | ToolDTO>(null);
 const form = ref<Partial<ToolDTO>>({});
 const saving = ref(false);
+
+// ---- 参数 Schema 编辑器：简单/高级双模式 ----
+interface ParamItem {
+  name: string;
+  type: string;
+  description: string;
+}
+const paramList = ref<ParamItem[]>([]);
+const paramMode = ref<'advanced' | 'simple'>('simple');
+const paramSchemaRaw = ref('{}');
+const paramSchemaError = ref('');
+
+// 简单 → 高级：从列表生成 JSON
+function switchToAdvanced() {
+  try {
+    paramSchemaRaw.value = JSON.stringify(JSON.parse(buildParamSchema() || '{}'), null, 2);
+  } catch {
+    paramSchemaRaw.value = buildParamSchema();
+  }
+  paramSchemaError.value = '';
+  paramMode.value = 'advanced';
+}
+
+// 高级 → 简单：解析 JSON 回列表（解析失败则保留原列表）
+function switchToSimple() {
+  const parsed = parseParamSchema(paramSchemaRaw.value);
+  if (parsed.length > 0 || paramSchemaRaw.value.trim() === '{}' || paramSchemaRaw.value.trim() === '') {
+    paramList.value = parsed;
+  }
+  paramSchemaError.value = '';
+  paramMode.value = 'simple';
+}
+
+// 格式化 JSON
+function formatParamSchema() {
+  try {
+    paramSchemaRaw.value = JSON.stringify(JSON.parse(paramSchemaRaw.value), null, 2);
+    paramSchemaError.value = '';
+  } catch {
+    paramSchemaError.value = 'JSON 格式有误，无法格式化，请检查语法';
+  }
+}
+
+// 当前模式下获取最终 paramSchema 字符串
+const currentParamSchema = computed(() =>
+  paramMode.value === 'simple' ? buildParamSchema() : paramSchemaRaw.value,
+);
+
+function addParam() {
+  paramList.value.push({ name: '', type: 'string', description: '' });
+}
+
+function removeParam(index: number) {
+  paramList.value.splice(index, 1);
+}
+
+function parseParamSchema(raw: string): ParamItem[] {
+  try {
+    const obj = JSON.parse(raw || '{}');
+    if (typeof obj !== 'object' || Array.isArray(obj)) return [];
+    return Object.entries(obj).map(([name, schema]: [string, any]) => ({
+      name,
+      type: schema?.type || 'string',
+      description: schema?.description || '',
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function buildParamSchema(): string {
+  const obj: Record<string, { description: string; type: string }> = {};
+  for (const p of paramList.value) {
+    if (p.name.trim()) {
+      obj[p.name.trim()] = { type: p.type || 'string', description: p.description || '' };
+    }
+  }
+  return JSON.stringify(obj);
+}
+
+// ---- 测试调用 ----
+const testModalVisible = ref(false);
+const testingTool = ref<null | ToolDTO>(null);
+const testParamsJson = ref('{}');
+const testLoading = ref(false);
+const testResult = ref<null | ToolTestResult>(null);
+const testParamError = ref('');
+
+const testResultJson = computed(() => {
+  if (!testResult.value?.rawResponse) return {};
+  try { return JSON.parse(testResult.value.rawResponse); } catch { return testResult.value.rawResponse; }
+});
+
+const testExtractedJson = computed(() => {
+  if (!testResult.value?.extractedResult) return {};
+  try { return JSON.parse(testResult.value.extractedResult); } catch { return testResult.value.extractedResult; }
+});
+
+function openTestModal(t: ToolDTO) {
+  testingTool.value = t;
+  testResult.value = null;
+  testParamError.value = '';
+  // 根据 paramSchema 生成初始参数 JSON
+  try {
+    const schema = JSON.parse(t.paramSchema || '{}');
+    const initParams: Record<string, string> = {};
+    for (const key of Object.keys(schema)) {
+      initParams[key] = '';
+    }
+    testParamsJson.value = JSON.stringify(initParams, null, 2);
+  } catch {
+    testParamsJson.value = '{}';
+  }
+  testModalVisible.value = true;
+}
+
+async function runTest() {
+  if (!testingTool.value?.id) return;
+  testParamError.value = '';
+  let params: Record<string, unknown>;
+  try {
+    params = JSON.parse(testParamsJson.value);
+  } catch {
+    testParamError.value = 'JSON 格式有误，请检查';
+    return;
+  }
+  testLoading.value = true;
+  testResult.value = null;
+  try {
+    testResult.value = await testToolApi(testingTool.value.id, params);
+  } catch (e: any) {
+    message.error('调用失败：' + (e?.message || '未知错误'));
+  } finally {
+    testLoading.value = false;
+  }
+}
 
 const columns = [
   { title: '工具码', dataIndex: 'code', key: 'code' },
@@ -69,12 +208,18 @@ function openCreate() {
     isDiscoverTool: false,
     enabled: true,
   };
+  paramList.value = [];
+  paramMode.value = 'simple';
+  paramSchemaRaw.value = '{}';
   drawerVisible.value = true;
 }
 
 function openEdit(t: ToolDTO) {
   editingTool.value = t;
   form.value = { ...t };
+  paramList.value = parseParamSchema(t.paramSchema || '');
+  paramSchemaRaw.value = t.paramSchema || '{}';
+  paramMode.value = 'simple';
   drawerVisible.value = true;
 }
 
@@ -84,7 +229,10 @@ async function save() {
     return;
   }
   saving.value = true;
-  const data = form.value as ToolDTO;
+  const data = {
+    ...form.value,
+    paramSchema: currentParamSchema.value,
+  } as ToolDTO;
   try {
     if (editingTool.value?.id) {
       await updateToolApi(editingTool.value.id, data);
@@ -147,8 +295,9 @@ function confirmDelete(t: ToolDTO) {
         </template>
         <template v-if="column.key === 'actions'">
           <Space>
-            <a @click="openEdit(record as ToolDTO)">编辑</a>
-            <a style="color: red" @click="confirmDelete(record as ToolDTO)">删除</a>
+            <Button type="link" size="small" @click="openEdit(record as ToolDTO)">编辑</Button>
+            <Button type="link" size="small" @click="openTestModal(record as ToolDTO)">测试</Button>
+            <Button type="link" danger size="small" @click="confirmDelete(record as ToolDTO)">删除</Button>
           </Space>
         </template>
       </template>
@@ -160,16 +309,16 @@ function confirmDelete(t: ToolDTO) {
       width="560"
     >
       <Form layout="vertical">
-        <FormItem label="工具码 *">
+        <FormItem label="工具码" required>
           <Input
             v-model:value="form.code"
             placeholder="如：get_order（全局唯一）"
           />
         </FormItem>
-        <FormItem label="名称 *">
+        <FormItem label="名称" required>
           <Input v-model:value="form.name" placeholder="如：查询订单" />
         </FormItem>
-        <FormItem label="工具说明（给 LLM 看）*">
+        <FormItem label="工具说明（给 LLM 看）" required>
           <Textarea
             v-model:value="form.description"
             :rows="2"
@@ -198,12 +347,75 @@ function confirmDelete(t: ToolDTO) {
             placeholder="https://api.shop.com/orders/{order_id}"
           />
         </FormItem>
-        <FormItem label="参数 JSON Schema">
-          <Textarea
-            v-model:value="form.paramSchema"
-            :rows="3"
-            placeholder="{&quot;order_id&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;订单号&quot;}}"
-          />
+        <FormItem label="参数 Schema">
+          <div class="flex flex-col gap-2">
+            <!-- 模式切换 -->
+            <div class="flex items-center gap-2">
+              <Button
+                :type="paramMode === 'simple' ? 'primary' : 'default'"
+                size="small"
+                @click="switchToSimple"
+              >
+                简单模式
+              </Button>
+              <Button
+                :type="paramMode === 'advanced' ? 'primary' : 'default'"
+                size="small"
+                @click="switchToAdvanced"
+              >
+                高级模式
+              </Button>
+            </div>
+
+            <!-- 简单模式：逐行编辑 -->
+            <div v-show="paramMode === 'simple'" class="flex flex-col gap-2">
+              <div
+                v-for="(p, idx) in paramList"
+                :key="idx"
+                class="flex items-center gap-2"
+              >
+                <Input
+                  v-model:value="p.name"
+                  placeholder="参数名"
+                  style="width: 130px"
+                />
+                <Select v-model:value="p.type" style="width: 100px">
+                  <SelectOption value="string">string</SelectOption>
+                  <SelectOption value="number">number</SelectOption>
+                  <SelectOption value="boolean">boolean</SelectOption>
+                  <SelectOption value="object">object</SelectOption>
+                  <SelectOption value="array">array</SelectOption>
+                </Select>
+                <Input
+                  v-model:value="p.description"
+                  placeholder="参数说明"
+                  class="flex-1"
+                />
+                <Button type="link" danger size="small" @click="removeParam(idx)">删除</Button>
+              </div>
+              <Button size="small" @click="addParam">+ 添加参数</Button>
+            </div>
+
+            <!-- 高级模式：直接编辑 JSON Schema -->
+            <div v-show="paramMode === 'advanced'" class="flex flex-col gap-1">
+              <div class="flex items-center justify-between">
+                <span style="font-size: 12px; color: #999">直接编辑 JSON Schema，支持嵌套结构</span>
+                <Button size="small" @click="formatParamSchema">格式化</Button>
+              </div>
+              <Textarea
+                v-model:value="paramSchemaRaw"
+                :rows="8"
+                placeholder='{&#10;  "order_id": { "type": "string", "description": "订单号" },&#10;  "address": { "type": "object", "description": "地址信息" }&#10;}'
+                style="font-family: monospace; font-size: 12px; width: 100%"
+              />
+              <span
+                v-if="paramSchemaError"
+                style="font-size: 12px; color: #ff4d4f"
+              >
+                {{ paramSchemaError }}
+              </span>
+            </div>
+          </div>
         </FormItem>
         <FormItem label="响应提取 JSONPath">
           <Input
@@ -244,6 +456,13 @@ function confirmDelete(t: ToolDTO) {
       <template #footer>
         <Button @click="drawerVisible = false">取消</Button>
         <Button
+          v-if="editingTool?.id"
+          style="margin-left: 8px"
+          @click="() => { drawerVisible = false; openTestModal(editingTool!) }"
+        >
+          测试调用
+        </Button>
+        <Button
           type="primary"
           style="margin-left: 8px"
           :loading="saving"
@@ -253,5 +472,106 @@ function confirmDelete(t: ToolDTO) {
         </Button>
       </template>
     </Drawer>
+
+    <!-- 测试调用 Modal -->
+    <Modal
+      v-model:open="testModalVisible"
+      :title="`测试调用 — ${testingTool?.name ?? ''}`"
+      :footer="null"
+      width="720"
+      :body-style="{ padding: '20px 24px' }"
+    >
+      <div class="flex flex-col gap-4">
+        <!-- 参数输入 -->
+        <div>
+          <div class="mb-1 flex items-center justify-between">
+            <span class="text-sm font-medium">请求参数 (JSON)</span>
+            <span style="font-size: 12px; color: #999">key 为参数名，value 为参数值</span>
+          </div>
+          <Textarea
+            v-model:value="testParamsJson"
+            :rows="5"
+            placeholder="{}"
+            style="font-family: monospace; font-size: 13px"
+          />
+          <p v-if="testParamError" style="color: #ff4d4f; font-size: 12px; margin-top: 4px">
+            {{ testParamError }}
+          </p>
+        </div>
+
+        <!-- JSONPath 提示 -->
+        <div
+          v-if="testingTool?.responseJsonpath"
+          style="padding: 8px 12px; background: #f6f8fa; border-radius: 6px; font-size: 12px; color: #666"
+        >
+          当前配置的 JSONPath 提取路径：
+          <code style="background:#e8eaed; padding: 1px 6px; border-radius: 3px; color: #1677ff">
+            {{ testingTool.responseJsonpath }}
+          </code>
+        </div>
+
+        <Button type="primary" :loading="testLoading" @click="runTest">
+          ▶ 执行调用
+        </Button>
+
+        <!-- 结果区 -->
+        <template v-if="testResult">
+          <!-- 状态行 -->
+          <div class="flex items-center gap-3">
+            <Tag :color="testResult.status === 'SUCCESS' ? 'success' : 'error'">
+              {{ testResult.status }}
+            </Tag>
+            <Tag v-if="testResult.httpStatus" color="default">
+              HTTP {{ testResult.httpStatus }}
+            </Tag>
+            <span style="font-size: 12px; color: #999">{{ testResult.durationMs }} ms</span>
+          </div>
+
+          <!-- 错误信息 -->
+          <div
+            v-if="testResult.errorMsg"
+            style="padding: 10px 12px; background: #fff2f0; border: 1px solid #ffccc7; border-radius: 6px; font-size: 13px; color: #cf1322"
+          >
+            {{ testResult.errorMsg }}
+          </div>
+
+          <!-- JSONPath 提取结果 -->
+          <div v-if="testResult.extractedResult && testingTool?.responseJsonpath">
+            <div class="mb-1 text-sm font-medium" style="color: #1677ff">
+              ✅ JSONPath 提取结果 <code style="font-size:11px;color:#666">{{ testingTool.responseJsonpath }}</code>
+            </div>
+            <div
+              style="
+                padding: 10px 12px;
+                background: #f0f7ff;
+                border: 1px solid #91caff;
+                border-radius: 6px;
+                max-height: 320px;
+                overflow-y: auto;
+              "
+            >
+              <JsonViewer :value="testExtractedJson" :expand-depth="3" copyable />
+            </div>
+          </div>
+
+          <!-- 原始响应 -->
+          <div v-if="testResult.rawResponse">
+            <div class="mb-1 text-sm font-medium">原始响应</div>
+            <div
+              style="
+                padding: 10px 12px;
+                background: #fafafa;
+                border: 1px solid #f0f0f0;
+                border-radius: 6px;
+                max-height: 360px;
+                overflow-y: auto;
+              "
+            >
+              <JsonViewer :value="testResultJson" :expand-depth="2" copyable />
+            </div>
+          </div>
+        </template>
+      </div>
+    </Modal>
   </div>
 </template>
