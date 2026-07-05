@@ -1043,7 +1043,7 @@ function clearHistory() {
                   <template v-else-if="!m.subType && m.text">
                     <div
                       class="widget-ai-md"
-                      v-html="DOMPurify.sanitize(marked.parse(m.text) as string)"
+                      v-html="DOMPurify.sanitize(marked.parse(m.text, { async: false }) as string)"
                     ></div>
                   </template>
                 </template>
