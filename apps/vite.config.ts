@@ -17,12 +17,16 @@ export default defineConfig(async () => {
             target: 'http://localhost:8084',
           },
 
-          // conversation-service (8082)：对话 + 会话队列
+          // conversation-service (8082)：对话 + 会话队列 + DIT 管理
           '/api/v1/chat': {
             changeOrigin: true,
             target: 'http://localhost:8082',
           },
           '/api/v1/sessions': {
+            changeOrigin: true,
+            target: 'http://localhost:8082',
+          },
+          '/api/v1/admin/dit': {
             changeOrigin: true,
             target: 'http://localhost:8082',
           },

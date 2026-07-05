@@ -1,5 +1,8 @@
 <script lang="ts" setup>
+import type { ToolDTO } from '#/api/dit';
+
 import { onMounted, ref } from 'vue';
+
 import {
   Button,
   Drawer,
@@ -24,12 +27,12 @@ import {
   listToolsApi,
   updateToolApi,
 } from '#/api/dit';
-import type { ToolDTO } from '#/api/dit';
 
 const tools = ref<ToolDTO[]>([]);
 const drawerVisible = ref(false);
-const editingTool = ref<ToolDTO | null>(null);
-const form = ref<Record<string, any>>({});
+const editingTool = ref<null | ToolDTO>(null);
+const form = ref<Partial<ToolDTO>>({});
+const saving = ref(false);
 
 const columns = [
   { title: '工具码', dataIndex: 'code', key: 'code' },
@@ -37,14 +40,23 @@ const columns = [
   { title: '类型', dataIndex: 'toolType', key: 'toolType', width: 90 },
   { title: '方法', dataIndex: 'httpMethod', key: 'httpMethod', width: 80 },
   { title: '认证', dataIndex: 'authType', key: 'authType', width: 90 },
-  { title: '发现工具', dataIndex: 'isDiscoverTool', key: 'isDiscoverTool', width: 90 },
+  {
+    title: '发现工具',
+    dataIndex: 'isDiscoverTool',
+    key: 'isDiscoverTool',
+    width: 90,
+  },
   { title: '操作', key: 'actions', width: 120 },
 ];
 
 onMounted(() => loadTools());
 
 async function loadTools() {
-  tools.value = await listToolsApi();
+  try {
+    tools.value = await listToolsApi();
+  } catch {
+    message.error('加载工具列表失败');
+  }
 }
 
 function openCreate() {
@@ -71,16 +83,23 @@ async function save() {
     message.error('工具码、名称、说明为必填');
     return;
   }
+  saving.value = true;
   const data = form.value as ToolDTO;
-  if (editingTool.value?.id) {
-    await updateToolApi(editingTool.value.id, data);
-    message.success('更新成功');
-  } else {
-    await createToolApi(data);
-    message.success('注册成功');
+  try {
+    if (editingTool.value?.id) {
+      await updateToolApi(editingTool.value.id, data);
+      message.success('更新成功');
+    } else {
+      await createToolApi(data);
+      message.success('注册成功');
+    }
+    drawerVisible.value = false;
+    await loadTools();
+  } catch {
+    message.error('操作失败，请重试');
+  } finally {
+    saving.value = false;
   }
-  drawerVisible.value = false;
-  await loadTools();
 }
 
 function confirmDelete(t: ToolDTO) {
@@ -89,9 +108,13 @@ function confirmDelete(t: ToolDTO) {
     content: '删除后已绑定的意图工具将失效',
     okType: 'danger',
     async onOk() {
-      await deleteToolApi(t.id!);
-      message.success('已删除');
-      await loadTools();
+      try {
+        await deleteToolApi(t.id!);
+        message.success('已删除');
+        await loadTools();
+      } catch {
+        message.error('删除失败，请重试');
+      }
     },
   });
 }
@@ -102,8 +125,8 @@ function confirmDelete(t: ToolDTO) {
     <div
       style="
         display: flex;
-        justify-content: space-between;
         align-items: center;
+        justify-content: space-between;
         margin-bottom: 16px;
       "
     >
@@ -124,8 +147,8 @@ function confirmDelete(t: ToolDTO) {
         </template>
         <template v-if="column.key === 'actions'">
           <Space>
-            <a @click="openEdit(record)">编辑</a>
-            <a style="color: red" @click="confirmDelete(record)">删除</a>
+            <a @click="openEdit(record as ToolDTO)">编辑</a>
+            <a style="color: red" @click="confirmDelete(record as ToolDTO)">删除</a>
           </Space>
         </template>
       </template>
@@ -138,7 +161,10 @@ function confirmDelete(t: ToolDTO) {
     >
       <Form layout="vertical">
         <FormItem label="工具码 *">
-          <Input v-model:value="form.code" placeholder="如：get_order（全局唯一）" />
+          <Input
+            v-model:value="form.code"
+            placeholder="如：get_order（全局唯一）"
+          />
         </FormItem>
         <FormItem label="名称 *">
           <Input v-model:value="form.name" placeholder="如：查询订单" />
@@ -153,7 +179,9 @@ function confirmDelete(t: ToolDTO) {
         <FormItem label="工具类型">
           <Select v-model:value="form.toolType" style="width: 100%">
             <SelectOption value="HTTP">HTTP（通用 HTTP 调用）</SelectOption>
-            <SelectOption value="BUILTIN">BUILTIN（内置 Java 实现）</SelectOption>
+            <SelectOption value="BUILTIN">
+              BUILTIN（内置 Java 实现）
+            </SelectOption>
           </Select>
         </FormItem>
         <FormItem label="HTTP 方法">
@@ -174,7 +202,7 @@ function confirmDelete(t: ToolDTO) {
           <Textarea
             v-model:value="form.paramSchema"
             :rows="3"
-            placeholder='{"order_id":{"type":"string","description":"订单号"}}'
+            placeholder="{&quot;order_id&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;订单号&quot;}}"
           />
         </FormItem>
         <FormItem label="响应提取 JSONPath">
@@ -195,7 +223,7 @@ function confirmDelete(t: ToolDTO) {
           <Textarea
             v-model:value="form.authConfig"
             :rows="2"
-            placeholder='{"token_encrypted":"your-token"}'
+            placeholder="{&quot;token_encrypted&quot;:&quot;your-token&quot;}"
           />
         </FormItem>
         <FormItem label="超时（毫秒）">
@@ -208,14 +236,21 @@ function confirmDelete(t: ToolDTO) {
         </FormItem>
         <FormItem label="可作为发现工具">
           <Switch v-model:checked="form.isDiscoverTool" />
-          <span style="margin-left: 8px; color: #999; font-size: 12px">
+          <span style="margin-left: 8px; font-size: 12px; color: #999">
             启用后可用于槽位 DISCOVER 级候选项发现
           </span>
         </FormItem>
       </Form>
       <template #footer>
         <Button @click="drawerVisible = false">取消</Button>
-        <Button type="primary" style="margin-left: 8px" @click="save">保存</Button>
+        <Button
+          type="primary"
+          style="margin-left: 8px"
+          :loading="saving"
+          @click="save"
+        >
+          保存
+        </Button>
       </template>
     </Drawer>
   </div>

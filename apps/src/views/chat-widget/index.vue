@@ -29,7 +29,17 @@ import {
   verifySmsCodeApi,
 } from '#/api/session';
 
+// 配置 marked：开启 breaks（单个 \n 转 <br>），gfm 支持表格/删除线
+// 放在所有 import 之后避免 import(first) lint 报错
+marked.use({ breaks: true, gfm: true });
+
 // ===== 类型 =====
+interface ToolCallStatus {
+  name: string;
+  status: 'done' | 'error' | 'running';
+  durationMs?: number;
+}
+
 interface Msg {
   id: number;
   role: 'agent' | 'ai' | 'user';
@@ -43,9 +53,9 @@ interface Msg {
   retryText?: string;
   /** WS 消息是否正在发送中（转人工模式下）*/
   sending?: boolean;
-  subType?: 'candidates' | 'normal' | 'slot_ask' | 'tool_call' | 'tool_done';
-  toolName?: string;
-  toolDurationMs?: number;
+  /** 工具调用状态列表（内嵌在同一气泡中） */
+  tools?: ToolCallStatus[];
+  subType?: 'candidates' | 'slot_ask';
   candidates?: Array<{ id: string; label: string }>;
 }
 
@@ -79,7 +89,11 @@ const wsStatus = ref<'connected' | 'connecting' | 'disconnected'>(
 let visitorWs: null | WebSocket = null;
 let msgId = 0;
 const route = useRoute();
-const domainCode = computed(() => (route.query.domain as string) || '');
+// 支持 ?domain=weather 和 ?domainCode=weather 两种写法
+const domainCode = computed(
+  () =>
+    (route.query.domainCode as string) || (route.query.domain as string) || '',
+);
 const slotInputText = ref('');
 function submitSlotInput() {
   if (!slotInputText.value.trim()) return;
@@ -491,19 +505,21 @@ async function replyFor(text: string) {
       lineBuffer = lines.pop() ?? '';
 
       for (const line of lines) {
-        const trimmed = line.trim();
-
-        if (trimmed === '') {
+        // SSE 规范：空行是事件分隔符，重置 currentEvent
+        if (line === '') {
           currentEvent = '';
           continue;
         }
-        if (trimmed.startsWith(':')) continue;
+        const trimmed = line.trim();
+        if (trimmed.startsWith(':')) continue; // 注释行
         if (trimmed.startsWith('event:')) {
           currentEvent = trimmed.slice(6).trim();
           continue;
         }
-        if (trimmed.startsWith('data:')) {
-          const data = trimmed.slice(5).trim();
+        if (line.startsWith('data:')) {
+          // RFC 8895 §9.2.6：data: 后若有单个空格需剥离（Spring SSE 固定发 "data: <content>"）
+          // 不用 trimmed 是为了保留 LLM 输出中间的空白，只去掉协议前缀的那个空格
+          const data = line.slice(5).replace(/^ /, '');
           if (data === '[DONE]') {
             streaming.value = false;
             // S-06：[DONE] 收到后释放 ReadableStream，避免底层流未关闭
@@ -525,48 +541,65 @@ async function replyFor(text: string) {
           } else if (currentEvent === 'tool_call') {
             try {
               const payload = JSON.parse(data);
-              const idx = msgs.value.findIndex(
-                (m) => m.subType === 'tool_call' && m.toolName === payload.tool,
-              );
-              const toolMsg: Msg = {
-                id: msgId++,
-                role: 'ai',
-                text: `正在查询 ${payload.tool}...`,
-                subType: 'tool_call',
-                toolName: payload.tool,
-                time: nowTime(),
-              };
-              if (idx !== -1) msgs.value[idx] = toolMsg;
-              else msgs.value.push(toolMsg);
+              if (!rm.tools) rm.tools = [];
+              // 同一工具可能重复触发，先查再追加
+              const existing = rm.tools.find((t) => t.name === payload.tool);
+              if (existing) {
+                existing.status = 'running';
+              } else {
+                rm.tools.push({ name: payload.tool, status: 'running' });
+              }
+              scrollBottom();
             } catch {
               /* ignore */
             }
           } else if (currentEvent === 'tool_done') {
             try {
               const payload = JSON.parse(data);
-              const idx = msgs.value.findIndex(
-                (m) => m.subType === 'tool_call' && m.toolName === payload.tool,
-              );
-              if (idx !== -1) {
-                const existing = msgs.value[idx];
-                if (existing) {
-                  msgs.value[idx] = {
-                    ...existing,
-                    subType: 'tool_done',
-                    text: `✅ ${payload.tool} 查询完成（${payload.duration_ms}ms）`,
-                    toolDurationMs: payload.duration_ms,
-                  };
-                }
+              if (!rm.tools) rm.tools = [];
+              const tool = rm.tools.find((t) => t.name === payload.tool);
+              if (tool) {
+                // 后端 ToolStatus 枚举 -> 前端 status 映射，明确列出所有已知状态
+                const statusMap: Record<string, ToolCallStatus['status']> = {
+                  SUCCESS: 'done',
+                  ERROR: 'error',
+                  TIMEOUT: 'error',
+                  SKIPPED: 'done',
+                };
+                tool.status = statusMap[payload.status] ?? 'error';
+                // 后端 ToolDonePayload 字段名为 durationMs（camelCase）
+                tool.durationMs = Number(
+                  payload.durationMs ?? payload.duration_ms ?? 0,
+                );
               }
             } catch {
               /* ignore */
             }
+          } else if (currentEvent === 'transfer') {
+            // 转人工：payload 包含 message（提示语）和 intentCode（原因标识）
+            // 渲染提示文字到当前气泡，然后切换 WebSocket 模式
+            try {
+              const payload = JSON.parse(data);
+              if (payload.message) {
+                rm.text = payload.message;
+              }
+            } catch {
+              /* ignore */
+            }
+            transferred.value = true;
+            localStorage.setItem(`chat_transferred_${sessionId.value}`, '1');
+            streaming.value = false;
+            // 释放流并退出读循环，防止后续 [DONE] 或残留 token 写入气泡
+            await reader.cancel();
+            connectVisitorWsWithRetry(sessionId.value);
+            return;
           } else if (currentEvent === 'slot_ask') {
             msgs.value.push({
-              id: msgId++,
+              id: ++msgId, // 与 addMsg 保持一致，使用前置自增
               role: 'ai',
               text: data,
               subType: 'slot_ask',
+              feedback: null, // 避免 slot_ask 气泡显示"有帮助吗"反馈按钮
               time: nowTime(),
             });
             await nextTick();
@@ -575,10 +608,11 @@ async function replyFor(text: string) {
             try {
               const list = JSON.parse(data);
               msgs.value.push({
-                id: msgId++,
+                id: ++msgId, // 与 addMsg 保持一致，使用前置自增
                 role: 'ai',
                 text: '请选择：',
                 subType: 'candidates',
+                feedback: null, // candidates 气泡同样不显示反馈按钮
                 candidates: Array.isArray(list) ? list : [],
                 time: nowTime(),
               });
@@ -587,8 +621,10 @@ async function replyFor(text: string) {
             } catch {
               /* ignore */
             }
-          } else if (data) {
-            rm.text += data;
+          } else if (!currentEvent || currentEvent === '') {
+            // 普通 AI 文字 token
+            // SSE 规范：空 data:（data === ''）代表 LLM 输出的 \n 换行符
+            rm.text += data === '' ? '\n' : data;
             scrollBottom();
           }
         }
@@ -651,7 +687,7 @@ function startCountdown() {
   // N-05：clearInterval 兼容 null 值
   if (cdTimer !== null) clearInterval(cdTimer);
   cdTimer = setInterval(() => {
-    if (--countdown.value <= 0) clearInterval(cdTimer);
+    if (--countdown.value <= 0) clearInterval(cdTimer ?? undefined);
   }, 1000);
 }
 
@@ -929,18 +965,41 @@ function clearHistory() {
               <!-- Markdown 渲染 -->
               <template v-else-if="!m.failed">
                 <template v-if="m.role === 'ai'">
-                  <!-- Tool call running -->
-                  <template v-if="m.subType === 'tool_call'">
-                    <div class="tool-bubble tool-running">🔄 {{ m.text }}</div>
+                  <!-- 工具调用状态（内嵌在气泡顶部，running 时转圈，done 后打勾） -->
+                  <template v-if="m.tools && m.tools.length > 0">
+                    <div
+                      v-for="tool in m.tools"
+                      :key="tool.name"
+                      class="tool-status-row"
+                      :class="tool.status"
+                    >
+                      <span
+                        v-if="tool.status === 'running'"
+                        class="tool-spinner"
+                        >⏳</span>
+                      <span
+                        v-else-if="tool.status === 'done'"
+                        class="tool-check"
+                        >✅</span>
+                      <span v-else class="tool-err">❌</span>
+                      <span class="tool-name">{{ tool.name }}</span>
+                      <span v-if="tool.status === 'running'" class="tool-hint">查询中...</span>
+                      <span v-else-if="tool.durationMs" class="tool-hint">{{ tool.durationMs }}ms</span>
+                    </div>
+                    <div v-if="m.text" class="tool-divider"></div>
                   </template>
 
+                  <!-- Tool call running -->
+                  <template v-if="false">
+                    <!-- 废弃，工具状态已内嵌 -->
+                  </template>
                   <!-- Tool call done -->
-                  <template v-else-if="m.subType === 'tool_done'">
-                    <div class="tool-bubble tool-done">{{ m.text }}</div>
+                  <template v-if="false">
+                    <!-- 废弃，工具状态已内嵌 -->
                   </template>
 
                   <!-- Slot ask -->
-                  <template v-else-if="m.subType === 'slot_ask'">
+                  <template v-if="m.subType === 'slot_ask'">
                     <div class="slot-ask-bubble">
                       <p>{{ m.text }}</p>
                       <div class="slot-input-row">
@@ -980,7 +1039,7 @@ function clearHistory() {
                   </template>
 
                   <!-- Normal AI text -->
-                  <template v-else>
+                  <template v-else-if="!m.subType && m.text">
                     <div
                       class="widget-ai-md"
                       v-html="marked.parse(m.text)"
@@ -1246,6 +1305,7 @@ function clearHistory() {
 <style>
 .widget-ai-md p {
   margin: 0.35em 0;
+  line-height: 1.65;
 }
 
 .widget-ai-md p:first-child {
@@ -1262,8 +1322,71 @@ function clearHistory() {
   margin: 0.35em 0;
 }
 
+/* Tailwind preflight 会 reset list-style，这里显式恢复 */
+.widget-ai-md ul {
+  list-style-type: disc;
+}
+
+.widget-ai-md ol {
+  list-style-type: decimal;
+}
+
 .widget-ai-md li {
-  margin: 0.15em 0;
+  margin: 0.2em 0;
+  line-height: 1.6;
+}
+
+.widget-ai-md li > ul,
+.widget-ai-md li > ol {
+  margin: 0.1em 0;
+}
+
+/* Tailwind preflight 会 reset em 的斜体，显式恢复 */
+.widget-ai-md em {
+  font-style: italic;
+}
+
+.widget-ai-md strong {
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.widget-ai-md strong em,
+.widget-ai-md em strong {
+  font-style: italic;
+  font-weight: 700;
+}
+
+.widget-ai-md h1,
+.widget-ai-md h2,
+.widget-ai-md h3,
+.widget-ai-md h4 {
+  margin: 0.6em 0 0.3em;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #1e293b;
+}
+
+.widget-ai-md h1 {
+  font-size: 1.2em;
+}
+
+.widget-ai-md h2 {
+  font-size: 1.1em;
+}
+
+.widget-ai-md h3 {
+  font-size: 1em;
+}
+
+.widget-ai-md h4 {
+  font-size: 0.95em;
+}
+
+.widget-ai-md hr {
+  margin: 0.6em 0;
+  border: none;
+  border-top: 1px solid #e2e8f0;
 }
 
 .widget-ai-md code {
@@ -1288,18 +1411,6 @@ function clearHistory() {
   background: none;
 }
 
-.widget-ai-md strong {
-  font-weight: 600;
-}
-
-.widget-ai-md h1,
-.widget-ai-md h2,
-.widget-ai-md h3 {
-  margin: 0.5em 0 0.25em;
-  font-weight: 600;
-  color: #1e293b;
-}
-
 .widget-ai-md blockquote {
   padding-left: 10px;
   margin: 0.4em 0;
@@ -1317,10 +1428,12 @@ function clearHistory() {
 .widget-ai-md th,
 .widget-ai-md td {
   padding: 4px 8px;
+  text-align: left;
   border: 1px solid #e2e8f0;
 }
 
 .widget-ai-md th {
+  font-weight: 600;
   background: #f8fafc;
 }
 
@@ -1329,23 +1442,63 @@ function clearHistory() {
   text-decoration: underline;
 }
 
-.tool-bubble {
+.tool-status-row {
   display: flex;
   gap: 6px;
   align-items: center;
-  padding: 6px 10px;
-  font-size: 13px;
-  border-radius: 8px;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #64748b;
+  background: #f8fafc;
+  border-radius: 6px;
 }
 
-.tool-bubble.tool-running {
-  color: #d46b08;
-  background: #fff7e6;
+.tool-status-row.running {
+  color: #b45309;
+  background: #fffbeb;
 }
 
-.tool-bubble.tool-done {
-  color: #389e0d;
-  background: #f6ffed;
+.tool-status-row.done {
+  color: #15803d;
+  background: #f0fdf4;
+}
+
+.tool-status-row.error {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.tool-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tool-name {
+  font-family: monospace;
+  font-weight: 500;
+}
+
+.tool-hint {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.tool-divider {
+  height: 1px;
+  margin: 6px 0 8px;
+  background: #e2e8f0;
 }
 
 .slot-ask-bubble {

@@ -14,7 +14,7 @@ export const listDomainsApi = () =>
 export const createDomainApi = (data: Omit<DomainDTO, 'id'>) =>
   requestClient.post<DomainDTO>('/admin/dit/domains', data);
 export const updateDomainApi = (id: number, data: Omit<DomainDTO, 'id'>) =>
-  requestClient.put(`/admin/dit/domains/${id}`, data);
+  requestClient.put<DomainDTO>(`/admin/dit/domains/${id}`, data);
 export const deleteDomainApi = (id: number) =>
   requestClient.delete(`/admin/dit/domains/${id}`);
 
@@ -39,7 +39,7 @@ export const listIntentsApi = (domainId: number) =>
 export const createIntentApi = (data: Omit<IntentDTO, 'id'>) =>
   requestClient.post<IntentDTO>('/admin/dit/intents', data);
 export const updateIntentApi = (id: number, data: Omit<IntentDTO, 'id'>) =>
-  requestClient.put(`/admin/dit/intents/${id}`, data);
+  requestClient.put<IntentDTO>(`/admin/dit/intents/${id}`, data);
 export const deleteIntentApi = (id: number) =>
   requestClient.delete(`/admin/dit/intents/${id}`);
 
@@ -63,7 +63,7 @@ export const listSlotsApi = (intentId: number) =>
 export const createSlotApi = (data: Omit<SlotDTO, 'id'>) =>
   requestClient.post<SlotDTO>('/admin/dit/slots', data);
 export const updateSlotApi = (id: number, data: Omit<SlotDTO, 'id'>) =>
-  requestClient.put(`/admin/dit/slots/${id}`, data);
+  requestClient.put<SlotDTO>(`/admin/dit/slots/${id}`, data);
 export const deleteSlotApi = (id: number) =>
   requestClient.delete(`/admin/dit/slots/${id}`);
 
@@ -91,7 +91,7 @@ export const listToolsApi = () =>
 export const createToolApi = (data: Omit<ToolDTO, 'id'>) =>
   requestClient.post<ToolDTO>('/admin/dit/tools', data);
 export const updateToolApi = (id: number, data: Omit<ToolDTO, 'id'>) =>
-  requestClient.put(`/admin/dit/tools/${id}`, data);
+  requestClient.put<ToolDTO>(`/admin/dit/tools/${id}`, data);
 export const deleteToolApi = (id: number) =>
   requestClient.delete(`/admin/dit/tools/${id}`);
 
