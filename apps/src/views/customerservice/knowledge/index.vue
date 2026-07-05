@@ -1,9 +1,9 @@
 <script lang="ts" setup>
 import type { UploadProps } from 'ant-design-vue';
 
-import type { DocListItem } from '#/api/knowledge';
 import type {
   ChunkDetail,
+  DocListItem,
   DocStats,
   KbStats,
   SearchHit,
@@ -111,7 +111,7 @@ async function loadKbStats() {
     kbIds.map((id) => getKbStatsApi(id)),
   );
   results.forEach((r, i) => {
-    if (r.status === 'fulfilled') kbStatsMap.value[kbIds[i]!] = r.value;
+    if (r.status === 'fulfilled') kbStatsMap.value[kbIds[i] ?? ''] = r.value;
   });
 }
 
@@ -209,8 +209,8 @@ const transModalTitle = ref('');
 async function handleTranslate(hit: SearchHit) {
   // 已有缓存，直接弹窗
   if (translationMap.value[hit.chunkId]) {
-    transModalTitle.value = `🔤 译文 — ${hit.fileName || ''}${hit.pageNum != null ? ` P${hit.pageNum}` : ''}`;
-    transModalText.value = translationMap.value[hit.chunkId]!;
+    transModalTitle.value = `🔤 译文 — ${hit.fileName ?? ''}${hit.pageNum === null ? '' : ` P${hit.pageNum}`}`;
+    transModalText.value = translationMap.value[hit.chunkId] ?? '';
     transModalVisible.value = true;
     return;
   }
@@ -220,7 +220,7 @@ async function handleTranslate(hit: SearchHit) {
     const result = await translateApi(hit.content);
     translationMap.value[hit.chunkId] = result;
     translationMap.value = { ...translationMap.value };
-    transModalTitle.value = `🔤 译文 — ${hit.fileName || ''}${hit.pageNum != null ? ` P${hit.pageNum}` : ''}`;
+    transModalTitle.value = `🔤 译文 — ${hit.fileName ?? ''}${hit.pageNum === null ? '' : ` P${hit.pageNum}`}`;
     transModalText.value = result;
     transModalVisible.value = true;
   } catch {
@@ -385,7 +385,7 @@ const statusMap: Record<string, { color: string; label: string }> = {
   REVIEW: { color: 'warning', label: '审核中' },
   PUBLISHED: { color: 'success', label: '已发布' },
   DEPRECATED: { color: 'error', label: '已下线' },
-  FAILED: { color: 'red', label: '摄取失败' },
+  FAILED: { color: 'error', label: '摄取失败' },
 };
 
 const fmtIcon: Record<string, string> = {
@@ -426,12 +426,15 @@ async function loadDocs() {
 }
 
 function updateStats() {
-  stats[0]!.value = totalDocs.value;
-  stats[1]!.value = docs.value.filter((d) => d.status === 'PUBLISHED').length;
-  stats[2]!.value = docs.value.filter(
-    (d) => d.status === 'DRAFT' || d.status === 'REVIEW',
-  ).length;
-  stats[3]!.value = docs.value.filter((d) => d.status === 'DEPRECATED').length;
+  if (stats[0]) stats[0].value = totalDocs.value;
+  if (stats[1])
+    stats[1].value = docs.value.filter((d) => d.status === 'PUBLISHED').length;
+  if (stats[2])
+    stats[2].value = docs.value.filter(
+      (d) => d.status === 'DRAFT' || d.status === 'REVIEW',
+    ).length;
+  if (stats[3])
+    stats[3].value = docs.value.filter((d) => d.status === 'DEPRECATED').length;
 }
 
 function handleSearch() {
