@@ -16,7 +16,7 @@ export const createDomainApi = (data: Omit<DomainDTO, 'id'>) =>
 export const updateDomainApi = (id: number, data: Omit<DomainDTO, 'id'>) =>
   requestClient.put<DomainDTO>(`/admin/dit/domains/${id}`, data);
 export const deleteDomainApi = (id: number) =>
-  requestClient.delete(`/admin/dit/domains/${id}`);
+  requestClient.delete<void>(`/admin/dit/domains/${id}`);
 
 // ---- 意图 ----
 export interface IntentDTO {
@@ -41,7 +41,7 @@ export const createIntentApi = (data: Omit<IntentDTO, 'id'>) =>
 export const updateIntentApi = (id: number, data: Omit<IntentDTO, 'id'>) =>
   requestClient.put<IntentDTO>(`/admin/dit/intents/${id}`, data);
 export const deleteIntentApi = (id: number) =>
-  requestClient.delete(`/admin/dit/intents/${id}`);
+  requestClient.delete<void>(`/admin/dit/intents/${id}`);
 
 // ---- 槽位 ----
 export interface SlotDTO {
@@ -65,7 +65,7 @@ export const createSlotApi = (data: Omit<SlotDTO, 'id'>) =>
 export const updateSlotApi = (id: number, data: Omit<SlotDTO, 'id'>) =>
   requestClient.put<SlotDTO>(`/admin/dit/slots/${id}`, data);
 export const deleteSlotApi = (id: number) =>
-  requestClient.delete(`/admin/dit/slots/${id}`);
+  requestClient.delete<void>(`/admin/dit/slots/${id}`);
 
 // ---- 工具 ----
 export interface ToolDTO {
@@ -93,7 +93,7 @@ export const createToolApi = (data: Omit<ToolDTO, 'id'>) =>
 export const updateToolApi = (id: number, data: Omit<ToolDTO, 'id'>) =>
   requestClient.put<ToolDTO>(`/admin/dit/tools/${id}`, data);
 export const deleteToolApi = (id: number) =>
-  requestClient.delete(`/admin/dit/tools/${id}`);
+  requestClient.delete<void>(`/admin/dit/tools/${id}`);
 
 // ---- 意图-工具绑定 ----
 export interface BindingDTO {
@@ -111,4 +111,4 @@ export const listBindingsApi = (intentId: number) =>
 export const createBindingApi = (data: Omit<BindingDTO, 'id'>) =>
   requestClient.post<BindingDTO>('/admin/dit/bindings', data);
 export const deleteBindingApi = (id: number) =>
-  requestClient.delete(`/admin/dit/bindings/${id}`);
+  requestClient.delete<void>(`/admin/dit/bindings/${id}`);

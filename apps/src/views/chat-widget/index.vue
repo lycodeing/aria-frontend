@@ -18,6 +18,7 @@ import {
   Modal,
   Textarea,
 } from 'ant-design-vue';
+import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 
 import {
@@ -745,12 +746,12 @@ function clearHistory() {
   msgId = 0;
   const sid = sessionId.value;
   localStorage.removeItem(HISTORY_KEY_PREFIX + sid);
-  // N-07：clearHistory 同步移除 chat_session_id，避免刷新后复用已失效 session
   localStorage.removeItem('chat_session_id');
-  // 同步清理转人工状态，避免下次重新打开时误进入 WS 重连
   localStorage.removeItem(`chat_transferred_${sid}`);
-  // 重新生成新的 sessionId（下次 onMounted 会重新拉取）
-  sessionId.value = '';
+  // 立即生成新的 sessionId，保证清除后下一条消息可以正常发送，无需刷新页面
+  const newSid = `guest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  localStorage.setItem('chat_session_id', newSid);
+  sessionId.value = newSid;
 }
 </script>
 
@@ -1003,20 +1004,20 @@ function clearHistory() {
                     <div class="slot-ask-bubble">
                       <p>{{ m.text }}</p>
                       <div class="slot-input-row">
-                        <a-input
+                        <Input
                           v-model:value="slotInputText"
                           placeholder="请输入..."
                           size="small"
                           style="flex: 1"
                           @press-enter="submitSlotInput"
                         />
-                        <a-button
+                        <Button
                           type="primary"
                           size="small"
                           @click="submitSlotInput"
                         >
                           确认
-                        </a-button>
+                        </Button>
                       </div>
                     </div>
                   </template>
@@ -1042,7 +1043,7 @@ function clearHistory() {
                   <template v-else-if="!m.subType && m.text">
                     <div
                       class="widget-ai-md"
-                      v-html="marked.parse(m.text)"
+                      v-html="DOMPurify.sanitize(marked.parse(m.text) as string)"
                     ></div>
                   </template>
                 </template>
@@ -1142,9 +1143,9 @@ function clearHistory() {
                 >📄 {{ s }}</span>
             </div>
 
-            <!-- 反馈（AI 非失败消息） -->
+            <!-- 反馈（AI 非失败、非语义子类型消息） -->
             <div
-              v-if="m.role === 'ai' && !streaming && !m.failed"
+              v-if="m.role === 'ai' && !streaming && !m.failed && !m.subType"
               class="ml-1 mt-1.5 flex items-center gap-2"
             >
               <span class="text-xs" style="color: #9ca3af">有帮助吗？</span>

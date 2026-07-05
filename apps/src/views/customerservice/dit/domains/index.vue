@@ -124,25 +124,41 @@ const bindingColumns = [
 // ---- 加载 ----
 onMounted(async () => {
   await loadDomains();
-  allTools.value = await listToolsApi();
+  try {
+    allTools.value = await listToolsApi();
+  } catch {
+    message.error('加载工具列表失败');
+  }
 });
 
 async function loadDomains() {
-  domains.value = await listDomainsApi();
+  try {
+    domains.value = await listDomainsApi();
+  } catch {
+    message.error('加载领域列表失败');
+  }
 }
 
 async function selectDomain(id: number) {
   selectedDomainId.value = id;
   selectedIntentId.value = null;
-  intents.value = await listIntentsApi(id);
+  try {
+    intents.value = await listIntentsApi(id);
+  } catch {
+    message.error('加载意图列表失败');
+  }
 }
 
 async function selectIntent(id: number) {
   selectedIntentId.value = id;
   activeTab.value = 'basic';
-  const [s, b] = await Promise.all([listSlotsApi(id), listBindingsApi(id)]);
-  slots.value = s;
-  bindings.value = b;
+  try {
+    const [s, b] = await Promise.all([listSlotsApi(id), listBindingsApi(id)]);
+    slots.value = s;
+    bindings.value = b;
+  } catch {
+    message.error('加载槽位/绑定失败');
+  }
 }
 
 function toolName(toolId: number) {
@@ -254,6 +270,9 @@ async function saveIntent() {
 }
 
 async function confirmDeleteIntent(i: IntentDTO) {
+  // 在 Modal 打开时快照当前 domainId，避免用户确认前点击别处导致 .value 变化
+  const domainId = selectedDomainId.value;
+  if (!domainId) return;
   Modal.confirm({
     title: `删除意图「${i.name}」？`,
     okType: 'danger',
@@ -262,7 +281,7 @@ async function confirmDeleteIntent(i: IntentDTO) {
         await deleteIntentApi(i.id!);
         message.success('已删除');
         if (selectedIntentId.value === i.id) selectedIntentId.value = null;
-        intents.value = await listIntentsApi(selectedDomainId.value!);
+        intents.value = await listIntentsApi(domainId);
       } catch {
         message.error('删除失败，请重试');
       }
@@ -313,6 +332,9 @@ async function saveSlot() {
 }
 
 function confirmDeleteSlot(s: SlotDTO) {
+  // 快照 intentId，避免用户确认前切换意图导致列表刷新到错误的意图
+  const intentId = selectedIntentId.value;
+  if (!intentId) return;
   Modal.confirm({
     title: `删除槽位「${s.slotName}」？`,
     okType: 'danger',
@@ -320,7 +342,7 @@ function confirmDeleteSlot(s: SlotDTO) {
       try {
         await deleteSlotApi(s.id!);
         message.success('已删除');
-        slots.value = await listSlotsApi(selectedIntentId.value!);
+        slots.value = await listSlotsApi(intentId);
       } catch {
         message.error('删除失败，请重试');
       }
@@ -340,15 +362,17 @@ async function saveBinding() {
     return;
   }
   savingBinding.value = true;
+  const intentId = selectedIntentId.value;
+  if (!intentId) { savingBinding.value = false; return; }
   const data = {
     ...bindingForm.value,
-    intentId: selectedIntentId.value!,
+    intentId,
   } as BindingDTO;
   try {
     await createBindingApi(data);
     message.success('绑定成功');
     bindingDrawerVisible.value = false;
-    bindings.value = await listBindingsApi(selectedIntentId.value!);
+    bindings.value = await listBindingsApi(intentId);
   } catch {
     message.error('绑定失败，请重试');
   } finally {
@@ -357,6 +381,9 @@ async function saveBinding() {
 }
 
 function confirmDeleteBinding(b: BindingDTO) {
+  // 快照 intentId，避免用户确认前切换意图
+  const intentId = selectedIntentId.value;
+  if (!intentId) return;
   Modal.confirm({
     title: '解除工具绑定？',
     okType: 'danger',
@@ -364,7 +391,7 @@ function confirmDeleteBinding(b: BindingDTO) {
       try {
         await deleteBindingApi(b.id!);
         message.success('已解除');
-        bindings.value = await listBindingsApi(selectedIntentId.value!);
+        bindings.value = await listBindingsApi(intentId);
       } catch {
         message.error('解除失败，请重试');
       }

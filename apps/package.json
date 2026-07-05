@@ -32,6 +32,7 @@
     "#/*": "./src/*"
   },
   "dependencies": {
+    "@types/dompurify": "^3.2.0",
     "@vben/access": "workspace:*",
     "@vben/common-ui": "workspace:*",
     "@vben/constants": "workspace:*",
@@ -49,6 +50,7 @@
     "@vueuse/core": "catalog:",
     "ant-design-vue": "catalog:",
     "dayjs": "catalog:",
+    "dompurify": "^3.4.11",
     "marked": "^18.0.5",
     "pinia": "catalog:",
     "vue": "catalog:",
