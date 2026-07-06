@@ -74,9 +74,19 @@ export async function getSessionQueueApi(): Promise<SessionQueueItem[]> {
   return agentClient.get('/api/v1/sessions/queue');
 }
 
-/** 获取进行中的会话（座席端，刷新恢复用，需 token） */
+/**
+ * 获取进行中的会话（座席端，需 token）。
+ */
 export async function getActiveSessionsApi(): Promise<SessionQueueItem[]> {
   return agentClient.get('/api/v1/sessions/active');
+}
+
+/**
+ * 获取最近已关闭的会话（最多 50 条，按结束时间倒序，需 token）。
+ * 供座席工作台「已结束」Tab 查看历史会话记录。
+ */
+export async function getClosedSessionsApi(): Promise<SessionQueueItem[]> {
+  return agentClient.get('/api/v1/sessions/closed');
 }
 
 /** 座席接入会话（需 token） */

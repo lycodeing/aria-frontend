@@ -36,6 +36,7 @@ import { marked } from 'marked';
 import {
   closeSessionApi,
   getActiveSessionsApi,
+  getClosedSessionsApi,
   getOnlineAgentsApi,
   getSessionHistoryApi,
   transferSessionApi,
@@ -87,7 +88,7 @@ async function fetchMissingForSession(sid: string) {
     if (!session) return;
     for (const item of missing) {
       // 后端 JacksonLongToStringConfig 将 Long 序列化为字符串，统一 Number() 归一化
-      const seqNum = item.seq == null ? Number.NaN : Number(item.seq);
+      const seqNum = item.seq === null ? Number.NaN : Number(item.seq);
       if (!Number.isFinite(seqNum) || seqNum <= sinceSeqSnapshot) continue;
       if (!item.content) continue;
       if (item.role === 'user') {
@@ -116,7 +117,7 @@ const {
   onUserMessage: (sessionId, msg) => {
     // 跟踪 seq：每条 MESSAGE 都更新 lastSeq，重连时凭此拉增量
     // 后端 Long 序列化为 string，需归一化
-    if (msg.seq != null) {
+    if (msg.seq !== null) {
       const seqNum = Number(msg.seq);
       if (Number.isFinite(seqNum)) writeLastSeq(sessionId, seqNum);
     }
@@ -194,11 +195,87 @@ const activeSession = computed(() => sessions.value.find((s) => s.active));
 const concurrent = computed(() => sessions.value.length);
 
 // ===== 队列状态 Tab =====
-const queueStateTab = ref<'active' | 'waiting'>('waiting');
+const queueStateTab = ref<'active' | 'closed' | 'waiting'>('waiting');
 const queueStateTabs = [
   { key: 'waiting', label: '等待人工', icon: 'lucide:clock' },
   { key: 'active', label: '人工接待中', icon: 'lucide:headphones' },
+  { key: 'closed', label: '已结束', icon: 'lucide:archive' },
 ];
+
+// ===== 已结束会话 =====
+interface ClosedSessionItem {
+  id: string;
+  name: string;
+  nameChar: string;
+  endedAt: string;
+  transferReason: string;
+  tag: string;
+}
+const closedSessions = ref<ClosedSessionItem[]>([]);
+const closedLoading = ref(false);
+
+/** 当前正在只读查看的已结束会话 */
+const closedView = ref<null | {
+  msgs: Msg[];
+  session: ClosedSessionItem;
+}>(null);
+const closedViewLoading = ref(false);
+
+async function loadClosedSessions() {
+  closedLoading.value = true;
+  try {
+    const list = await getClosedSessionsApi();
+    closedSessions.value = list.map((item) => ({
+      id: item.sessionId,
+      name: item.userName,
+      nameChar: item.userName.at(0) ?? '?',
+      endedAt:
+        item.waitSince > 0
+          ? new Date(item.waitSince * 1000).toLocaleString('zh-CN', {
+              month: '2-digit',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : '',
+      transferReason: item.transferReason,
+      tag: item.tag,
+    }));
+  } catch {
+    message.error('加载历史会话失败');
+  } finally {
+    closedLoading.value = false;
+  }
+}
+
+async function viewClosedSession(item: ClosedSessionItem) {
+  closedViewLoading.value = true;
+  closedView.value = { session: item, msgs: [] };
+  try {
+    const history = await getSessionHistoryApi(item.id, 0);
+    closedView.value.msgs = history
+      .filter((h) => h.role !== 'tool')
+      .map((h) => ({
+        id: ++msgId,
+        role: (h.role === 'user'
+          ? 'user'
+          : h.role === 'agent'
+            ? 'agent'
+            : 'ai') as Msg['role'],
+        text: h.content ?? '',
+        time: h.timestamp
+          ? new Date(Number(h.timestamp)).toLocaleTimeString('zh-CN', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : undefined,
+      }));
+  } catch {
+    message.error('加载会话记录失败');
+  } finally {
+    closedViewLoading.value = false;
+  }
+}
 
 // ===== 对话区消息筛选 =====
 const MSG_FILTER_OPTIONS = [
@@ -246,6 +323,17 @@ const transferVisible = ref(false);
 const transferTarget = ref('');
 const availableAgents = ref<OnlineAgentItem[]>([]);
 const loadingAgents = ref(false);
+
+// 切换到「已结束」Tab 时懒加载一次
+watch(queueStateTab, (tab) => {
+  if (tab === 'closed' && closedSessions.value.length === 0) {
+    void loadClosedSessions();
+  }
+  // 切走时清除只读视图，节省内存
+  if (tab !== 'closed') {
+    closedView.value = null;
+  }
+});
 
 // 打开 Modal 时加载在线座席列表
 // 过滤规则：① 排除当前座席自己；② 排除已达并发上限的座席
@@ -325,9 +413,9 @@ async function addSessionLocal(params: {
   // 首次接入时从全量历史初始化 lastSeq，避免后续 WS 重连重复拉全量
   const history = await getSessionHistoryApi(params.id).catch(() => []);
   let maxSeq = 0;
-  const loadedMsgs: Msg[] = history.map((h, i) => {
+  const loadedMsgs: Msg[] = history.map((h) => {
     // seq 后端 Long 序列化为 string，需 Number() 归一化
-    const seqNum = h.seq == null ? Number.NaN : Number(h.seq);
+    const seqNum = h.seq === null ? Number.NaN : Number(h.seq);
     if (Number.isFinite(seqNum) && seqNum > maxSeq) {
       maxSeq = seqNum;
     }
@@ -465,7 +553,7 @@ onMounted(async () => {
       let maxSeq = 0;
       const loadedMsgs: Msg[] = history.map((h) => {
         // S-07：使用全局 ++msgId 保证 id 全局唯一，避免 :key 碰撞导致 DOM 错乱
-        const seqNum = h.seq == null ? Number.NaN : Number(h.seq);
+        const seqNum = h.seq === null ? Number.NaN : Number(h.seq);
         if (Number.isFinite(seqNum) && seqNum > maxSeq) maxSeq = seqNum;
         return {
           id: ++msgId,
@@ -746,7 +834,7 @@ onMounted(async () => {
           </template>
 
           <!-- 人工接待中 Tab -->
-          <template v-else>
+          <template v-else-if="queueStateTab === 'active'">
             <div v-if="sessions.length" class="space-y-2">
               <div
                 v-for="s in sessions"
@@ -795,6 +883,48 @@ onMounted(async () => {
                 <Icon icon="lucide:inbox" class="text-xl text-gray-300" />
               </div>
               <p class="text-xs text-gray-400">暂无进行中的会话</p>
+            </div>
+          </template>
+
+          <!-- 已结束 Tab -->
+          <template v-else-if="queueStateTab === 'closed'">
+            <div v-if="closedLoading" class="flex justify-center py-6">
+              <Spin size="small" />
+            </div>
+            <div v-else-if="closedSessions.length" class="space-y-2">
+              <div
+                v-for="item in closedSessions"
+                :key="item.id"
+                class="cursor-pointer rounded-xl border p-2.5 transition"
+                :class="[
+                  closedView?.session.id === item.id
+                    ? 'border-indigo-300 bg-indigo-50'
+                    : 'border-gray-100 bg-white hover:border-gray-200',
+                ]"
+                @click="viewClosedSession(item)"
+              >
+                <div class="flex items-center gap-2">
+                  <Avatar :size="26" style="background: #9ca3af">
+                    {{ item.nameChar }}
+                  </Avatar>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs font-medium text-gray-700">
+                      {{ item.name }}
+                    </p>
+                    <p class="text-xs text-gray-400">{{ item.endedAt }}</p>
+                  </div>
+                  <Tag color="default" class="shrink-0 text-xs">
+                    {{ item.tag }}
+                  </Tag>
+                </div>
+              </div>
+            </div>
+            <div
+              v-else
+              class="flex flex-col items-center justify-center py-6 text-center"
+            >
+              <Icon icon="lucide:archive" class="mb-2 text-2xl text-gray-200" />
+              <p class="text-xs text-gray-400">暂无已结束会话</p>
             </div>
           </template>
         </Card>
@@ -911,7 +1041,7 @@ onMounted(async () => {
                 <!-- 座席/用户：纯文本 -->
                 <span
                   v-else
-                  style="word-break: break-word; white-space: pre-wrap"
+                  style="overflow-wrap: break-word; white-space: pre-wrap"
                   >{{ m.text }}</span>
               </div>
               <!-- 时间戳 + 复制 -->
@@ -969,6 +1099,98 @@ onMounted(async () => {
               </template>
             </Button>
           </div>
+        </div>
+      </div>
+
+      <!-- 中栏：已结束会话只读视图 -->
+      <div
+        v-else-if="closedView"
+        class="flex flex-1 flex-col overflow-hidden rounded-xl bg-white shadow-sm"
+      >
+        <!-- 顶栏 -->
+        <div
+          class="flex shrink-0 items-center gap-3 border-b border-gray-100 px-4 py-3"
+        >
+          <Avatar :size="36" style="background: #9ca3af">
+            {{ closedView.session.nameChar }}
+          </Avatar>
+          <div>
+            <p class="text-sm font-medium text-gray-800">
+              {{ closedView.session.name }}
+            </p>
+            <p class="text-xs text-gray-500">
+              会话 #{{ closedView.session.id }} · 结束于
+              {{ closedView.session.endedAt }} · 原因：{{
+                closedView.session.transferReason
+              }}
+            </p>
+          </div>
+          <div class="ml-auto">
+            <Tag color="default">已结束</Tag>
+          </div>
+        </div>
+
+        <!-- 消息列表（只读） -->
+        <div class="flex-1 space-y-3 overflow-y-auto bg-gray-50 p-4">
+          <div v-if="closedViewLoading" class="flex justify-center py-10">
+            <Spin />
+          </div>
+          <template v-else>
+            <div class="flex justify-center">
+              <Tag color="default" class="text-xs">
+                共
+                {{ closedView.msgs.filter((m) => m.role !== 'agent').length }}
+                轮对话
+              </Tag>
+            </div>
+            <div
+              v-for="m in closedView.msgs"
+              :key="m.id"
+              class="flex gap-2"
+              :class="[m.role !== 'user' ? 'flex-row-reverse' : '']"
+            >
+              <Avatar
+                :size="28"
+                :style="{
+                  backgroundColor:
+                    m.role === 'user'
+                      ? '#a78bfa'
+                      : m.role === 'agent'
+                        ? '#f97316'
+                        : '#e0e7ff',
+                }"
+                class="shrink-0"
+              >
+                {{
+                  m.role === 'user'
+                    ? closedView.session.nameChar
+                    : m.role === 'agent'
+                      ? '客'
+                      : 'AI'
+                }}
+              </Avatar>
+              <div
+                class="max-w-xs rounded-xl px-3 py-2 text-sm leading-relaxed"
+                :class="[
+                  m.role === 'user'
+                    ? 'rounded-tl-none border border-gray-200 bg-white text-gray-700'
+                    : m.role === 'agent'
+                      ? 'rounded-tr-none bg-indigo-500 text-white'
+                      : 'rounded-tr-none bg-indigo-50 text-indigo-800 opacity-80',
+                ]"
+              >
+                <div
+                  v-if="m.role === 'ai'"
+                  class="agent-ai-md"
+                  v-html="marked.parse(m.text)"
+                ></div>
+                <span
+                  v-else
+                  style="overflow-wrap: break-word; white-space: pre-wrap"
+                  >{{ m.text }}</span>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
 
