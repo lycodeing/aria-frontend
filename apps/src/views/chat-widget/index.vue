@@ -56,7 +56,7 @@ interface Msg {
   sending?: boolean;
   /** 工具调用状态列表（内嵌在同一气泡中） */
   tools?: ToolCallStatus[];
-  subType?: 'candidates' | 'slot_ask';
+  subType?: 'candidates' | 'session_end' | 'session_start' | 'slot_ask';
   candidates?: Array<{ id: string; label: string }>;
 }
 
@@ -84,6 +84,8 @@ const msgs = ref<Msg[]>([]);
 const msgsEnd = ref<HTMLDivElement>();
 const streaming = ref(false);
 const transferred = ref(false);
+/** 座席主动结束会话后为 true，此时底部显示「开始新对话」按钮 */
+const sessionEnded = ref(false);
 const wsStatus = ref<'connected' | 'connecting' | 'disconnected'>(
   'disconnected',
 );
@@ -230,10 +232,20 @@ function connectVisitorWsWithRetry(sid: string) {
 
       // code 1000 = 服务端正常关闭（座席结束会话）
       if (event.code === 1000) {
-        addMsg('agent', '✅ 会话已结束，感谢您的使用。');
+        // 插入会话结束分隔条，历史消息保留可见
+        msgs.value.push({
+          id: ++msgId,
+          role: 'ai',
+          text: '本次会话已结束，感谢您的使用。',
+          subType: 'session_end',
+          time: nowTime(),
+          feedback: null,
+        });
         localStorage.removeItem(`chat_transferred_${sid}`);
         transferred.value = false;
+        sessionEnded.value = true;
         wsRetryCount = 0;
+        scrollBottom();
         return;
       }
 
@@ -823,6 +835,38 @@ function clearHistory() {
   const newSid = `guest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   localStorage.setItem('chat_session_id', newSid);
   sessionId.value = newSid;
+  sessionEnded.value = false;
+}
+
+/**
+ * 会话结束后开始新对话。
+ * 保留当前 msgs（含历史 + 分隔条），追加新对话开始标记，
+ * 生成新 sessionId，重置所有会话状态。
+ * 新消息将发送到新 session，历史记录仍在同一窗口可见。
+ */
+function startNewSession() {
+  const newSid = `guest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+
+  // 追加新对话开始分隔条
+  msgs.value.push({
+    id: ++msgId,
+    role: 'ai',
+    text: '新对话开始',
+    subType: 'session_start',
+    time: nowTime(),
+    feedback: null,
+  });
+  scrollBottom();
+
+  // 切换到新 session，重置状态
+  localStorage.setItem('chat_session_id', newSid);
+  sessionId.value = newSid;
+  sessionEnded.value = false;
+  transferred.value = false;
+  isAuth.value = false;
+  authLabel.value = '访客模式';
+  wsRetryCount = 0;
+  inputText.value = '';
 }
 </script>
 
@@ -1070,8 +1114,24 @@ function clearHistory() {
                     <!-- 废弃，工具状态已内嵌 -->
                   </template>
 
+                  <!-- 会话结束分隔条 -->
+                  <template v-if="m.subType === 'session_end'">
+                    <div class="session-divider session-end">
+                      <Icon icon="lucide:check-circle" class="text-sm" />
+                      <span>{{ m.text }}</span>
+                    </div>
+                  </template>
+
+                  <!-- 新对话开始分隔条 -->
+                  <template v-else-if="m.subType === 'session_start'">
+                    <div class="session-divider session-start">
+                      <Icon icon="lucide:message-circle-plus" class="text-sm" />
+                      <span>{{ m.text }}</span>
+                    </div>
+                  </template>
+
                   <!-- Slot ask -->
-                  <template v-if="m.subType === 'slot_ask'">
+                  <template v-else-if="m.subType === 'slot_ask'">
                     <div class="slot-ask-bubble">
                       <p>{{ m.text }}</p>
                       <div class="slot-input-row">
@@ -1279,27 +1339,45 @@ function clearHistory() {
 
       <!-- 输入框 -->
       <div class="shrink-0 px-4 py-3" style="border-top: 1px solid #f1f5f9">
-        <div class="flex items-end gap-2">
-          <Textarea
-            v-model:value="inputText"
-            placeholder="输入您的问题..."
-            :auto-size="{ minRows: 1, maxRows: 4 }"
-            class="flex-1"
-            @keydown.enter="handleEnter"
-          />
-          <Button
-            type="primary"
-            :loading="streaming"
-            :disabled="!inputText.trim()"
-            class="flex h-10 w-10 shrink-0 items-center justify-center"
-            @click="sendMsg"
-          >
-            <template #icon><Icon icon="lucide:send" /></template>
-          </Button>
-        </div>
-        <p class="mt-2 text-center text-xs" style="color: #94a3b8">
-          AI 回答仅供参考，重要事项请联系人工确认
-        </p>
+        <!-- 会话已结束：显示「开始新对话」按钮，替代输入框 -->
+        <template v-if="sessionEnded">
+          <div class="flex flex-col items-center gap-3 py-2">
+            <p class="text-xs" style="color: #94a3b8">
+              本次会话已结束，您可以查看上方历史记录
+            </p>
+            <Button
+              type="primary"
+              class="w-full"
+              @click="startNewSession"
+            >
+              <template #icon><Icon icon="lucide:message-circle-plus" /></template>
+              开始新对话
+            </Button>
+          </div>
+        </template>
+        <template v-else>
+          <div class="flex items-end gap-2">
+            <Textarea
+              v-model:value="inputText"
+              placeholder="输入您的问题..."
+              :auto-size="{ minRows: 1, maxRows: 4 }"
+              class="flex-1"
+              @keydown.enter="handleEnter"
+            />
+            <Button
+              type="primary"
+              :loading="streaming"
+              :disabled="!inputText.trim()"
+              class="flex h-10 w-10 shrink-0 items-center justify-center"
+              @click="sendMsg"
+            >
+              <template #icon><Icon icon="lucide:send" /></template>
+            </Button>
+          </div>
+          <p class="mt-2 text-center text-xs" style="color: #94a3b8">
+            AI 回答仅供参考，重要事项请联系人工确认
+          </p>
+        </template>
       </div>
     </div>
 
@@ -1614,5 +1692,27 @@ function clearHistory() {
   color: #1677ff;
   background: #e6f7ff;
   border-color: #1677ff;
+}
+
+.session-divider {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 20px;
+}
+
+.session-divider.session-end {
+  color: #6b7280;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+}
+
+.session-divider.session-start {
+  color: #4f46e5;
+  background: #ede9fe;
+  border: 1px solid #c4b5fd;
 }
 </style>
