@@ -116,7 +116,10 @@ async function openMenuDrawer(role: RoleVO) {
       requestClient.get('/menus'),
       requestClient.get(`/roles/${role.id}/menus`),
     ]);
-    menuTree.value = buildTree(allMenus ?? demoMenus, 0);
+    menuTree.value = mapApiTree(allMenus ?? []);
+    if (menuTree.value.length === 0) {
+      menuTree.value = buildTree(demoMenus, 0);
+    }
     checkedMenuIds.value = roleMenuIds ?? [];
   } catch {
     menuTree.value = buildTree(demoMenus, 0);
@@ -169,6 +172,23 @@ const demoMenus = [
   { id: 202, parentId: 200, menuName: '角色管理', menuType: 'MENU' },
 ];
 
+/** 将后端已嵌套的菜单树映射为 Ant Design Tree 格式 */
+function mapApiTree(nodes: any[]): any[] {
+  if (!nodes) return [];
+  return nodes.map((m) => {
+    const icon =
+      m.menuType === 'BUTTON' ? '🔘' : m.menuType === 'MENU' ? '📄' : '📁';
+    const children =
+      m.children && m.children.length > 0 ? mapApiTree(m.children) : undefined;
+    return {
+      title: `${icon} ${m.menuName}`,
+      key: m.id,
+      children,
+    };
+  });
+}
+
+/** 从扁平数组构建 Ant Design Tree（demoMenus 回退用） */
 function buildTree(menus: any[], parentId: number): any[] {
   return menus
     .filter((m) => m.parentId === parentId)
