@@ -1,14 +1,23 @@
 <script lang="ts" setup>
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
-import { onMounted, ref } from 'vue';
+import { ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
+
+const props = defineProps<{
+  /** 每月消息量 */
+  counts?: number[];
+  /** 月份标签 */
+  months?: string[];
+}>();
 
 const chartRef = ref<EchartsUIType>();
 const { renderEcharts } = useEcharts(chartRef);
 
-onMounted(() => {
+function render(months: string[] = [], counts: number[] = []) {
+  const maxVal = Math.max(1, ...counts);
+
   renderEcharts({
     grid: {
       bottom: 0,
@@ -20,34 +29,35 @@ onMounted(() => {
     series: [
       {
         barMaxWidth: 80,
-        // color: '#4f69fd',
-        data: [
-          3000, 2000, 3333, 5000, 3200, 4200, 3200, 2100, 3000, 5100, 6000,
-          3200, 4800,
-        ],
+        data: counts,
         type: 'bar',
       },
     ],
     tooltip: {
       axisPointer: {
         lineStyle: {
-          // color: '#4f69fd',
           width: 1,
         },
       },
       trigger: 'axis',
     },
     xAxis: {
-      data: Array.from({ length: 12 }).map((_item, index) => `${index + 1}月`),
+      data: months,
       type: 'category',
     },
     yAxis: {
-      max: 8000,
+      max: Math.ceil(maxVal * 1.2),
       splitNumber: 4,
       type: 'value',
     },
   });
-});
+}
+
+watch(
+  () => [props.months, props.counts] as const,
+  ([m, c]) => render(m ?? [], c ?? []),
+  { immediate: true },
+);
 </script>
 
 <template>
