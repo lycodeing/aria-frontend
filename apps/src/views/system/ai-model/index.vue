@@ -38,16 +38,18 @@ import {
   updateAiModelApi,
 } from '#/api/ai-model';
 
-// ===== TAB 切换（CHAT / EMBEDDING） =====
-const activeTab = ref<'CHAT' | 'EMBEDDING'>('CHAT');
+// ===== TAB 切换（CHAT / EMBEDDING / ROUTER） =====
+const activeTab = ref<'CHAT' | 'EMBEDDING' | 'ROUTER'>('CHAT');
 
 function onTabChange(key: string | number) {
-  activeTab.value = key as 'CHAT' | 'EMBEDDING';
+  activeTab.value = key as 'CHAT' | 'EMBEDDING' | 'ROUTER';
   loadList();
 }
 
 /** 当前 TAB 是向量模型 */
 const isEmbeddingTab = computed(() => activeTab.value === 'EMBEDDING');
+/** 当前 TAB 是路由小模型 */
+const isRouterTab = computed(() => activeTab.value === 'ROUTER');
 
 // ===== 列表状态 =====
 const list = ref<AiModelConfigItem[]>([]);
@@ -84,6 +86,21 @@ const emptyForm = (): Partial<AiModelConfigItem> => {
       temperature: 0,
       maxTokens: 0,
       timeoutSec: 30,
+      remark: '',
+    };
+  }
+  if (isRouterTab.value) {
+    return {
+      name: '',
+      provider: 'CUSTOM',
+      apiProtocol: 'OPENAI_COMPATIBLE',
+      modelType: 'ROUTER',
+      baseUrl: 'http://localhost:11434/v1',
+      apiKeyEnc: '',
+      modelName: 'qwen2.5:0.5b',
+      temperature: 0,
+      maxTokens: 32,
+      timeoutSec: 5,
       remark: '',
     };
   }
@@ -214,7 +231,7 @@ async function testConnection(row: AiModelConfigItem) {
   }
 }
 
-// ===== 表格列定义（两个 TAB 列结构略有不同） =====
+// ===== 表格列定义（三个 TAB 列结构略有不同） =====
 const chatColumns = [
   { title: '名称', dataIndex: 'name', key: 'name' },
   { title: '供应商', dataIndex: 'provider', key: 'provider', width: 100 },
@@ -236,9 +253,23 @@ const embeddingColumns = [
   { title: '操作', key: 'action', width: 240 },
 ];
 
-const columns = computed(() =>
-  isEmbeddingTab.value ? embeddingColumns : chatColumns,
-);
+/** 路由小模型：只需关注 Base URL、模型名和超时，温度/MaxTokens 无意义 */
+const routerColumns = [
+  { title: '名称', dataIndex: 'name', key: 'name' },
+  { title: '供应商', dataIndex: 'provider', key: 'provider', width: 120 },
+  { title: 'Base URL', dataIndex: 'baseUrl', key: 'baseUrl' },
+  { title: '模型', dataIndex: 'modelName', key: 'modelName', width: 160 },
+  { title: '超时(s)', dataIndex: 'timeoutSec', key: 'timeoutSec', width: 80 },
+  { title: '状态', key: 'status', width: 80 },
+  { title: '默认', key: 'isDefault', width: 70, align: 'center' as const },
+  { title: '操作', key: 'action', width: 240 },
+];
+
+const columns = computed(() => {
+  if (isEmbeddingTab.value) return embeddingColumns;
+  if (isRouterTab.value)    return routerColumns;
+  return chatColumns;
+});
 </script>
 
 <template>
@@ -250,10 +281,11 @@ const columns = computed(() =>
       <Button type="primary" @click="openCreate">+ 新增配置</Button>
     </template>
 
-    <!-- TAB 切换：对话模型 / 向量模型 -->
+    <!-- TAB 切换：对话模型 / 向量模型 / 路由模型 -->
     <Tabs :active-key="activeTab" @change="onTabChange" style="margin-bottom: 0">
       <TabPane key="CHAT" tab="对话模型" />
       <TabPane key="EMBEDDING" tab="向量模型（Embedding）" />
+      <TabPane key="ROUTER" tab="路由模型" />
     </Tabs>
 
     <Table
@@ -308,7 +340,9 @@ const columns = computed(() =>
       v-model:open="modalOpen"
       :title="editingId
         ? '编辑配置'
-        : isEmbeddingTab ? '新增向量模型配置' : '新增对话模型配置'"
+        : isEmbeddingTab ? '新增向量模型配置'
+        : isRouterTab ? '新增路由模型配置'
+        : '新增对话模型配置'"
       :confirm-loading="submitting"
       width="560px"
       @ok="submit"
@@ -317,7 +351,7 @@ const columns = computed(() =>
         <FormItem label="配置名称" required>
           <Input
             v-model:value="form.name"
-            :placeholder="isEmbeddingTab ? '如：本地 BGE-M3' : '如：天翼云 DeepSeek-V4-Flash'"
+            :placeholder="isEmbeddingTab ? '如：本地 BGE-M3' : isRouterTab ? '如：Qwen2.5-0.5B (域路由)' : '如：天翼云 DeepSeek-V4-Flash'"
           />
         </FormItem>
         <div style="display: flex; gap: 12px">
@@ -347,18 +381,18 @@ const columns = computed(() =>
         <FormItem label="API Base URL" required>
           <Input
             v-model:value="form.baseUrl"
-            :placeholder="isEmbeddingTab ? 'http://localhost:8000' : 'https://api.openai.com/v1'"
+            :placeholder="isEmbeddingTab ? 'http://localhost:8000' : isRouterTab ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1'"
           />
         </FormItem>
         <FormItem
           label="API Key"
           :help="editingId
             ? '留空则不修改现有 Key'
-            : isEmbeddingTab ? '本地部署无需 Key 可留空' : ''"
+            : (isEmbeddingTab || isRouterTab) ? '本地部署无需 Key 可留空' : ''"
         >
           <InputPassword
             v-model:value="form.apiKeyEnc"
-            :placeholder="isEmbeddingTab ? '本地部署可留空' : '输入 API Key（自动加密存储）'"
+            :placeholder="(isEmbeddingTab || isRouterTab) ? '本地部署可留空' : '输入 API Key（自动加密存储）'"
           />
         </FormItem>
         <FormItem label="模型名称" required>
@@ -366,12 +400,14 @@ const columns = computed(() =>
             v-model:value="form.modelName"
             :placeholder="isEmbeddingTab
               ? '如 bge-m3 / nomic-embed-text / mxbai-embed-large'
+              : isRouterTab
+              ? '如 qwen2.5:0.5b / phi3-mini / gemma2:2b'
               : '如 DeepSeek-V4-Flash / gpt-4o'"
           />
         </FormItem>
 
         <!-- 对话模型专属：温度 / Max Tokens / 超时 -->
-        <template v-if="!isEmbeddingTab">
+        <template v-if="!isEmbeddingTab && !isRouterTab">
           <div style="display: flex; gap: 12px">
             <FormItem label="温度（0-2）" style="flex: 1">
               <InputNumber
@@ -402,7 +438,7 @@ const columns = computed(() =>
         </template>
 
         <!-- 向量模型：只需配置超时，温度/MaxTokens 对 Embedding 无意义 -->
-        <template v-else>
+        <template v-else-if="isEmbeddingTab">
           <FormItem label="超时（秒）" help="向量化 HTTP 请求超时，大批量时可适当调大">
             <InputNumber
               v-model:value="form.timeoutSec"
@@ -411,6 +447,28 @@ const columns = computed(() =>
               style="width: 160px"
             />
           </FormItem>
+        </template>
+
+        <!-- 路由模型：Max Tokens（输出极短）和超时（要求快速响应）-->
+        <template v-else>
+          <div style="display: flex; gap: 12px">
+            <FormItem label="Max Tokens" style="flex: 1" help="路由模型只输出域 code，设 32 即可">
+              <InputNumber
+                v-model:value="form.maxTokens"
+                :min="1"
+                :max="256"
+                style="width: 100%"
+              />
+            </FormItem>
+            <FormItem label="超时（秒）" style="flex: 1" help="路由判断需快速响应，建议 ≤ 10s">
+              <InputNumber
+                v-model:value="form.timeoutSec"
+                :min="1"
+                :max="30"
+                style="width: 100%"
+              />
+            </FormItem>
+          </div>
         </template>
 
         <FormItem label="备注">

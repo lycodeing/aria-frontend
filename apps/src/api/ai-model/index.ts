@@ -6,7 +6,7 @@ export interface AiModelConfigItem {
   name: string;
   provider: string;
   apiProtocol: string;
-  /** 模型类型：CHAT=对话大模型，EMBEDDING=向量模型 */
+  /** 模型类型：CHAT=对话大模型，EMBEDDING=向量模型，ROUTER=域路由小模型 */
   modelType: string;
   remark?: string;
   baseUrl: string;
@@ -30,6 +30,7 @@ export interface AiModelPageResult {
 export const MODEL_TYPES = [
   { value: 'CHAT',      label: '对话模型' },
   { value: 'EMBEDDING', label: '向量模型' },
+  { value: 'ROUTER',    label: '路由模型' },
 ];
 
 export const PROVIDERS = [

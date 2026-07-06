@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 // ===== 主题隔离：强制 light 模式，不受后台暗色主题影响 =====
 // Vben Admin 通过给 <html> 加 dark class 切换主题，chat 页独立渲染需主动隔离
-import type { WsChatMessage } from '#/api/session';
+import type { ChatHistoryItem, WsChatMessage } from '#/api/session';
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -117,7 +117,7 @@ const LAST_SEQ_KEY_PREFIX = 'chat_last_seq_';
 
 /** 读取 sessionId 对应的 lastSeq，缺省或脏数据返回 0 */
 function readLastSeq(sid: string): number {
-  const raw = sessionStorage.getItem(LAST_SEQ_KEY_PREFIX + sid);
+  const raw = localStorage.getItem(LAST_SEQ_KEY_PREFIX + sid);
   if (!raw) return 0;
   const n = Number(raw);
   // 非有限数（NaN / Infinity）或负数视为脏数据，重置为 0
@@ -129,7 +129,7 @@ function writeLastSeq(sid: string, newSeq: number) {
   if (!Number.isFinite(newSeq) || newSeq <= 0) return;
   const current = readLastSeq(sid);
   if (newSeq > current) {
-    sessionStorage.setItem(LAST_SEQ_KEY_PREFIX + sid, String(newSeq));
+    localStorage.setItem(LAST_SEQ_KEY_PREFIX + sid, String(newSeq));
   }
 }
 
@@ -185,6 +185,27 @@ function scrollBottom() {
 function addMsg(role: 'agent' | 'ai' | 'user', text: string) {
   msgs.value.push({ id: ++msgId, role, text, time: nowTime(), feedback: null });
   scrollBottom();
+}
+
+/**
+ * 将后端历史消息项转换为前端 Msg 对象。
+ * - assistant → ai（与前端 role 类型保持一致）
+ * - tool 消息（LangChain4j 内部工具执行结果）过滤掉，不渲染
+ * - timestamp 毫秒 → 本地时间字符串
+ */
+function toMsgFromHistory(item: ChatHistoryItem, id: number): Msg | null {
+  if (item.role === 'tool') return null; // 内部工具消息不渲染
+
+  const role: Msg['role'] =
+    item.role === 'assistant' ? 'ai' : item.role === 'agent' ? 'agent' : 'user';
+
+  let time = '';
+  if (item.timestamp) {
+    const d = new Date(item.timestamp);
+    time = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  return { id, role, text: item.content ?? '', time, sources: [], feedback: null };
 }
 
 // ===== 访客 WS 连接（含重试） =====
@@ -344,7 +365,7 @@ const QUICK = [
   'API 接口文档',
 ];
 
-onMounted(() => {
+onMounted(async () => {
   let sid = localStorage.getItem('chat_session_id');
   if (!sid) {
     // N-06：改用 crypto.randomUUID() 替代 Math.random()，
@@ -354,8 +375,58 @@ onMounted(() => {
   }
   sessionId.value = sid;
 
-  // 恢复历史消息
-  loadHistory();
+  // 策略：
+  //   knownSeq > 0（二次访问）→ 先恢复 localStorage 本地缓存，再增量补齐新消息
+  //   knownSeq = 0（首次访问）→ 从后端拉全量历史，不依赖 localStorage
+  const knownSeq = readLastSeq(sid);
+  let loadedFromServer = false;
+
+  try {
+    if (knownSeq > 0) {
+      // ---- 增量模式：只拉 knownSeq 之后的新消息 ----
+      loadHistory(); // 先渲染本地缓存，用户立刻看到历史
+      const newItems = await getVisitorHistoryApi(sid, knownSeq);
+      for (const item of newItems) {
+        const seqNum =
+          item.seq === null || item.seq === undefined
+            ? Number.NaN
+            : Number(item.seq);
+        if (!Number.isFinite(seqNum) || seqNum <= knownSeq) continue;
+        const m = toMsgFromHistory(item, ++msgId);
+        if (m) msgs.value.push(m);
+        writeLastSeq(sid, seqNum);
+      }
+      if (newItems.length > 0) scrollBottom();
+      loadedFromServer = true;
+    } else {
+      // ---- 全量模式：首次访问，从后端加载完整历史 ----
+      const serverHistory = await getVisitorHistoryApi(sid, 0);
+      if (serverHistory.length > 0) {
+        const converted: Msg[] = [];
+        for (const item of serverHistory) {
+          const m = toMsgFromHistory(item, ++msgId);
+          if (m) converted.push(m);
+          const seqNum =
+            item.seq === null || item.seq === undefined
+              ? Number.NaN
+              : Number(item.seq);
+          if (Number.isFinite(seqNum) && seqNum > 0) writeLastSeq(sid, seqNum);
+        }
+        if (converted.length > 0) {
+          msgs.value = converted;
+          scrollBottom();
+          loadedFromServer = true;
+        }
+      }
+    }
+  } catch {
+    // 后端不可用时静默降级，不影响主流程
+  }
+
+  if (!loadedFromServer) {
+    // 后端无历史数据或请求失败，回退到 localStorage 本地缓存
+    loadHistory();
+  }
 
   // 恢复转人工 WebSocket 连接（含自动重试）
   const wasTransferred =
