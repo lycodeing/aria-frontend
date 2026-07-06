@@ -11,10 +11,10 @@ export default defineConfig(async () => {
           // 生产环境 nginx 按同样规则路由到不同服务
           // ----------------------------------------------------------------
 
-          // knowledge-service (8084)：路径本身就是 /api/knowledge/**，无需 rewrite
+          // knowledge-service (8081)：路径本身就是 /api/knowledge/**，无需 rewrite
           '/api/knowledge': {
             changeOrigin: true,
-            target: 'http://localhost:8084',
+            target: 'http://localhost:8081',
           },
 
           // conversation-service (8082)：对话 + 会话队列 + DIT 管理
@@ -27,6 +27,12 @@ export default defineConfig(async () => {
             target: 'http://localhost:8082',
           },
           '/api/v1/admin/dit': {
+            changeOrigin: true,
+            target: 'http://localhost:8082',
+          },
+
+          // conversation-service (8082)：Dashboard 统计接口
+          '/api/v1/dashboard': {
             changeOrigin: true,
             target: 'http://localhost:8082',
           },

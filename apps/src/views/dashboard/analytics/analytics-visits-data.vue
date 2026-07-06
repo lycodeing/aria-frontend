@@ -1,42 +1,48 @@
 <script lang="ts" setup>
 import type { EchartsUIType } from '@vben/plugins/echarts';
 
-import { onMounted, ref } from 'vue';
+import type { DashboardOverviewData } from '#/api/dashboard';
+
+import { ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
+
+const props = defineProps<{
+  /** 概览指标数据 */
+  data?: DashboardOverviewData;
+}>();
 
 const chartRef = ref<EchartsUIType>();
 const { renderEcharts } = useEcharts(chartRef);
 
-onMounted(() => {
+function render(data: DashboardOverviewData | undefined) {
+  if (!data) return;
+
+  // 将各指标归一化到 0-100 区间，用于雷达图展示
+  const total = Math.max(1, data.totalConversationCount);
+  const todayConv = Math.round((data.todayConversationCount / total) * 100);
+  const activeConv = Math.round((data.activeConversationCount / total) * 100);
+  const waitingConv = Math.round((data.waitingConversationCount / total) * 100);
+  const totalMsg = Math.max(1, data.totalMessageCount);
+  const aiMsg = Math.round((data.aiMessageCount / totalMsg) * 100);
+  const agentMsg = Math.round((data.agentMessageCount / totalMsg) * 100);
+
   renderEcharts({
     legend: {
       bottom: 0,
-      data: ['访问', '趋势'],
+      data: ['占比'],
     },
     radar: {
       indicator: [
-        {
-          name: '网页',
-        },
-        {
-          name: '移动端',
-        },
-        {
-          name: 'Ipad',
-        },
-        {
-          name: '客户端',
-        },
-        {
-          name: '第三方',
-        },
-        {
-          name: '其它',
-        },
+        { max: 100, name: '今日会话' },
+        { max: 100, name: '活跃会话' },
+        { max: 100, name: '等待会话' },
+        { max: 100, name: 'AI回复' },
+        { max: 100, name: '人工回复' },
+        { max: 100, name: '总用户' },
       ],
       radius: '60%',
-      splitNumber: 8,
+      splitNumber: 5,
     },
     series: [
       {
@@ -50,21 +56,13 @@ onMounted(() => {
         data: [
           {
             itemStyle: {
-              color: '#b6a2de',
-            },
-            name: '访问',
-            value: [90, 50, 86, 40, 50, 20],
-          },
-          {
-            itemStyle: {
               color: '#5ab1ef',
             },
-            name: '趋势',
-            value: [70, 75, 70, 76, 20, 85],
+            name: '占比',
+            value: [todayConv, activeConv, waitingConv, aiMsg, agentMsg, 100],
           },
         ],
         itemStyle: {
-          // borderColor: '#fff',
           borderRadius: 10,
           borderWidth: 2,
         },
@@ -74,7 +72,13 @@ onMounted(() => {
     ],
     tooltip: {},
   });
-});
+}
+
+watch(
+  () => props.data,
+  (val) => render(val),
+  { immediate: true },
+);
 </script>
 
 <template>

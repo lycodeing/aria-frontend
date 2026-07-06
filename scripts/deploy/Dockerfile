@@ -16,7 +16,7 @@ COPY . /app
 
 # 安装依赖
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
-RUN pnpm run build --filter=\!./docs
+RUN pnpm --filter=@vben/playground run build
 
 RUN echo "Builder Success 🎉"
 
