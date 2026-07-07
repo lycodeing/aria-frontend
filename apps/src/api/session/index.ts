@@ -130,6 +130,17 @@ export async function transferToAgentApi(params: {
   return publicClient.post('/api/v1/chat/transfer', params);
 }
 
+/**
+ * 查询会话当前状态（onMounted 兜底：检测 AI 工具触发转接后页面关闭的场景）。
+ * 若返回 WAITING 或 ACTIVE，前端应自动恢复转接状态并重连 WebSocket。
+ */
+export async function getSessionStateApi(sessionId: string): Promise<{
+  sessionId: string;
+  status: 'ACTIVE' | 'AI_CHAT' | 'CLOSED' | 'WAITING';
+}> {
+  return publicClient.get('/api/v1/chat/state', { params: { sessionId } });
+}
+
 // -------------------------------------------------------
 // 座席间转交功能
 // -------------------------------------------------------
