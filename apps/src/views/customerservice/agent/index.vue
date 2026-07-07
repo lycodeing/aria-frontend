@@ -3,6 +3,7 @@
 
 import type {
   SessionQueueItem as ApiSessionItem,
+  ChatToolCall,
   OnlineAgentItem,
   SessionSseEvent,
 } from '#/api/session';
@@ -171,12 +172,41 @@ const wsStatusMeta = computed(() => {
   }
 });
 
-/** 历史/事件消息角色 → 前端 Msg.role（system 居中提示，其余按角色渲染） */
+/** 历史/事件消息角色 → 前端 Msg.role（system 居中提示，tool 独立卡片，其余按角色渲染） */
 function mapMsgRole(role: string | undefined): Msg['role'] {
   if (role === 'user') return 'user';
   if (role === 'agent') return 'agent';
   if (role === 'system') return 'system';
+  if (role === 'tool') return 'tool';
   return 'ai';
+}
+
+/**
+ * 把后端 ChatHistoryItem 归一化为前端 Msg，统一处理 tool 元数据与时间戳。
+ * 抽出来是因为 addSessionLocal / onMounted / viewClosedSession 三处都要用。
+ */
+function historyItemToMsg(h: {
+  content?: string;
+  role?: string;
+  timestamp?: null | number;
+  toolCalls?: ChatToolCall[] | null;
+  toolName?: null | string;
+  toolRequestId?: null | string;
+}): Msg {
+  return {
+    id: ++msgId,
+    role: mapMsgRole(h.role),
+    text: h.content ?? '',
+    time: h.timestamp
+      ? new Date(Number(h.timestamp)).toLocaleTimeString('zh-CN', {
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : undefined,
+    toolName: h.toolName ?? undefined,
+    toolRequestId: h.toolRequestId ?? undefined,
+    toolCalls: h.toolCalls ?? undefined,
+  };
 }
 
 // ===== 队列搜索（客户端过滤：姓名 / 标签 / 会话编号） =====
@@ -273,9 +303,34 @@ const MAX_CONCURRENT = 5;
 // ===== 消息类型 =====
 interface Msg {
   id: number;
-  role: 'agent' | 'ai' | 'system' | 'user';
+  role: 'agent' | 'ai' | 'system' | 'tool' | 'user';
   text: string;
   time?: string;
+  /** 仅 role='tool' 填充：被调用的工具名 */
+  toolName?: string;
+  /** 仅 role='tool' 填充：对应 AI 请求里的 toolCalls[].id，用于折叠面板 key */
+  toolRequestId?: string;
+  /** 仅 role='ai' 填充：本轮触发的工具调用列表（LangChain ToolCall） */
+  toolCalls?: ChatToolCall[];
+}
+
+/**
+ * 工具消息格式化：把后端返回的 JSON 字符串 pretty-print，非 JSON 原样透出。
+ * 用于气泡内 <pre> 展示，避免一整行 JSON 溢出。
+ */
+function prettyToolPayload(raw: string): string {
+  if (!raw) return '';
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+/** 工具消息展开状态：按 msg.id 记录，避免多条工具消息共享 open 标记 */
+const toolExpanded = ref<Record<number, boolean>>({});
+function toggleTool(id: number) {
+  toolExpanded.value[id] = !toolExpanded.value[id];
 }
 
 function nowTime() {
@@ -376,19 +431,8 @@ async function viewClosedSession(item: ClosedSessionItem) {
   closedView.value = { session: item, msgs: [] };
   try {
     const history = await getSessionHistoryApi(item.id, 0);
-    closedView.value.msgs = history
-      .filter((h) => h.role !== 'tool')
-      .map((h) => ({
-        id: ++msgId,
-        role: mapMsgRole(h.role),
-        text: h.content ?? '',
-        time: h.timestamp
-          ? new Date(Number(h.timestamp)).toLocaleTimeString('zh-CN', {
-              hour: '2-digit',
-              minute: '2-digit',
-            })
-          : undefined,
-      }));
+    // 保留 tool 消息，在渲染层用独立卡片展示（原先过滤会丢失工具调用上下文）
+    closedView.value.msgs = history.map((h) => historyItemToMsg(h));
   } catch {
     message.error('加载会话记录失败');
   } finally {
@@ -543,17 +587,7 @@ async function addSessionLocal(params: {
     if (Number.isFinite(seqNum) && seqNum > maxSeq) {
       maxSeq = seqNum;
     }
-    return {
-      id: ++msgId,
-      role: mapMsgRole(h.role),
-      text: h.content,
-      time: h.timestamp
-        ? new Date(Number(h.timestamp)).toLocaleTimeString('zh-CN', {
-            hour: '2-digit',
-            minute: '2-digit',
-          })
-        : undefined,
-    };
+    return historyItemToMsg(h);
   });
   if (maxSeq > 0) {
     writeLastSeq(params.id, maxSeq);
@@ -676,15 +710,11 @@ onMounted(async () => {
       // 否则 WS 重连后 sinceSeqSnapshot<=0 提前返回，丢失离线消息
       let maxSeq = 0;
       const loadedMsgs: Msg[] = history.map((h) => {
-        // S-07：使用全局 ++msgId 保证 id 全局唯一，避免 :key 碰撞导致 DOM 错乱
+        // S-07：historyItemToMsg 内部使用 ++msgId 保证 id 全局唯一
         const seqNum =
           h.seq === null || h.seq === undefined ? Number.NaN : Number(h.seq);
         if (Number.isFinite(seqNum) && seqNum > maxSeq) maxSeq = seqNum;
-        return {
-          id: ++msgId,
-          role: mapMsgRole(h.role),
-          text: h.content,
-        };
+        return historyItemToMsg(h);
       });
       if (maxSeq > 0) writeLastSeq(item.sessionId, maxSeq);
       sessions.value.push({
@@ -718,598 +748,514 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page title="座席工作台" description="实时接待转接会话，查看 AI 对话上下文">
+  <Page
+    auto-content-height
+    title="座席工作台"
+    description="实时接待转接会话，查看 AI 对话上下文"
+  >
     <!--
-      h-full   → 填满 Page 的 flex-1 内容区，不依赖 100vh 计算
-      min-h-0  → 关键！flex 子项默认 min-height:auto 会撑开父容器触发滚动，必须归零
-      overflow-hidden → 防止任何子节点溢出触发父级滚动条
+      auto-content-height → Page 内容槽高度锁定为 calc(vh - header - footer)，
+        避免 SSE 断线横幅出现时把整页撑高触发外层滚动条
+      外层 flex-col + h-full → Alert 横幅与三栏纵向堆叠，都不外溢
+      内层 flex-1 min-h-0 overflow-hidden → 关键！flex 子项默认 min-height:auto
+        会撑开父容器触发滚动，必须归零，才能让三栏内部各自 overflow-auto 生效
     -->
-    <!-- SSE 实时连接断开横幅：composable 已内置指数退避自动重连，此处提供手动「立即重试」 -->
-    <Alert
-      v-if="!sseConnected"
-      class="mb-3"
-      type="warning"
-      show-icon
-      message="实时连接已断开，正在自动重连…"
-    >
-      <template #action>
-        <Button size="small" @click="reconnectQueue">立即重试</Button>
-      </template>
-    </Alert>
-    <div class="flex h-full min-h-0 gap-4 overflow-hidden">
-      <!-- 左栏：状态 + 队列 + 处理中 -->
-      <div class="flex w-56 min-h-0 shrink-0 flex-col gap-3">
-        <!-- 座席状态 -->
-        <Card
-          :bordered="false"
-          class="shadow-sm"
-          :body-style="{ padding: '12px 16px' }"
-        >
-          <div class="mb-2 flex items-center justify-between">
-            <span class="text-sm font-semibold text-gray-700">座席状态</span>
-            <Switch
-              v-model:checked="agentOnline"
-              checked-children="在线"
-              un-checked-children="暂离"
-              size="small"
-            />
-          </div>
-          <Progress
-            :percent="Math.round((concurrent / MAX_CONCURRENT) * 100)"
-            :format="() => `${concurrent}/${MAX_CONCURRENT}`"
-            size="small"
-            :stroke-color="concurrent >= MAX_CONCURRENT ? '#ef4444' : '#6366f1'"
-          />
-          <p class="mt-1 text-xs text-gray-400">
-            {{ concurrent }}/{{ MAX_CONCURRENT }} 会话接待中
-          </p>
-        </Card>
-
-        <!-- 等待队列 -->
-        <Card
-          :bordered="false"
-          class="flex-1 overflow-auto shadow-sm"
-          :body-style="{ padding: '12px' }"
-        >
-          <template #title>
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-semibold">会话队列</span>
-              <!-- count=0 时不显示徽标，有队列时显示橙红色数字 -->
-              <Badge :count="queue.length" :overflow-count="99" />
-              <!-- SSE 连接状态点：绿=在线，灰=断线 -->
-              <Badge
-                :status="sseConnected ? 'processing' : 'default'"
-                :title="sseConnected ? 'SSE 实时连接正常' : 'SSE 连接断开'"
-              />
-            </div>
-          </template>
-
-          <!-- 队列搜索：按姓名 / 标签 / 会话编号过滤（等待 + 接待中两个 Tab 共用） -->
-          <Input
-            v-model:value="queueSearch"
-            allow-clear
-            class="mb-2"
-            placeholder="搜索姓名 / 标签 / 会话编号"
-            size="small"
-          >
-            <template #prefix>
-              <Icon icon="lucide:search" class="text-gray-400" />
-            </template>
-          </Input>
-
-          <!-- 状态 Tab：等待人工 / 人工接待中 -->
-          <div class="mb-2 flex rounded-lg bg-gray-100 p-0.5">
-            <span
-              v-for="tab in queueStateTabs"
-              :key="tab.key"
-              class="flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md py-1 text-xs transition"
-              :style="
-                queueStateTab === tab.key
-                  ? 'background:#fff;color:#4f46e5;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,0.1)'
-                  : 'color:#6b7280'
-              "
-              @click="queueStateTab = tab.key as 'waiting' | 'active'"
-            >
-              <Icon :icon="tab.icon" class="text-xs" />
-              {{ tab.label }}
-              <span
-                v-if="tab.key === 'waiting' && queue.length"
-                class="ml-0.5 rounded-full bg-red-500 px-1 text-white"
-                style="font-size: 10px; line-height: 16px"
-                >{{ queue.length }}</span
-              >
-              <span
-                v-if="tab.key === 'active' && sessions.length"
-                class="ml-0.5 rounded-full bg-indigo-500 px-1 text-white"
-                style="font-size: 10px; line-height: 16px"
-                >{{ sessions.length }}</span
-              >
-            </span>
-          </div>
-
-          <!-- 等待人工 Tab -->
-          <template v-if="queueStateTab === 'waiting'">
-            <div v-if="visiblePagedQueue.length" class="space-y-2">
-              <div
-                v-for="item in visiblePagedQueue"
-                :key="item.id"
-                class="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3"
-              >
-                <div class="flex items-center gap-2">
-                  <Avatar :size="28" :style="{ backgroundColor: item.color }">
-                    {{ item.name[0] }}
-                  </Avatar>
-                  <div class="min-w-0 flex-1">
-                    <p class="text-xs font-medium text-gray-700">
-                      {{ item.name }}
-                    </p>
-                    <p class="text-xs text-amber-600">
-                      等待 {{ item.waitMin }}
-                    </p>
-                  </div>
-                  <Tag :color="item.tagColor" class="shrink-0 text-xs">
-                    {{ item.tag }}
-                  </Tag>
-                </div>
-                <p class="truncate text-xs text-gray-500">{{ item.reason }}</p>
-                <Button
-                  type="primary"
-                  size="small"
-                  block
-                  @click="acceptQueue(item)"
-                >
-                  <template #icon>
-                    <Icon
-                      icon="ant-design:customer-service-outlined"
-                    /> </template
-                  >接入会话
-                </Button>
-              </div>
-
-              <!-- 分页控件 -->
-              <div
-                v-if="queueTotalPages > 1"
-                class="flex items-center justify-between pt-1"
-              >
-                <button
-                  class="rounded px-2 py-0.5 text-xs transition"
-                  :class="
-                    queuePage <= 1
-                      ? 'cursor-not-allowed text-gray-300'
-                      : 'text-indigo-500 hover:bg-indigo-50'
-                  "
-                  :disabled="queuePage <= 1"
-                  @click="queuePage > 1 && queuePage--"
-                >
-                  ← 上一页
-                </button>
-                <span class="text-xs text-gray-400"
-                  >{{ queuePage }} / {{ queueTotalPages }}</span
-                >
-                <button
-                  class="rounded px-2 py-0.5 text-xs transition"
-                  :class="
-                    queuePage >= queueTotalPages
-                      ? 'cursor-not-allowed text-gray-300'
-                      : 'text-indigo-500 hover:bg-indigo-50'
-                  "
-                  :disabled="queuePage >= queueTotalPages"
-                  @click="queuePage < queueTotalPages && queuePage++"
-                >
-                  下一页 →
-                </button>
-              </div>
-            </div>
-
-            <!-- 搜索无匹配 / 空队列提示 -->
-            <div
-              v-if="queue.length && !visiblePagedQueue.length"
-              class="flex flex-col items-center justify-center py-6 text-center"
-            >
-              <Icon
-                icon="lucide:search-x"
-                class="mb-2 text-2xl text-gray-200"
-              />
-              <p class="text-xs text-gray-400">
-                未找到匹配“{{ queueSearch }}”的会话
-              </p>
-            </div>
-            <div
-              v-else
-              class="flex flex-col items-center justify-center py-6 text-center"
-            >
-              <div
-                class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50"
-              >
-                <Icon icon="lucide:coffee" class="text-xl text-emerald-400" />
-              </div>
-              <p class="text-xs font-medium text-gray-500">暂无等待用户</p>
-              <p class="mt-1 text-xs text-gray-400">轻松一下，队列空空如也</p>
-              <div class="mt-3 flex items-center gap-1.5">
-                <span class="relative flex h-2 w-2">
-                  <span
-                    class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
-                  ></span>
-                  <span
-                    class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"
-                  ></span>
-                </span>
-                <span class="text-xs text-emerald-500">实时监听中</span>
-              </div>
-            </div>
-          </template>
-
-          <!-- 人工接待中 Tab -->
-          <template v-else-if="queueStateTab === 'active'">
-            <div v-if="visibleSessions.length" class="space-y-2">
-              <div
-                v-for="s in visibleSessions"
-                :key="s.id"
-                class="cursor-pointer rounded-xl border p-2.5 transition"
-                :class="[
-                  s.active
-                    ? 'border-indigo-300 bg-indigo-50'
-                    : 'border-gray-100 bg-white hover:border-gray-200',
-                ]"
-                @click="switchSession(s)"
-              >
-                <div class="flex items-center gap-2">
-                  <Avatar :size="26" :style="{ backgroundColor: s.color }">
-                    {{ s.nameChar }}
-                  </Avatar>
-                  <div class="min-w-0 flex-1">
-                    <p class="text-xs font-medium text-gray-700">
-                      {{ s.name }}
-                    </p>
-                    <p
-                      class="text-xs"
-                      :class="[
-                        s.active
-                          ? 'font-medium text-indigo-600'
-                          : 'text-gray-400',
-                      ]"
-                    >
-                      {{ s.active ? '当前会话' : s.min }}
-                    </p>
-                  </div>
-                  <span
-                    class="h-2 w-2 rounded-full"
-                    :class="[s.active ? 'bg-emerald-500' : 'bg-gray-300']"
-                  ></span>
-                </div>
-              </div>
-            </div>
-            <div
-              v-if="sessions.length && !visibleSessions.length"
-              class="flex flex-col items-center justify-center py-6 text-center"
-            >
-              <Icon
-                icon="lucide:search-x"
-                class="mb-2 text-2xl text-gray-200"
-              />
-              <p class="text-xs text-gray-400">
-                未找到匹配“{{ queueSearch }}”的会话
-              </p>
-            </div>
-            <div
-              v-else
-              class="flex flex-col items-center justify-center py-6 text-center"
-            >
-              <div
-                class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-50"
-              >
-                <Icon icon="lucide:inbox" class="text-xl text-gray-300" />
-              </div>
-              <p class="text-xs text-gray-400">暂无进行中的会话</p>
-            </div>
-          </template>
-
-          <!-- 已结束 Tab -->
-          <template v-else-if="queueStateTab === 'closed'">
-            <div v-if="closedLoading" class="flex justify-center py-6">
-              <Spin size="small" />
-            </div>
-            <div v-else-if="closedSessions.length" class="space-y-2">
-              <div
-                v-for="item in closedSessions"
-                :key="item.id"
-                class="cursor-pointer rounded-xl border p-2.5 transition"
-                :class="[
-                  closedView?.session.id === item.id
-                    ? 'border-indigo-300 bg-indigo-50'
-                    : 'border-gray-100 bg-white hover:border-gray-200',
-                ]"
-                @click="viewClosedSession(item)"
-              >
-                <div class="flex items-center gap-2">
-                  <Avatar :size="26" style="background: #9ca3af">
-                    {{ item.nameChar }}
-                  </Avatar>
-                  <div class="min-w-0 flex-1">
-                    <p class="text-xs font-medium text-gray-700">
-                      {{ item.name }}
-                    </p>
-                    <p class="text-xs text-gray-400">{{ item.endedAt }}</p>
-                  </div>
-                  <Tag color="default" class="shrink-0 text-xs">
-                    {{ item.tag }}
-                  </Tag>
-                </div>
-              </div>
-            </div>
-            <div
-              v-else
-              class="flex flex-col items-center justify-center py-6 text-center"
-            >
-              <Icon icon="lucide:archive" class="mb-2 text-2xl text-gray-200" />
-              <p class="text-xs text-gray-400">暂无已结束会话</p>
-            </div>
-          </template>
-        </Card>
-      </div>
-
-      <!-- 中栏：对话区 -->
-      <div
-        v-if="activeSession"
-        class="flex flex-1 flex-col overflow-hidden rounded-xl bg-white shadow-sm"
+    <div class="flex h-full min-h-0 flex-col overflow-hidden">
+      <!-- SSE 实时连接断开横幅：composable 已内置指数退避自动重连，此处提供手动「立即重试」 -->
+      <Alert
+        v-if="!sseConnected"
+        class="mb-3 shrink-0"
+        type="warning"
+        show-icon
+        message="实时连接已断开，正在自动重连…"
       >
-        <div
-          class="flex shrink-0 items-center gap-3 border-b border-gray-100 px-4 py-3"
-        >
-          <Avatar :size="36" :style="{ backgroundColor: activeSession.color }">
-            {{ activeSession.nameChar }}
-          </Avatar>
-          <div>
-            <p class="text-sm font-medium text-gray-800">
-              {{ activeSession.name }}
-            </p>
-            <p class="text-xs text-gray-500">
-              会话 {{ activeSession.sessionCode }} · 接入
-              {{ activeSession.min }} · 转接原因：{{
-                activeSession.transferReason
-              }}
-            </p>
-          </div>
-          <div class="ml-auto flex items-center gap-2">
-            <!-- 当前会话 WS 连接状态点 -->
-            <span
-              class="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-xs"
-              :title="`WebSocket 状态：${wsStatusMeta.text}`"
-            >
-              <span
-                class="h-2 w-2 rounded-full"
-                :style="{ background: wsStatusMeta.color }"
-              ></span>
-              {{ wsStatusMeta.text }}
-            </span>
-            <!-- Bug-002 修复：转交按钮打开 Modal -->
-            <Button size="small" @click="transferVisible = true">
-              <template #icon><Icon icon="ant-design:swap-outlined" /></template
-              >转交
-            </Button>
-            <Button type="primary" size="small" @click="closeSession">
-              <template #icon>
-                <Icon icon="ant-design:check-outlined" /> </template
-              >结束会话
-            </Button>
-          </div>
-        </div>
-
-        <!-- 当前会话连接断开提示 + 重连 -->
-        <Alert
-          v-if="activeSession && activeWsStatus !== 'open'"
-          banner
-          class="mx-3 mt-2"
-          type="error"
-          :message="
-            activeWsStatus === 'connecting'
-              ? '会话连接建立中，消息可能短暂延迟'
-              : '当前会话连接已断开，消息可能延迟或丢失'
-          "
-        >
-          <template #action>
-            <Button size="small" @click="reconnectActiveSession">重连</Button>
-          </template>
-        </Alert>
-
-        <!-- 消息类型筛选 Tab + 会话状态 — 固定在消息区外，始终可见 -->
-        <div
-          class="flex shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4 py-2"
-        >
-          <div class="flex gap-1">
-            <span
-              v-for="opt in MSG_FILTER_OPTIONS"
-              :key="opt.key"
-              class="cursor-pointer rounded-full border px-2.5 py-0.5 text-xs transition"
-              :style="
-                msgFilter === opt.key
-                  ? 'background:#4f46e5;color:#fff;border-color:#4f46e5'
-                  : 'background:#f0f0f0;color:#6b7280;border-color:#e5e7eb'
-              "
-              @click="msgFilter = opt.key"
-              >{{ opt.label }}</span
-            >
-          </div>
-          <Tag color="processing" class="text-xs">进行中</Tag>
-        </div>
-
-        <div class="flex-1 space-y-3 overflow-y-auto bg-gray-50 p-4">
-          <div class="flex justify-center">
-            <Tag color="default" class="text-xs">
-              共
-              {{ activeSession.msgs.filter((m) => m.role !== 'agent').length }}
-              轮对话
-            </Tag>
-          </div>
-
-          <template v-for="m in filteredMsgs" :key="m.id">
-            <!-- 系统消息：居中提示，无头像气泡 -->
-            <div v-if="m.role === 'system'" class="flex justify-center">
-              <span
-                class="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-400"
-                >{{ m.text }}</span
-              >
+        <template #action>
+          <Button size="small" @click="reconnectQueue">立即重试</Button>
+        </template>
+      </Alert>
+      <div class="flex min-h-0 flex-1 gap-4 overflow-hidden">
+        <!-- 左栏：状态 + 队列 + 处理中 -->
+        <div class="flex w-56 min-h-0 shrink-0 flex-col gap-3">
+          <!-- 座席状态 -->
+          <Card
+            :bordered="false"
+            class="shadow-sm"
+            :body-style="{ padding: '12px 16px' }"
+          >
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-sm font-semibold text-gray-700">座席状态</span>
+              <Switch
+                v-model:checked="agentOnline"
+                checked-children="在线"
+                un-checked-children="暂离"
+                size="small"
+              />
             </div>
-            <!-- 普通消息：头像 + 气泡 -->
-            <div
-              v-else
-              class="flex gap-2"
-              :class="[m.role !== 'user' ? 'flex-row-reverse' : '']"
+            <Progress
+              :percent="Math.round((concurrent / MAX_CONCURRENT) * 100)"
+              :format="() => `${concurrent}/${MAX_CONCURRENT}`"
+              size="small"
+              :stroke-color="
+                concurrent >= MAX_CONCURRENT ? '#ef4444' : '#6366f1'
+              "
+            />
+            <p class="mt-1 text-xs text-gray-400">
+              {{ concurrent }}/{{ MAX_CONCURRENT }} 会话接待中
+            </p>
+          </Card>
+
+          <!-- 等待队列 -->
+          <Card
+            :bordered="false"
+            class="flex-1 overflow-auto shadow-sm"
+            :body-style="{ padding: '12px' }"
+          >
+            <template #title>
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-semibold">会话队列</span>
+                <!-- count=0 时不显示徽标，有队列时显示橙红色数字 -->
+                <Badge :count="queue.length" :overflow-count="99" />
+                <!-- SSE 连接状态点：绿=在线，灰=断线 -->
+                <Badge
+                  :status="sseConnected ? 'processing' : 'default'"
+                  :title="sseConnected ? 'SSE 实时连接正常' : 'SSE 连接断开'"
+                />
+              </div>
+            </template>
+
+            <!-- 队列搜索：按姓名 / 标签 / 会话编号过滤（等待 + 接待中两个 Tab 共用） -->
+            <Input
+              v-model:value="queueSearch"
+              allow-clear
+              class="mb-2"
+              placeholder="搜索姓名 / 标签 / 会话编号"
+              size="small"
             >
-              <Avatar
-                :size="28"
-                :style="{
-                  backgroundColor:
-                    m.role === 'user'
-                      ? '#a78bfa'
-                      : m.role === 'agent'
-                        ? '#f97316'
-                        : '#e0e7ff',
-                }"
-                :class="m.role === 'ai' ? 'text-indigo-600' : ''"
-                class="shrink-0"
+              <template #prefix>
+                <Icon icon="lucide:search" class="text-gray-400" />
+              </template>
+            </Input>
+
+            <!-- 状态 Tab：等待人工 / 人工接待中 -->
+            <div class="mb-2 flex rounded-lg bg-gray-100 p-0.5">
+              <span
+                v-for="tab in queueStateTabs"
+                :key="tab.key"
+                class="flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md py-1 text-xs transition"
+                :style="
+                  queueStateTab === tab.key
+                    ? 'background:#fff;color:#4f46e5;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,0.1)'
+                    : 'color:#6b7280'
+                "
+                @click="
+                  queueStateTab = tab.key as 'active' | 'closed' | 'waiting'
+                "
               >
-                {{
-                  m.role === 'user'
-                    ? activeSession.nameChar
-                    : m.role === 'agent'
-                      ? '王'
-                      : 'AI'
-                }}
-              </Avatar>
-              <div>
-                <div
-                  class="max-w-xs rounded-xl px-3 py-2 text-sm leading-relaxed"
-                  :class="[
-                    m.role === 'user'
-                      ? 'rounded-tl-none bg-white border border-gray-200 text-gray-700'
-                      : m.role === 'agent'
-                        ? 'rounded-tr-none bg-indigo-500 text-white'
-                        : 'rounded-tr-none bg-indigo-50 text-indigo-800 opacity-80',
-                  ]"
+                <Icon :icon="tab.icon" class="text-xs" />
+                {{ tab.label }}
+                <span
+                  v-if="tab.key === 'waiting' && queue.length"
+                  class="ml-0.5 rounded-full bg-red-500 px-1 text-white"
+                  style="font-size: 10px; line-height: 16px"
+                  >{{ queue.length }}</span
                 >
-                  <!-- AI/用户消息：Markdown 渲染 -->
-                  <div
-                    v-if="m.role === 'ai'"
-                    class="agent-ai-md"
-                    v-html="marked.parse(m.text)"
-                  ></div>
-                  <!-- 座席/用户：纯文本 -->
-                  <span
-                    v-else
-                    style="overflow-wrap: break-word; white-space: pre-wrap"
-                    >{{ m.text }}</span
+                <span
+                  v-if="tab.key === 'active' && sessions.length"
+                  class="ml-0.5 rounded-full bg-indigo-500 px-1 text-white"
+                  style="font-size: 10px; line-height: 16px"
+                  >{{ sessions.length }}</span
+                >
+              </span>
+            </div>
+
+            <!-- 等待人工 Tab -->
+            <template v-if="queueStateTab === 'waiting'">
+              <div v-if="visiblePagedQueue.length" class="space-y-2">
+                <div
+                  v-for="item in visiblePagedQueue"
+                  :key="item.id"
+                  class="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3"
+                >
+                  <div class="flex items-center gap-2">
+                    <Avatar :size="28" :style="{ backgroundColor: item.color }">
+                      {{ item.name[0] }}
+                    </Avatar>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-xs font-medium text-gray-700">
+                        {{ item.name }}
+                      </p>
+                      <p class="text-xs text-amber-600">
+                        等待 {{ item.waitMin }}
+                      </p>
+                    </div>
+                    <Tag :color="item.tagColor" class="shrink-0 text-xs">
+                      {{ item.tag }}
+                    </Tag>
+                  </div>
+                  <p class="truncate text-xs text-gray-500">
+                    {{ item.reason }}
+                  </p>
+                  <Button
+                    type="primary"
+                    size="small"
+                    block
+                    @click="acceptQueue(item)"
                   >
+                    <template #icon>
+                      <Icon
+                        icon="ant-design:customer-service-outlined"
+                      /> </template
+                    >接入会话
+                  </Button>
                 </div>
-                <!-- 时间戳 + 复制 -->
+
+                <!-- 分页控件 -->
                 <div
-                  v-if="m.time"
-                  class="mt-0.5 flex items-center gap-1.5"
-                  :class="m.role === 'user' ? 'justify-start' : 'justify-end'"
+                  v-if="queueTotalPages > 1"
+                  class="flex items-center justify-between pt-1"
                 >
-                  <span class="text-xs text-gray-300">{{ m.time }}</span>
                   <button
-                    v-if="m.text"
-                    class="text-xs text-gray-300 transition hover:text-gray-500"
-                    title="复制"
-                    @click.stop="copyMsgText(m.text)"
+                    class="rounded px-2 py-0.5 text-xs transition"
+                    :class="
+                      queuePage <= 1
+                        ? 'cursor-not-allowed text-gray-300'
+                        : 'text-indigo-500 hover:bg-indigo-50'
+                    "
+                    :disabled="queuePage <= 1"
+                    @click="queuePage > 1 && queuePage--"
                   >
-                    <Icon icon="lucide:copy" class="h-3 w-3" />
+                    ← 上一页
+                  </button>
+                  <span class="text-xs text-gray-400"
+                    >{{ queuePage }} / {{ queueTotalPages }}</span
+                  >
+                  <button
+                    class="rounded px-2 py-0.5 text-xs transition"
+                    :class="
+                      queuePage >= queueTotalPages
+                        ? 'cursor-not-allowed text-gray-300'
+                        : 'text-indigo-500 hover:bg-indigo-50'
+                    "
+                    :disabled="queuePage >= queueTotalPages"
+                    @click="queuePage < queueTotalPages && queuePage++"
+                  >
+                    下一页 →
                   </button>
                 </div>
               </div>
-            </div>
-          </template>
-        </div>
-        <!-- 滚动锚点 -->
-        <div data-msgs-end></div>
 
+              <!-- 搜索无匹配 / 空队列提示 -->
+              <div
+                v-if="queue.length && !visiblePagedQueue.length"
+                class="flex flex-col items-center justify-center py-6 text-center"
+              >
+                <Icon
+                  icon="lucide:search-x"
+                  class="mb-2 text-2xl text-gray-200"
+                />
+                <p class="text-xs text-gray-400">
+                  未找到匹配“{{ queueSearch }}”的会话
+                </p>
+              </div>
+              <div
+                v-else
+                class="flex flex-col items-center justify-center py-6 text-center"
+              >
+                <div
+                  class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50"
+                >
+                  <Icon icon="lucide:coffee" class="text-xl text-emerald-400" />
+                </div>
+                <p class="text-xs font-medium text-gray-500">暂无等待用户</p>
+                <p class="mt-1 text-xs text-gray-400">轻松一下，队列空空如也</p>
+                <div class="mt-3 flex items-center gap-1.5">
+                  <span class="relative flex h-2 w-2">
+                    <span
+                      class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
+                    ></span>
+                    <span
+                      class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"
+                    ></span>
+                  </span>
+                  <span class="text-xs text-emerald-500">实时监听中</span>
+                </div>
+              </div>
+            </template>
+
+            <!-- 人工接待中 Tab -->
+            <template v-else-if="queueStateTab === 'active'">
+              <div v-if="visibleSessions.length" class="space-y-2">
+                <div
+                  v-for="s in visibleSessions"
+                  :key="s.id"
+                  class="cursor-pointer rounded-xl border p-2.5 transition"
+                  :class="[
+                    s.active
+                      ? 'border-indigo-300 bg-indigo-50'
+                      : 'border-gray-100 bg-white hover:border-gray-200',
+                  ]"
+                  @click="switchSession(s)"
+                >
+                  <div class="flex items-center gap-2">
+                    <Avatar :size="26" :style="{ backgroundColor: s.color }">
+                      {{ s.nameChar }}
+                    </Avatar>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-xs font-medium text-gray-700">
+                        {{ s.name }}
+                      </p>
+                      <p
+                        class="text-xs"
+                        :class="[
+                          s.active
+                            ? 'font-medium text-indigo-600'
+                            : 'text-gray-400',
+                        ]"
+                      >
+                        {{ s.active ? '当前会话' : s.min }}
+                      </p>
+                    </div>
+                    <span
+                      class="h-2 w-2 rounded-full"
+                      :class="[s.active ? 'bg-emerald-500' : 'bg-gray-300']"
+                    ></span>
+                  </div>
+                </div>
+              </div>
+              <div
+                v-if="sessions.length && !visibleSessions.length"
+                class="flex flex-col items-center justify-center py-6 text-center"
+              >
+                <Icon
+                  icon="lucide:search-x"
+                  class="mb-2 text-2xl text-gray-200"
+                />
+                <p class="text-xs text-gray-400">
+                  未找到匹配“{{ queueSearch }}”的会话
+                </p>
+              </div>
+              <div
+                v-else
+                class="flex flex-col items-center justify-center py-6 text-center"
+              >
+                <div
+                  class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-50"
+                >
+                  <Icon icon="lucide:inbox" class="text-xl text-gray-300" />
+                </div>
+                <p class="text-xs text-gray-400">暂无进行中的会话</p>
+              </div>
+            </template>
+
+            <!-- 已结束 Tab -->
+            <template v-else-if="queueStateTab === 'closed'">
+              <div v-if="closedLoading" class="flex justify-center py-6">
+                <Spin size="small" />
+              </div>
+              <div v-else-if="closedSessions.length" class="space-y-2">
+                <div
+                  v-for="item in closedSessions"
+                  :key="item.id"
+                  class="cursor-pointer rounded-xl border p-2.5 transition"
+                  :class="[
+                    closedView?.session.id === item.id
+                      ? 'border-indigo-300 bg-indigo-50'
+                      : 'border-gray-100 bg-white hover:border-gray-200',
+                  ]"
+                  @click="viewClosedSession(item)"
+                >
+                  <div class="flex items-center gap-2">
+                    <Avatar :size="26" style="background: #9ca3af">
+                      {{ item.nameChar }}
+                    </Avatar>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-xs font-medium text-gray-700">
+                        {{ item.name }}
+                      </p>
+                      <p class="text-xs text-gray-400">{{ item.endedAt }}</p>
+                    </div>
+                    <Tag color="default" class="shrink-0 text-xs">
+                      {{ item.tag }}
+                    </Tag>
+                  </div>
+                </div>
+              </div>
+              <div
+                v-else
+                class="flex flex-col items-center justify-center py-6 text-center"
+              >
+                <Icon
+                  icon="lucide:archive"
+                  class="mb-2 text-2xl text-gray-200"
+                />
+                <p class="text-xs text-gray-400">暂无已结束会话</p>
+              </div>
+            </template>
+          </Card>
+        </div>
+
+        <!-- 中栏：对话区 -->
         <div
-          class="flex shrink-0 gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-2"
+          v-if="activeSession"
+          class="flex flex-1 flex-col overflow-hidden rounded-xl bg-white shadow-sm"
         >
-          <Tag
-            v-for="q in QUICK_REPLY"
-            :key="q"
-            class="shrink-0 cursor-pointer text-xs"
-            color="default"
-            @click="quickReply(q)"
+          <div
+            class="flex shrink-0 items-center gap-3 border-b border-gray-100 px-4 py-3"
           >
-            {{ q }}
-          </Tag>
-        </div>
-
-        <div class="shrink-0 border-t border-gray-100 px-4 py-3">
-          <div class="flex items-end gap-2">
-            <Textarea
-              v-model:value="msgInput"
-              placeholder="输入回复内容..."
-              :auto-size="{ minRows: 2, maxRows: 4 }"
-              class="flex-1"
-              @keydown.enter="handleEnter"
-            />
-            <Button
-              type="primary"
-              class="flex h-10 w-10 shrink-0 items-center justify-center"
-              @click="sendAgent"
+            <Avatar
+              :size="36"
+              :style="{ backgroundColor: activeSession.color }"
             >
-              <template #icon>
-                <Icon icon="ant-design:send-outlined" />
-              </template>
-            </Button>
+              {{ activeSession.nameChar }}
+            </Avatar>
+            <div>
+              <p class="text-sm font-medium text-gray-800">
+                {{ activeSession.name }}
+              </p>
+              <p class="text-xs text-gray-500">
+                会话 {{ activeSession.sessionCode }} · 接入
+                {{ activeSession.min }} · 转接原因：{{
+                  activeSession.transferReason
+                }}
+              </p>
+            </div>
+            <div class="ml-auto flex items-center gap-2">
+              <!-- 当前会话 WS 连接状态点 -->
+              <span
+                class="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-xs"
+                :title="`WebSocket 状态：${wsStatusMeta.text}`"
+              >
+                <span
+                  class="h-2 w-2 rounded-full"
+                  :style="{ background: wsStatusMeta.color }"
+                ></span>
+                {{ wsStatusMeta.text }}
+              </span>
+              <!-- Bug-002 修复：转交按钮打开 Modal -->
+              <Button size="small" @click="transferVisible = true">
+                <template #icon
+                  ><Icon icon="ant-design:swap-outlined" /></template
+                >转交
+              </Button>
+              <Button type="primary" size="small" @click="closeSession">
+                <template #icon>
+                  <Icon icon="ant-design:check-outlined" /> </template
+                >结束会话
+              </Button>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <!-- 中栏：已结束会话只读视图 -->
-      <div
-        v-else-if="closedView"
-        class="flex flex-1 flex-col overflow-hidden rounded-xl bg-white shadow-sm"
-      >
-        <!-- 顶栏 -->
-        <div
-          class="flex shrink-0 items-center gap-3 border-b border-gray-100 px-4 py-3"
-        >
-          <Avatar :size="36" style="background: #9ca3af">
-            {{ closedView.session.nameChar }}
-          </Avatar>
-          <div>
-            <p class="text-sm font-medium text-gray-800">
-              {{ closedView.session.name }}
-            </p>
-            <p class="text-xs text-gray-500">
-              会话 #{{ closedView.session.id }} · 结束于
-              {{ closedView.session.endedAt }} · 原因：{{
-                closedView.session.transferReason
-              }}
-            </p>
-          </div>
-          <div class="ml-auto">
-            <Tag color="default">已结束</Tag>
-          </div>
-        </div>
+          <!-- 当前会话连接断开提示 + 重连 -->
+          <Alert
+            v-if="activeSession && activeWsStatus !== 'open'"
+            banner
+            class="mx-3 mt-2"
+            type="error"
+            :message="
+              activeWsStatus === 'connecting'
+                ? '会话连接建立中，消息可能短暂延迟'
+                : '当前会话连接已断开，消息可能延迟或丢失'
+            "
+          >
+            <template #action>
+              <Button size="small" @click="reconnectActiveSession">重连</Button>
+            </template>
+          </Alert>
 
-        <!-- 消息列表（只读） -->
-        <div class="flex-1 space-y-3 overflow-y-auto bg-gray-50 p-4">
-          <div v-if="closedViewLoading" class="flex justify-center py-10">
-            <Spin />
+          <!-- 消息类型筛选 Tab + 会话状态 — 固定在消息区外，始终可见 -->
+          <div
+            class="flex shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4 py-2"
+          >
+            <div class="flex gap-1">
+              <span
+                v-for="opt in MSG_FILTER_OPTIONS"
+                :key="opt.key"
+                class="cursor-pointer rounded-full border px-2.5 py-0.5 text-xs transition"
+                :style="
+                  msgFilter === opt.key
+                    ? 'background:#4f46e5;color:#fff;border-color:#4f46e5'
+                    : 'background:#f0f0f0;color:#6b7280;border-color:#e5e7eb'
+                "
+                @click="msgFilter = opt.key"
+                >{{ opt.label }}</span
+              >
+            </div>
+            <Tag color="processing" class="text-xs">进行中</Tag>
           </div>
-          <template v-else>
+
+          <div class="flex-1 space-y-3 overflow-y-auto bg-gray-50 p-4">
             <div class="flex justify-center">
               <Tag color="default" class="text-xs">
                 共
-                {{ closedView.msgs.filter((m) => m.role !== 'agent').length }}
+                {{
+                  activeSession.msgs.filter((m) => m.role !== 'agent').length
+                }}
                 轮对话
               </Tag>
             </div>
-            <template v-for="m in closedView.msgs" :key="m.id">
+
+            <template v-for="m in filteredMsgs" :key="m.id">
+              <!-- 系统消息：居中提示，无头像气泡 -->
               <div v-if="m.role === 'system'" class="flex justify-center">
                 <span
                   class="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-400"
                   >{{ m.text }}</span
                 >
               </div>
+
+              <!-- 工具调用结果：独立卡片，居中折叠展示，避免污染对话气泡视觉 -->
+              <div v-else-if="m.role === 'tool'" class="flex justify-center">
+                <div
+                  class="w-full max-w-[min(90%,42rem)] rounded-lg border border-indigo-100 bg-indigo-50/60"
+                >
+                  <button
+                    type="button"
+                    class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-indigo-700 transition hover:bg-indigo-100/70"
+                    @click="toggleTool(m.id)"
+                  >
+                    <Icon icon="lucide:wrench" class="text-sm" />
+                    <span class="font-medium">工具返回</span>
+                    <code
+                      v-if="m.toolName"
+                      class="rounded bg-white/70 px-1.5 py-0.5 font-mono text-[11px] text-indigo-600"
+                      >{{ m.toolName }}</code
+                    >
+                    <span class="ml-auto flex items-center gap-1 text-gray-400">
+                      {{ toolExpanded[m.id] ? '收起' : '展开' }}
+                      <Icon
+                        :icon="
+                          toolExpanded[m.id]
+                            ? 'lucide:chevron-up'
+                            : 'lucide:chevron-down'
+                        "
+                      />
+                    </span>
+                  </button>
+                  <div v-if="toolExpanded[m.id]" class="px-3 pb-2">
+                    <pre
+                      class="max-h-64 overflow-auto rounded bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-gray-700"
+                      >{{ prettyToolPayload(m.text) }}</pre
+                    >
+                    <div class="mt-1 flex justify-end">
+                      <button
+                        class="text-xs text-gray-400 transition hover:text-indigo-500"
+                        @click.stop="copyMsgText(m.text)"
+                      >
+                        <Icon
+                          icon="lucide:copy"
+                          class="mr-0.5 inline h-3 w-3"
+                        />
+                        复制原文
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 普通消息：头像 + 气泡
+                 空 content 且非 AI(带 toolCalls) 直接跳过，避免出现空白气泡 -->
               <div
-                v-else
+                v-else-if="m.text || (m.role === 'ai' && m.toolCalls?.length)"
                 class="flex gap-2"
                 :class="[m.role !== 'user' ? 'flex-row-reverse' : '']"
               >
@@ -1323,136 +1269,379 @@ onMounted(async () => {
                           ? '#f97316'
                           : '#e0e7ff',
                   }"
+                  :class="m.role === 'ai' ? 'text-indigo-600' : ''"
                   class="shrink-0"
                 >
                   {{
                     m.role === 'user'
-                      ? closedView.session.nameChar
+                      ? activeSession.nameChar
                       : m.role === 'agent'
-                        ? '客'
+                        ? '王'
                         : 'AI'
                   }}
                 </Avatar>
-                <div
-                  class="max-w-xs rounded-xl px-3 py-2 text-sm leading-relaxed"
-                  :class="[
-                    m.role === 'user'
-                      ? 'rounded-tl-none border border-gray-200 bg-white text-gray-700'
-                      : m.role === 'agent'
-                        ? 'rounded-tr-none bg-indigo-500 text-white'
-                        : 'rounded-tr-none bg-indigo-50 text-indigo-800 opacity-80',
-                  ]"
-                >
+                <div class="max-w-[min(85%,36rem)]">
+                  <!-- toolCalls 徽标：AI 决定调用哪些工具时，气泡前先展示调用链
+                     AI 消息统一右对齐（flex-row-reverse 已倒置了顺序） -->
                   <div
-                    v-if="m.role === 'ai'"
-                    class="agent-ai-md"
-                    v-html="marked.parse(m.text)"
-                  ></div>
-                  <span
-                    v-else
-                    style="overflow-wrap: break-word; white-space: pre-wrap"
-                    >{{ m.text }}</span
+                    v-if="m.role === 'ai' && m.toolCalls?.length"
+                    class="mb-1 flex flex-wrap justify-end gap-1"
                   >
+                    <span
+                      v-for="(tc, i) in m.toolCalls"
+                      :key="tc.id ?? i"
+                      class="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-white px-2 py-0.5 text-[11px] text-indigo-600"
+                    >
+                      <Icon icon="lucide:wrench" class="text-[10px]" />
+                      {{ tc.name || '未命名工具' }}
+                    </span>
+                  </div>
+                  <div
+                    v-if="m.text"
+                    class="rounded-xl px-3 py-2 text-sm leading-relaxed"
+                    :class="[
+                      m.role === 'user'
+                        ? 'rounded-tl-none border border-gray-200 bg-white text-gray-700'
+                        : m.role === 'agent'
+                          ? 'rounded-tr-none bg-indigo-500 text-white'
+                          : 'rounded-tr-none bg-indigo-50 text-indigo-800 opacity-80',
+                    ]"
+                  >
+                    <!-- AI/用户消息：Markdown 渲染 -->
+                    <div
+                      v-if="m.role === 'ai'"
+                      class="agent-ai-md"
+                      v-html="marked.parse(m.text)"
+                    ></div>
+                    <!-- 座席/用户：纯文本 -->
+                    <span
+                      v-else
+                      style="overflow-wrap: break-word; white-space: pre-wrap"
+                      >{{ m.text }}</span
+                    >
+                  </div>
+                  <!-- 时间戳 + 复制 -->
+                  <div
+                    v-if="m.time"
+                    class="mt-0.5 flex items-center gap-1.5"
+                    :class="m.role === 'user' ? 'justify-start' : 'justify-end'"
+                  >
+                    <span class="text-xs text-gray-300">{{ m.time }}</span>
+                    <button
+                      v-if="m.text"
+                      class="text-xs text-gray-300 transition hover:text-gray-500"
+                      title="复制"
+                      @click.stop="copyMsgText(m.text)"
+                    >
+                      <Icon icon="lucide:copy" class="h-3 w-3" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </template>
-          </template>
-        </div>
-      </div>
-
-      <div
-        v-else
-        class="flex flex-1 flex-col items-center justify-center rounded-xl bg-white shadow-sm"
-      >
-        <div
-          class="flex h-20 w-20 items-center justify-center rounded-full bg-indigo-50"
-        >
-          <Icon
-            icon="lucide:message-square-dashed"
-            class="text-4xl text-indigo-300"
-          />
-        </div>
-        <h3 class="mt-5 text-base font-semibold text-gray-700">
-          暂无进行中的会话
-        </h3>
-        <p
-          class="mt-2 max-w-xs text-center text-sm text-gray-400 leading-relaxed"
-        >
-          左侧「等待人工」队列中有用户时，<br />点击「接入会话」即可开始服务
-        </p>
-        <div class="mt-6 flex gap-3">
-          <div
-            class="flex flex-col items-center rounded-xl border border-gray-100 bg-gray-50 px-5 py-3"
-          >
-            <span class="text-xl font-bold text-indigo-500">{{
-              queue.length
-            }}</span>
-            <span class="mt-0.5 text-xs text-gray-400">等待接入</span>
+            <!-- 滚动锚点：必须位于 overflow-y-auto 容器内部，
+               scrollIntoView 才会滚动本消息区而非外层文档 -->
+            <div data-msgs-end></div>
           </div>
-          <div
-            class="flex flex-col items-center rounded-xl border border-gray-100 bg-gray-50 px-5 py-3"
-          >
-            <span class="text-xl font-bold text-emerald-500">{{
-              MAX_CONCURRENT - concurrent
-            }}</span>
-            <span class="mt-0.5 text-xs text-gray-400">可接入数</span>
-          </div>
-        </div>
-        <div class="mt-5 flex items-center gap-1.5">
-          <span class="relative flex h-2 w-2">
-            <span
-              class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
-            ></span>
-            <span
-              class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"
-            ></span>
-          </span>
-          <span class="text-xs text-emerald-500"
-            >实时监听中，新会话将自动推送</span
-          >
-        </div>
-      </div>
 
-      <!-- 右栏：上下文面板（Bug-001 修复：随 activeSession 联动） -->
-      <div
-        v-if="activeSession"
-        class="flex w-64 shrink-0 flex-col gap-3 overflow-auto"
-      >
-        <Card title="会话信息" :bordered="false" class="shadow-sm" size="small">
-          <Descriptions :column="1" size="small">
-            <DescriptionsItem label="访客姓名">
-              {{ activeSession.name }}
-            </DescriptionsItem>
-            <DescriptionsItem label="会话编号">
-              {{ activeSession.sessionCode }}
-            </DescriptionsItem>
-            <DescriptionsItem label="问题标签">
-              <Tag :color="resolveTagColor(activeSession.tag)">
-                {{ activeSession.tag || '未标记' }}
-              </Tag>
-            </DescriptionsItem>
-            <DescriptionsItem
-              v-if="activeSession.waitSince > 0"
-              label="排队时长"
+          <div
+            class="flex shrink-0 gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-2"
+          >
+            <Tag
+              v-for="q in QUICK_REPLY"
+              :key="q"
+              class="shrink-0 cursor-pointer text-xs"
+              color="default"
+              @click="quickReply(q)"
             >
-              {{ formatWaitTime(activeSession.waitSince) }}
-            </DescriptionsItem>
-            <DescriptionsItem label="消息轮数">
-              {{ activeSession.msgs.filter((m) => m.role !== 'agent').length }}
-            </DescriptionsItem>
-            <DescriptionsItem label="接入状态">
-              <Tag color="processing">进行中</Tag>
-            </DescriptionsItem>
-          </Descriptions>
-        </Card>
+              {{ q }}
+            </Tag>
+          </div>
 
-        <Card title="转接原因" :bordered="false" class="shadow-sm" size="small">
-          <Alert
-            :message="activeSession.transferReason || '用户主动请求转人工'"
-            type="warning"
-            show-icon
-          />
-        </Card>
+          <div class="shrink-0 border-t border-gray-100 px-4 py-3">
+            <div class="flex items-end gap-2">
+              <Textarea
+                v-model:value="msgInput"
+                placeholder="输入回复内容..."
+                :auto-size="{ minRows: 2, maxRows: 4 }"
+                class="flex-1"
+                @keydown.enter="handleEnter"
+              />
+              <Button
+                type="primary"
+                class="flex h-10 w-10 shrink-0 items-center justify-center"
+                @click="sendAgent"
+              >
+                <template #icon>
+                  <Icon icon="ant-design:send-outlined" />
+                </template>
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 中栏：已结束会话只读视图 -->
+        <div
+          v-else-if="closedView"
+          class="flex flex-1 flex-col overflow-hidden rounded-xl bg-white shadow-sm"
+        >
+          <!-- 顶栏 -->
+          <div
+            class="flex shrink-0 items-center gap-3 border-b border-gray-100 px-4 py-3"
+          >
+            <Avatar :size="36" style="background: #9ca3af">
+              {{ closedView.session.nameChar }}
+            </Avatar>
+            <div>
+              <p class="text-sm font-medium text-gray-800">
+                {{ closedView.session.name }}
+              </p>
+              <p class="text-xs text-gray-500">
+                会话 #{{ closedView.session.id }} · 结束于
+                {{ closedView.session.endedAt }} · 原因：{{
+                  closedView.session.transferReason
+                }}
+              </p>
+            </div>
+            <div class="ml-auto">
+              <Tag color="default">已结束</Tag>
+            </div>
+          </div>
+
+          <!-- 消息列表（只读） -->
+          <div class="flex-1 space-y-3 overflow-y-auto bg-gray-50 p-4">
+            <div v-if="closedViewLoading" class="flex justify-center py-10">
+              <Spin />
+            </div>
+            <template v-else>
+              <div class="flex justify-center">
+                <Tag color="default" class="text-xs">
+                  共
+                  {{ closedView.msgs.filter((m) => m.role !== 'agent').length }}
+                  轮对话
+                </Tag>
+              </div>
+              <template v-for="m in closedView.msgs" :key="m.id">
+                <div v-if="m.role === 'system'" class="flex justify-center">
+                  <span
+                    class="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-400"
+                    >{{ m.text }}</span
+                  >
+                </div>
+
+                <!-- 工具调用（只读视图，默认收起） -->
+                <div v-else-if="m.role === 'tool'" class="flex justify-center">
+                  <div
+                    class="w-full max-w-[min(90%,42rem)] rounded-lg border border-indigo-100 bg-indigo-50/60"
+                  >
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-indigo-700 transition hover:bg-indigo-100/70"
+                      @click="toggleTool(m.id)"
+                    >
+                      <Icon icon="lucide:wrench" class="text-sm" />
+                      <span class="font-medium">工具返回</span>
+                      <code
+                        v-if="m.toolName"
+                        class="rounded bg-white/70 px-1.5 py-0.5 font-mono text-[11px] text-indigo-600"
+                        >{{ m.toolName }}</code
+                      >
+                      <span
+                        class="ml-auto flex items-center gap-1 text-gray-400"
+                      >
+                        {{ toolExpanded[m.id] ? '收起' : '展开' }}
+                        <Icon
+                          :icon="
+                            toolExpanded[m.id]
+                              ? 'lucide:chevron-up'
+                              : 'lucide:chevron-down'
+                          "
+                        />
+                      </span>
+                    </button>
+                    <div v-if="toolExpanded[m.id]" class="px-3 pb-2">
+                      <pre
+                        class="max-h-64 overflow-auto rounded bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-gray-700"
+                        >{{ prettyToolPayload(m.text) }}</pre
+                      >
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  v-else-if="m.text || (m.role === 'ai' && m.toolCalls?.length)"
+                  class="flex gap-2"
+                  :class="[m.role !== 'user' ? 'flex-row-reverse' : '']"
+                >
+                  <Avatar
+                    :size="28"
+                    :style="{
+                      backgroundColor:
+                        m.role === 'user'
+                          ? '#a78bfa'
+                          : m.role === 'agent'
+                            ? '#f97316'
+                            : '#e0e7ff',
+                    }"
+                    class="shrink-0"
+                  >
+                    {{
+                      m.role === 'user'
+                        ? closedView.session.nameChar
+                        : m.role === 'agent'
+                          ? '客'
+                          : 'AI'
+                    }}
+                  </Avatar>
+                  <div class="max-w-[min(85%,36rem)]">
+                    <div
+                      v-if="m.role === 'ai' && m.toolCalls?.length"
+                      class="mb-1 flex flex-wrap justify-end gap-1"
+                    >
+                      <span
+                        v-for="(tc, i) in m.toolCalls"
+                        :key="tc.id ?? i"
+                        class="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-white px-2 py-0.5 text-[11px] text-indigo-600"
+                      >
+                        <Icon icon="lucide:wrench" class="text-[10px]" />
+                        {{ tc.name || '未命名工具' }}
+                      </span>
+                    </div>
+                    <div
+                      v-if="m.text"
+                      class="rounded-xl px-3 py-2 text-sm leading-relaxed"
+                      :class="[
+                        m.role === 'user'
+                          ? 'rounded-tl-none border border-gray-200 bg-white text-gray-700'
+                          : m.role === 'agent'
+                            ? 'rounded-tr-none bg-indigo-500 text-white'
+                            : 'rounded-tr-none bg-indigo-50 text-indigo-800 opacity-80',
+                      ]"
+                    >
+                      <div
+                        v-if="m.role === 'ai'"
+                        class="agent-ai-md"
+                        v-html="marked.parse(m.text)"
+                      ></div>
+                      <span
+                        v-else
+                        style="overflow-wrap: break-word; white-space: pre-wrap"
+                        >{{ m.text }}</span
+                      >
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </template>
+          </div>
+        </div>
+
+        <div
+          v-else
+          class="flex flex-1 flex-col items-center justify-center rounded-xl bg-white shadow-sm"
+        >
+          <div
+            class="flex h-20 w-20 items-center justify-center rounded-full bg-indigo-50"
+          >
+            <Icon
+              icon="lucide:message-square-dashed"
+              class="text-4xl text-indigo-300"
+            />
+          </div>
+          <h3 class="mt-5 text-base font-semibold text-gray-700">
+            暂无进行中的会话
+          </h3>
+          <p
+            class="mt-2 max-w-xs text-center text-sm text-gray-400 leading-relaxed"
+          >
+            左侧「等待人工」队列中有用户时，<br />点击「接入会话」即可开始服务
+          </p>
+          <div class="mt-6 flex gap-3">
+            <div
+              class="flex flex-col items-center rounded-xl border border-gray-100 bg-gray-50 px-5 py-3"
+            >
+              <span class="text-xl font-bold text-indigo-500">{{
+                queue.length
+              }}</span>
+              <span class="mt-0.5 text-xs text-gray-400">等待接入</span>
+            </div>
+            <div
+              class="flex flex-col items-center rounded-xl border border-gray-100 bg-gray-50 px-5 py-3"
+            >
+              <span class="text-xl font-bold text-emerald-500">{{
+                MAX_CONCURRENT - concurrent
+              }}</span>
+              <span class="mt-0.5 text-xs text-gray-400">可接入数</span>
+            </div>
+          </div>
+          <div class="mt-5 flex items-center gap-1.5">
+            <span class="relative flex h-2 w-2">
+              <span
+                class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
+              ></span>
+              <span
+                class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"
+              ></span>
+            </span>
+            <span class="text-xs text-emerald-500"
+              >实时监听中，新会话将自动推送</span
+            >
+          </div>
+        </div>
+
+        <!-- 右栏：上下文面板（Bug-001 修复：随 activeSession 联动） -->
+        <div
+          v-if="activeSession"
+          class="flex w-64 shrink-0 flex-col gap-3 overflow-auto"
+        >
+          <Card
+            title="会话信息"
+            :bordered="false"
+            class="shadow-sm"
+            size="small"
+          >
+            <Descriptions :column="1" size="small">
+              <DescriptionsItem label="访客姓名">
+                {{ activeSession.name }}
+              </DescriptionsItem>
+              <DescriptionsItem label="会话编号">
+                {{ activeSession.sessionCode }}
+              </DescriptionsItem>
+              <DescriptionsItem label="问题标签">
+                <Tag :color="resolveTagColor(activeSession.tag)">
+                  {{ activeSession.tag || '未标记' }}
+                </Tag>
+              </DescriptionsItem>
+              <DescriptionsItem
+                v-if="activeSession.waitSince > 0"
+                label="排队时长"
+              >
+                {{ formatWaitTime(activeSession.waitSince) }}
+              </DescriptionsItem>
+              <DescriptionsItem label="消息轮数">
+                {{
+                  activeSession.msgs.filter((m) => m.role !== 'agent').length
+                }}
+              </DescriptionsItem>
+              <DescriptionsItem label="接入状态">
+                <Tag color="processing">进行中</Tag>
+              </DescriptionsItem>
+            </Descriptions>
+          </Card>
+
+          <Card
+            title="转接原因"
+            :bordered="false"
+            class="shadow-sm"
+            size="small"
+          >
+            <Alert
+              :message="activeSession.transferReason || '用户主动请求转人工'"
+              type="warning"
+              show-icon
+            />
+          </Card>
+        </div>
       </div>
     </div>
 

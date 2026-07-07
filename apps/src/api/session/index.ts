@@ -59,6 +59,14 @@ export interface WsChatMessage {
   timestamp?: number;
 }
 
+/** AI 消息中触发的工具调用条目（LangChain ToolCall 结构，前端只展示） */
+export interface ChatToolCall {
+  id?: null | string;
+  name?: null | string;
+  /** 入参对象或已序列化字符串，后端返回结构不定，前端渲染前 typeof 判定即可 */
+  args?: unknown;
+}
+
 /** 历史消息项（含 seq 字段，支持增量同步） */
 export interface ChatHistoryItem {
   role: string;
@@ -67,6 +75,12 @@ export interface ChatHistoryItem {
   seq?: null | number | string;
   /** 消息毫秒时间戳（四元组新增字段，旧三元组数据无此字段） */
   timestamp?: null | number;
+  /** 仅 role='tool' 消息含此字段：被调用的工具名，如 get_current_weather */
+  toolName?: null | string;
+  /** 仅 role='tool' 消息含此字段：与触发它的 AI 消息的 toolCalls[].id 对应 */
+  toolRequestId?: null | string;
+  /** 仅 role='ai' 消息含此字段：本轮触发的工具调用列表 */
+  toolCalls?: ChatToolCall[] | null;
 }
 
 /** 获取等待队列（座席端，需 token） */
