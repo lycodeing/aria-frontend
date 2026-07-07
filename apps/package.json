@@ -25,9 +25,6 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report node_modules/.e2e/report"
   },
-  "devDependencies": {
-    "@playwright/test": "catalog:"
-  },
   "imports": {
     "#/*": "./src/*"
   },
@@ -49,9 +46,12 @@
     "@vueuse/core": "catalog:",
     "ant-design-vue": "catalog:",
     "dayjs": "catalog:",
-    "marked": "^18.0.5",
+    "marked": "catalog:",
     "pinia": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:"
   }
 }

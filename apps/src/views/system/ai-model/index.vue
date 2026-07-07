@@ -41,7 +41,7 @@ import {
 // ===== TAB 切换（CHAT / EMBEDDING） =====
 const activeTab = ref<'CHAT' | 'EMBEDDING'>('CHAT');
 
-function onTabChange(key: string | number) {
+function onTabChange(key: number | string) {
   activeTab.value = key as 'CHAT' | 'EMBEDDING';
   loadList();
 }
@@ -189,13 +189,13 @@ function confirmDelete(row: AiModelConfigItem) {
 onMounted(loadList);
 
 // ===== 测试连接 =====
-const testingId   = ref<number | null>(null);
-const testResult  = ref<AiModelTestResult | null>(null);
+const testingId = ref<null | number>(null);
+const testResult = ref<AiModelTestResult | null>(null);
 const testVisible = ref(false);
-const testName    = ref('');
+const testName = ref('');
 
 async function testConnection(row: AiModelConfigItem) {
-  testingId.value  = row.id;
+  testingId.value = row.id;
   testResult.value = null;
   testVisible.value = true;
   testName.value = row.name;
@@ -251,7 +251,11 @@ const columns = computed(() =>
     </template>
 
     <!-- TAB 切换：对话模型 / 向量模型 -->
-    <Tabs :active-key="activeTab" @change="onTabChange" style="margin-bottom: 0">
+    <Tabs
+      :active-key="activeTab"
+      @change="onTabChange"
+      style="margin-bottom: 0"
+    >
       <TabPane key="CHAT" tab="对话模型" />
       <TabPane key="EMBEDDING" tab="向量模型（Embedding）" />
     </Tabs>
@@ -271,7 +275,9 @@ const columns = computed(() =>
           </Tag>
         </template>
         <template v-else-if="column.key === 'isDefault'">
-          <span v-if="record.isDefault" style="font-size: 16px; color: #4f46e5">✓</span>
+          <span v-if="record.isDefault" style="font-size: 16px; color: #4f46e5"
+            >✓</span
+          >
         </template>
         <template v-else-if="column.key === 'action'">
           <Space>
@@ -282,7 +288,9 @@ const columns = computed(() =>
             >
               设为默认
             </Button>
-            <Button size="small" @click="openEdit(record as AiModelConfigItem)">编辑</Button>
+            <Button size="small" @click="openEdit(record as AiModelConfigItem)">
+              编辑
+            </Button>
             <Button
               size="small"
               :loading="testingId === (record as AiModelConfigItem).id"
@@ -306,9 +314,13 @@ const columns = computed(() =>
     <!-- 新增/编辑弹窗 -->
     <Modal
       v-model:open="modalOpen"
-      :title="editingId
-        ? '编辑配置'
-        : isEmbeddingTab ? '新增向量模型配置' : '新增对话模型配置'"
+      :title="
+        editingId
+          ? '编辑配置'
+          : isEmbeddingTab
+            ? '新增向量模型配置'
+            : '新增对话模型配置'
+      "
       :confirm-loading="submitting"
       width="560px"
       @ok="submit"
@@ -317,7 +329,11 @@ const columns = computed(() =>
         <FormItem label="配置名称" required>
           <Input
             v-model:value="form.name"
-            :placeholder="isEmbeddingTab ? '如：本地 BGE-M3' : '如：天翼云 DeepSeek-V4-Flash'"
+            :placeholder="
+              isEmbeddingTab
+                ? '如：本地 BGE-M3'
+                : '如：天翼云 DeepSeek-V4-Flash'
+            "
           />
         </FormItem>
         <div style="display: flex; gap: 12px">
@@ -347,26 +363,38 @@ const columns = computed(() =>
         <FormItem label="API Base URL" required>
           <Input
             v-model:value="form.baseUrl"
-            :placeholder="isEmbeddingTab ? 'http://localhost:8000' : 'https://api.openai.com/v1'"
+            :placeholder="
+              isEmbeddingTab
+                ? 'http://localhost:8000'
+                : 'https://api.openai.com/v1'
+            "
           />
         </FormItem>
         <FormItem
           label="API Key"
-          :help="editingId
-            ? '留空则不修改现有 Key'
-            : isEmbeddingTab ? '本地部署无需 Key 可留空' : ''"
+          :help="
+            editingId
+              ? '留空则不修改现有 Key'
+              : isEmbeddingTab
+                ? '本地部署无需 Key 可留空'
+                : ''
+          "
         >
           <InputPassword
             v-model:value="form.apiKeyEnc"
-            :placeholder="isEmbeddingTab ? '本地部署可留空' : '输入 API Key（自动加密存储）'"
+            :placeholder="
+              isEmbeddingTab ? '本地部署可留空' : '输入 API Key（自动加密存储）'
+            "
           />
         </FormItem>
         <FormItem label="模型名称" required>
           <Input
             v-model:value="form.modelName"
-            :placeholder="isEmbeddingTab
-              ? '如 bge-m3 / nomic-embed-text / mxbai-embed-large'
-              : '如 DeepSeek-V4-Flash / gpt-4o'"
+            :placeholder="
+              isEmbeddingTab
+                ? '如 bge-m3 / nomic-embed-text / mxbai-embed-large'
+                : '如 DeepSeek-V4-Flash / gpt-4o'
+            "
           />
         </FormItem>
 
@@ -403,7 +431,10 @@ const columns = computed(() =>
 
         <!-- 向量模型：只需配置超时，温度/MaxTokens 对 Embedding 无意义 -->
         <template v-else>
-          <FormItem label="超时（秒）" help="向量化 HTTP 请求超时，大批量时可适当调大">
+          <FormItem
+            label="超时（秒）"
+            help="向量化 HTTP 请求超时，大批量时可适当调大"
+          >
             <InputNumber
               v-model:value="form.timeoutSec"
               :min="5"
@@ -414,7 +445,11 @@ const columns = computed(() =>
         </template>
 
         <FormItem label="备注">
-          <Textarea v-model:value="form.remark" :rows="2" placeholder="可选备注" />
+          <Textarea
+            v-model:value="form.remark"
+            :rows="2"
+            placeholder="可选备注"
+          />
         </FormItem>
       </Form>
     </Modal>
@@ -426,7 +461,15 @@ const columns = computed(() =>
       :footer="null"
       width="440px"
     >
-      <div style="padding: 16px 0; min-height: 80px; display: flex; align-items: center; justify-content: center;">
+      <div
+        style="
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 80px;
+          padding: 16px 0;
+        "
+      >
         <Spin v-if="testingId !== null" tip="连接测试中，请稍候…" />
         <div v-else-if="testResult" style="width: 100%">
           <Alert
@@ -435,7 +478,14 @@ const columns = computed(() =>
             :description="testResult.message"
             show-icon
           />
-          <p style="margin-top: 10px; color: #888; font-size: 12px; text-align: right;">
+          <p
+            style="
+              margin-top: 10px;
+              font-size: 12px;
+              color: #888;
+              text-align: right;
+            "
+          >
             延迟：{{ testResult.latencyMs }} ms
           </p>
         </div>

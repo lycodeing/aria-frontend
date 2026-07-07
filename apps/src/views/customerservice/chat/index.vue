@@ -369,7 +369,9 @@ function handleEnter(e: KeyboardEvent) {
             <template #message>
               <span class="text-xs">
                 当前为访客模式，可咨询通用问题。
-                <a class="font-medium" @click="showAuth('登录后享受完整服务')">立即登录</a>
+                <a class="font-medium" @click="showAuth('登录后享受完整服务')"
+                  >立即登录</a
+                >
                 后可查询订单、申请退款等。
               </span>
             </template>
@@ -560,7 +562,8 @@ function handleEnter(e: KeyboardEvent) {
               class="shrink-0 cursor-pointer rounded-full border px-3 py-1 text-xs transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600"
               style="color: #475569; background: #f8fafc; border-color: #e2e8f0"
               @click="quickAsk(q)"
-              >{{ q }}</span>
+              >{{ q }}</span
+            >
           </div>
         </div>
 
@@ -752,7 +755,7 @@ function handleEnter(e: KeyboardEvent) {
 
 /* 用户气泡纯文本 */
 .chat-user-md {
-  word-break: break-word;
+  overflow-wrap: break-word;
   white-space: pre-wrap;
 }
 </style>

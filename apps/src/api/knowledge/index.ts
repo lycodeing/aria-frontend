@@ -90,13 +90,10 @@ export async function reviewDocApi(
   approved: boolean,
   rejectReason?: string,
 ): Promise<void> {
-  return requestClient.put(
-    `/api/knowledge/docs/${docId}/review`,
-    {
-      approved,
-      rejectReason: rejectReason ?? '',
-    },
-  );
+  return requestClient.put(`/api/knowledge/docs/${docId}/review`, {
+    approved,
+    rejectReason: rejectReason ?? '',
+  });
 }
 
 /** 下线文档 */
@@ -168,9 +165,7 @@ export async function retryDocApi(docId: string): Promise<void> {
 
 /** 已发布文档重新摄取 */
 export async function reingestDocApi(docId: string): Promise<void> {
-  return requestClient.post(
-    `/api/knowledge/docs/${docId}/reingest`,
-  );
+  return requestClient.post(`/api/knowledge/docs/${docId}/reingest`);
 }
 
 /** 查询文档 chunk 统计 */

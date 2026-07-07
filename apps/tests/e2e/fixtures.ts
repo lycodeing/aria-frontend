@@ -1,3 +1,5 @@
+import { env } from 'node:process';
+
 import { test as base, expect } from '@playwright/test';
 
 /**
@@ -5,16 +7,15 @@ import { test as base, expect } from '@playwright/test';
  * 本地开发：在 .env.test.local 中配置（已在 .gitignore 中忽略）。
  * CI：通过 GitHub Secrets / 环境变量注入。
  */
-export const E2E_SUPERADMIN_USER =
-  process.env.E2E_SUPERADMIN_USER ?? 'superadmin';
+export const E2E_SUPERADMIN_USER = env.E2E_SUPERADMIN_USER ?? 'superadmin';
 export const E2E_SUPERADMIN_PASSWORD =
-  process.env.E2E_SUPERADMIN_PASSWORD ?? 'Test@123456';
-export const E2E_KFMANAGER_USER = process.env.E2E_KFMANAGER_USER ?? 'kfmanager';
+  env.E2E_SUPERADMIN_PASSWORD ?? 'Test@123456';
+export const E2E_KFMANAGER_USER = env.E2E_KFMANAGER_USER ?? 'kfmanager';
 export const E2E_KFMANAGER_PASSWORD =
-  process.env.E2E_KFMANAGER_PASSWORD ?? 'Test@123456';
+  env.E2E_KFMANAGER_PASSWORD ?? 'Test@123456';
 /** Vben pinia-plugin-persistedstate 持久化 key 前缀，版本升级后同步维护 */
 export const E2E_VBEN_NS_PREFIX =
-  process.env.VBEN_NS_PREFIX ?? 'vben-web-antd-5.7.0-dev';
+  env.VBEN_NS_PREFIX ?? 'vben-web-antd-5.7.0-dev';
 
 /**
  * 共享 Fixture：
@@ -24,7 +25,7 @@ export const E2E_VBEN_NS_PREFIX =
  * 用 SuperAdmin 账号验证 UI 行为；多座席转交另写专门用例（kfmanager + isolated context）
  */
 export const test = base.extend<{
-  cleanStorage: void;
+  cleanStorage: undefined;
   superAdminLogin: () => Promise<void>;
 }>({
   cleanStorage: [

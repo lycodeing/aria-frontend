@@ -73,6 +73,7 @@ test('N-03 superadmin 接入 → 转交 kfmanager → kfmanager 端 UI 出现该
       localStorage.setItem(`${prefix}-core-access`, payload);
       // 兼容老/新版本可能的别名 key
       localStorage.setItem('core-access', payload);
+      // oxlint-disable-next-line no-document-cookie -- E2E addInitScript 为同步上下文，无法使用 cookieStore API
       document.cookie = `Authorization=${tok}; path=/`;
     },
     { tok: mgrToken, prefix: E2E_VBEN_NS_PREFIX },

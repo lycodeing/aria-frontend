@@ -1,9 +1,9 @@
 <script lang="ts" setup>
 import type { UploadProps } from 'ant-design-vue';
 
-import type { DocListItem } from '#/api/knowledge';
 import type {
   ChunkDetail,
+  DocListItem,
   DocStats,
   KbStats,
   SearchHit,
@@ -111,7 +111,8 @@ async function loadKbStats() {
     kbIds.map((id) => getKbStatsApi(id)),
   );
   results.forEach((r, i) => {
-    if (r.status === 'fulfilled') kbStatsMap.value[kbIds[i]!] = r.value;
+    if (r.status === 'fulfilled')
+      kbStatsMap.value[kbIds[i] as string] = r.value;
   });
 }
 
@@ -209,8 +210,8 @@ const transModalTitle = ref('');
 async function handleTranslate(hit: SearchHit) {
   // 已有缓存，直接弹窗
   if (translationMap.value[hit.chunkId]) {
-    transModalTitle.value = `🔤 译文 — ${hit.fileName || ''}${hit.pageNum != null ? ` P${hit.pageNum}` : ''}`;
-    transModalText.value = translationMap.value[hit.chunkId]!;
+    transModalTitle.value = `🔤 译文 — ${hit.fileName || ''}${hit.pageNum === null ? '' : ` P${hit.pageNum}`}`;
+    transModalText.value = translationMap.value[hit.chunkId] ?? '';
     transModalVisible.value = true;
     return;
   }
@@ -220,7 +221,7 @@ async function handleTranslate(hit: SearchHit) {
     const result = await translateApi(hit.content);
     translationMap.value[hit.chunkId] = result;
     translationMap.value = { ...translationMap.value };
-    transModalTitle.value = `🔤 译文 — ${hit.fileName || ''}${hit.pageNum != null ? ` P${hit.pageNum}` : ''}`;
+    transModalTitle.value = `🔤 译文 — ${hit.fileName || ''}${hit.pageNum === null ? '' : ` P${hit.pageNum}`}`;
     transModalText.value = result;
     transModalVisible.value = true;
   } catch {
@@ -426,12 +427,14 @@ async function loadDocs() {
 }
 
 function updateStats() {
-  stats[0]!.value = totalDocs.value;
-  stats[1]!.value = docs.value.filter((d) => d.status === 'PUBLISHED').length;
-  stats[2]!.value = docs.value.filter(
-    (d) => d.status === 'DRAFT' || d.status === 'REVIEW',
-  ).length;
-  stats[3]!.value = docs.value.filter((d) => d.status === 'DEPRECATED').length;
+  const [s0, s1, s2, s3] = stats;
+  if (s0) s0.value = totalDocs.value;
+  if (s1) s1.value = docs.value.filter((d) => d.status === 'PUBLISHED').length;
+  if (s2)
+    s2.value = docs.value.filter(
+      (d) => d.status === 'DRAFT' || d.status === 'REVIEW',
+    ).length;
+  if (s3) s3.value = docs.value.filter((d) => d.status === 'DEPRECATED').length;
 }
 
 function handleSearch() {
@@ -1086,7 +1089,9 @@ onMounted(() => {
                   align-items: center;
                 "
               >
-                <span style="font-size: 11px; color: #bbb">{{ chunk.tokenCount }} tokens</span>
+                <span style="font-size: 11px; color: #bbb"
+                  >{{ chunk.tokenCount }} tokens</span
+                >
                 <Button
                   size="small"
                   @click="

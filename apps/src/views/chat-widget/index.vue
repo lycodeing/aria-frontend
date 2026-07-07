@@ -384,7 +384,8 @@ function clearHistory() {
           <a
             class="cursor-pointer font-semibold underline"
             @click="auth.showAuth('登录后享受完整服务')"
-            >立即登录</a>
+            >立即登录</a
+          >
           后可查询订单、申请退款等。
         </div>
       </div>
@@ -501,7 +502,8 @@ function clearHistory() {
                     overflow-wrap: break-word;
                     white-space: pre-wrap;
                   "
-                  >{{ m.text }}</span>
+                  >{{ m.text }}</span
+                >
                 <!-- 打字光标（流式进行中） -->
                 <span
                   v-if="
@@ -593,7 +595,8 @@ function clearHistory() {
                   background: #eff6ff;
                   border: 1px solid #bfdbfe;
                 "
-                >📄 {{ s }}</span>
+                >📄 {{ s }}</span
+              >
             </div>
 
             <!-- 反馈（AI 非失败消息，流结束后显示） -->
@@ -654,7 +657,8 @@ function clearHistory() {
               border: 1px solid #e2e8f0;
             "
             @click="quickAsk(q)"
-            >{{ q }}</span>
+            >{{ q }}</span
+          >
         </div>
       </div>
 
