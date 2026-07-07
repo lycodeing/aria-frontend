@@ -76,8 +76,8 @@ const batchLoading = ref(false);
 
 const rowSelection = computed(() => ({
   selectedRowKeys: selectedRowKeys.value,
-  onChange: (keys: string[]) => {
-    selectedRowKeys.value = keys;
+  onChange: (keys: (number | string)[]) => {
+    selectedRowKeys.value = keys as string[];
   },
   getCheckboxProps: (record: DocListItem) => ({
     disabled: record.status === 'DEPRECATED',
@@ -146,21 +146,6 @@ const chunkTypeMap: Record<string, { color: string; label: string }> = {
   TABLE: { color: 'green', label: '表格' },
   IMAGE_CAPTION: { color: 'purple', label: '图注' },
 };
-
-const chunkColumns = [
-  { title: '页码', dataIndex: 'pageNum', key: 'pageNum', width: 60 },
-  { title: '类型', dataIndex: 'chunkType', key: 'chunkType', width: 70 },
-  {
-    title: '章节',
-    dataIndex: 'sectionTitle',
-    key: 'sectionTitle',
-    width: 140,
-    ellipsis: true,
-  },
-  { title: 'Token', dataIndex: 'tokenCount', key: 'tokenCount', width: 65 },
-  { title: '内容', dataIndex: 'content', key: 'content', ellipsis: true },
-  { title: '操作', key: 'chunkAction', width: 120 },
-];
 
 async function handleViewChunks(doc: DocListItem) {
   currentDocName.value = doc.fileName;
@@ -416,7 +401,7 @@ async function loadDocs() {
       page: pageNum.value,
       size: pageSize.value,
     });
-    docs.value = result.items ?? (result as any).list ?? [];
+    docs.value = result.list ?? [];
     totalDocs.value = Number(result.total ?? 0);
     updateStats();
   } catch {
@@ -683,7 +668,10 @@ onMounted(() => {
           </template>
           <template v-if="column.key === 'action'">
             <Space>
-              <Button size="small" @click="handleViewChunks(record)">
+              <Button
+                size="small"
+                @click="handleViewChunks(record as DocListItem)"
+              >
                 详 情
               </Button>
               <Button
@@ -691,7 +679,7 @@ onMounted(() => {
                   record.fileType === 'PDF' || record.fileType === 'MARKDOWN'
                 "
                 size="small"
-                @click="handlePreview(record)"
+                @click="handlePreview(record as DocListItem)"
               >
                 预 览
               </Button>
@@ -700,7 +688,7 @@ onMounted(() => {
                 size="small"
                 type="primary"
                 ghost
-                @click="handleApprove(record)"
+                @click="handleApprove(record as DocListItem)"
               >
                 审核通过
               </Button>
@@ -735,7 +723,7 @@ onMounted(() => {
                 v-if="record.status === 'PUBLISHED'"
                 size="small"
                 danger
-                @click="handleOffline(record)"
+                @click="handleOffline(record as DocListItem)"
               >
                 下 线
               </Button>

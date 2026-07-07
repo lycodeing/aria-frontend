@@ -305,7 +305,7 @@ onMounted(loadList);
                 type="text"
                 size="small"
                 class="text-slate-500 hover:text-slate-700"
-                @click="openEdit(record)"
+                @click="openEdit(record as MenuVO)"
               >
                 <template #icon><Icon icon="lucide:pencil" /></template>
               </Button>
@@ -315,7 +315,7 @@ onMounted(loadList);
                 type="text"
                 size="small"
                 class="text-red-400 hover:text-red-600"
-                @click="confirmDelete(record)"
+                @click="confirmDelete(record as MenuVO)"
               >
                 <template #icon><Icon icon="lucide:trash-2" /></template>
               </Button>

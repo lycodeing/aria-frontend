@@ -249,7 +249,11 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
         </template>
         <template v-if="column.key === 'action'">
           <Space>
-            <Button size="small" type="link" @click="openMenuDrawer(record)">
+            <Button
+              size="small"
+              type="link"
+              @click="openMenuDrawer(record as RoleVO)"
+            >
               分配菜单
             </Button>
             <Button
@@ -257,7 +261,7 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
               type="link"
               danger
               :disabled="record.isSystem"
-              @click="deleteRole(record)"
+              @click="deleteRole(record as RoleVO)"
             >
               删除
             </Button>
@@ -276,7 +280,7 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
       <Form
         ref="createRef"
         :model="createForm"
-        label-col="{ span: 6 }"
+        :label-col="{ span: 6 }"
         class="mt-4"
       >
         <FormItem

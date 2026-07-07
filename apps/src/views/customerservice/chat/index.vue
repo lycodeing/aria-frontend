@@ -53,7 +53,7 @@ onMounted(async () => {
               hour: '2-digit',
               minute: '2-digit',
             })
-          : undefined,
+          : '',
         feedback: null,
       }));
       scrollBottom();

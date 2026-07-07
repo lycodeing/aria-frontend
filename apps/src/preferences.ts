@@ -23,6 +23,8 @@ export const overridesPreferences = defineOverridesPreferences({
     // backend 模式：菜单从服务端 /menus/me 动态加载，权限由 DB 的 sys_role_menu 控制
     // frontend 模式（默认）：菜单从前端静态路由文件直接渲染
     accessMode: 'backend',
+    // 前端默认首页路径，与后端 UserInfoApplicationService.HOME_PATH_ANALYTICS 保持一致
+    defaultHomePath: '/dashboard/analysis',
   },
   copyright: appCopyrightPreferences,
 });

@@ -29,6 +29,7 @@
     "#/*": "./src/*"
   },
   "dependencies": {
+    "@iconify/vue": "catalog:",
     "@types/dompurify": "^3.2.0",
     "@vben/access": "workspace:*",
     "@vben/common-ui": "workspace:*",

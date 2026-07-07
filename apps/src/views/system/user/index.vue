@@ -221,13 +221,26 @@ function deleteUser(user: UserVO) {
         </template>
         <template v-if="column.key === 'action'">
           <Space>
-            <Button size="small" type="link" @click="toggleStatus(record)">
+            <Button
+              size="small"
+              type="link"
+              @click="toggleStatus(record as UserVO)"
+            >
               {{ record.status === 'active' ? '禁用' : '启用' }}
             </Button>
-            <Button size="small" type="link" @click="resetPwd(record)">
+            <Button
+              size="small"
+              type="link"
+              @click="resetPwd(record as UserVO)"
+            >
               重置密码
             </Button>
-            <Button size="small" type="link" danger @click="deleteUser(record)">
+            <Button
+              size="small"
+              type="link"
+              danger
+              @click="deleteUser(record as UserVO)"
+            >
               删除
             </Button>
           </Space>
@@ -242,7 +255,7 @@ function deleteUser(user: UserVO) {
       :ok-text="isEdit ? '保存' : '创建'"
       @ok="submitForm"
     >
-      <Form ref="formRef" :model="form" label-col="{ span: 5 }" class="mt-4">
+      <Form ref="formRef" :model="form" :label-col="{ span: 5 }" class="mt-4">
         <FormItem
           label="用户名"
           name="username"
