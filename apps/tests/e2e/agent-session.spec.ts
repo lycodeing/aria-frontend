@@ -141,6 +141,11 @@ test('N-05 座席 close → 访客侧显示「会话已结束」', async ({
 
   // —— 座席点击「结束会话」——
   await agentPage.getByRole('button', { name: '结束会话' }).click();
+  // 结束会话需二次确认（防误关），弹出确认弹窗
+  await expect(agentPage.getByRole('button', { name: '确认结束' })).toBeVisible(
+    { timeout: 5000 },
+  );
+  await agentPage.getByRole('button', { name: '确认结束' }).click();
 
   // —— 访客侧应当显示「会话已结束」（code=1000 WS 关闭触发） ——
   await expect(visitorPage.getByText('会话已结束')).toBeVisible({
