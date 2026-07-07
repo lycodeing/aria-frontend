@@ -55,8 +55,6 @@ const inputText = ref('');
 let pendingMsg = '';
 /** 座席主动结束会话后为 true，此时底部显示「开始新对话」按钮 */
 const sessionEnded = ref(false);
-/** slot_ask 气泡内的补充输入 */
-const slotInputText = ref('');
 
 // ===== URL 参数：域码（用于后端域路由） =====
 // 支持 ?domain=weather 和 ?domainCode=weather 两种写法
@@ -157,8 +155,8 @@ const sse = useSSEStream(
       if (!currentAiMsg.tools) currentAiMsg.tools = [];
       const idx = currentAiMsg.tools.findIndex((t) => t.name === payload.tool);
       const status = { name: payload.tool, status: 'running' as const };
-      if (idx !== -1) currentAiMsg.tools[idx] = status;
-      else currentAiMsg.tools.push(status);
+      if (idx === -1) currentAiMsg.tools.push(status);
+      else currentAiMsg.tools[idx] = status;
       scrollBottom();
     },
     onToolDone: (payload) => {
@@ -171,19 +169,6 @@ const sse = useSSEStream(
         status: isErr ? 'error' : 'done',
         durationMs: payload.durationMs,
       };
-    },
-    onSlotAsk: (payload) => {
-      // 槽位追问：单独气泡，附带输入框由模板渲染
-      appendMsg('ai', payload.question, { subType: 'slot_ask' });
-      scrollBottom();
-    },
-    onCandidates: (list) => {
-      // 候选选项：单独气泡，附带候选按钮列表
-      appendMsg('ai', '请选择：', {
-        subType: 'candidates',
-        candidates: list,
-      });
-      scrollBottom();
     },
     onTransfer: () => {
       // 后端工具已完成入队（session → WAITING），前端只需同步 UI 状态
@@ -260,24 +245,6 @@ function handleEnter(e: KeyboardEvent) {
 function quickAsk(q: string) {
   inputText.value = q;
   sendMsg();
-}
-
-/** 提交 slot_ask 气泡内的补充输入，走一次 AI 流 */
-function submitSlotInput() {
-  const text = slotInputText.value.trim();
-  if (!text || sse.streaming.value) return;
-  slotInputText.value = '';
-  appendMsg('user', text, { retryText: text });
-  scrollBottom();
-  replyFor(text);
-}
-
-/** 点击候选气泡里的某一项，把 label 作为用户输入发送 */
-function pickCandidate(c: { id: string; label: string }) {
-  if (sse.streaming.value) return;
-  appendMsg('user', c.label, { retryText: c.label });
-  scrollBottom();
-  replyFor(c.label);
 }
 
 // ===== AI 流式回复 =====
@@ -605,44 +572,6 @@ function startNewSession() {
                   <div class="session-divider session-start">
                     <Icon icon="lucide:message-circle-plus" class="text-sm" />
                     <span>{{ m.text }}</span>
-                  </div>
-                </template>
-                <!-- 槽位追问：气泡内嵌输入框 -->
-                <template v-else-if="m.subType === 'slot_ask'">
-                  <div class="slot-ask-bubble">
-                    <p>{{ m.text }}</p>
-                    <div class="slot-input-row">
-                      <Input
-                        v-model:value="slotInputText"
-                        placeholder="请输入..."
-                        size="small"
-                        style="flex: 1"
-                        @press-enter="submitSlotInput"
-                      />
-                      <Button
-                        type="primary"
-                        size="small"
-                        @click="submitSlotInput"
-                      >
-                        确认
-                      </Button>
-                    </div>
-                  </div>
-                </template>
-                <!-- 候选选项：点击即发送 -->
-                <template v-else-if="m.subType === 'candidates'">
-                  <div class="candidates-bubble">
-                    <p>{{ m.text }}</p>
-                    <div class="candidates-list">
-                      <div
-                        v-for="c in m.candidates"
-                        :key="c.id"
-                        class="candidate-item"
-                        @click="pickCandidate(c)"
-                      >
-                        {{ c.label }}
-                      </div>
-                    </div>
                   </div>
                 </template>
                 <!-- 常规 AI Markdown 消息（DOMPurify 净化）+ 工具状态条 -->
@@ -1207,47 +1136,4 @@ function startNewSession() {
   }
 }
 
-/* ===== 槽位追问气泡 ===== */
-.slot-ask-bubble {
-  padding: 10px 12px;
-  background: #e6f7ff;
-  border: 1px solid #91d5ff;
-  border-radius: 8px;
-}
-
-.slot-input-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-/* ===== 候选选项气泡 ===== */
-.candidates-bubble {
-  padding: 10px 12px;
-  background: #f0f5ff;
-  border: 1px solid #adc6ff;
-  border-radius: 8px;
-}
-
-.candidates-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.candidate-item {
-  padding: 6px 10px;
-  font-size: 13px;
-  color: #1d4ed8;
-  cursor: pointer;
-  background: #fff;
-  border: 1px solid #bfdbfe;
-  border-radius: 6px;
-  transition: background 0.15s;
-}
-
-.candidate-item:hover {
-  background: #eff6ff;
-}
 </style>

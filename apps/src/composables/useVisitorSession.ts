@@ -31,9 +31,7 @@ export interface Msg {
   /** 工具调用状态列表（内嵌在同一气泡中） */
   tools?: ToolCallStatus[];
   /** 消息语义子类型，用于特殊气泡渲染 */
-  subType?: 'candidates' | 'session_end' | 'session_start' | 'slot_ask';
-  /** 候选项列表（subType=candidates 时使用） */
-  candidates?: Array<{ id: string; label: string }>;
+  subType?: 'session_end' | 'session_start';
 }
 
 export interface ToolCallStatus {

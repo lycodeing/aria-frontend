@@ -2,24 +2,32 @@
  * useSSEStream — AI 流式对话 SSE 解析与事件分发
  *
  * 职责：
- *   - 建立 fetch 流式连接，逐行解析 SSE 协议
+ *   - 建立 fetch 流式连接，按 WHATWG SSE 规范解析事件流
  *   - 按 `event:` 字段分发到对应回调，禁止未知事件 fallthrough 到文字拼接
  *   - 管理 streaming 状态和 AbortController 生命周期
  *
- * SSE 事件与回调映射：
- *   无 event（data token）→ onToken         AI 回复 token
- *   sources              → onSources        知识库溯源标签
- *   error                → onError          业务错误，自动停流
- *   done（data=[DONE]）  → onDone           流结束信号
- *   tool_call            → onToolCall       工具执行中（静默，不拼入文字）
- *   tool_done            → onToolDone       工具执行完成（静默）
- *   transfer             → onTransfer       AI 触发转接
- *   domain_switch        → onDomainSwitch   域切换（静默）
- *   slot_ask / candidates → 静默忽略（预留）
+ * Wire format 契约（与后端 ChatEvent 保持一致）：
+ *   除终止帧外，所有事件的 `data` 字段都是紧凑 JSON 信封，
+ *   与 OpenAI / Azure OpenAI Chat Completion streaming 官方格式一致。
+ *
+ *   | event         | data                                    | 回调         |
+ *   |---------------|-----------------------------------------|--------------|
+ *   | (缺省)        | {"content":"..."}                       | onToken      |
+ *   | sources       | [{"docId":"...","label":"..."}]         | onSources    |
+ *   | tool_call     | {"tool":"...","status":"RUNNING"}       | onToolCall   |
+ *   | tool_done     | {"tool":"...","status":"SUCCESS",...}   | onToolDone   |
+ *   | transfer      | {"intentCode":"...","message":"..."}    | onTransfer   |
+ *   | error         | {"message":"..."}                       | onError      |
+ *   | domain_switch | {"code":"..."}                          | onDomainSwitch |
+ *   | done          | [DONE]（字面量，非 JSON）              | onDone       |
  */
 import { ref } from 'vue';
 
-// ---- payload 类型 ----
+// ---- payload 类型（与后端 payload/*.java record 一一对应）----
+
+export interface TokenPayload {
+  content: string;
+}
 
 export interface ToolCallPayload {
   tool: string;
@@ -38,38 +46,32 @@ export interface TransferPayload {
   message: string;
 }
 
+export interface ErrorPayload {
+  message: string;
+}
+
+export interface DomainSwitchPayload {
+  code: string;
+}
+
 // ---- composable ----
 
-export interface CandidateItem {
-  id: string;
-  label: string;
-}
-
-export interface SlotAskPayload {
-  question: string;
-  slot?: string;
-}
-
 export interface SSEStreamHandlers {
-  /** AI 回复 token（无 event 行的 data） */
+  /** AI 回复 token（无 event 行，data 为 TokenPayload JSON） */
   onToken: (text: string) => void;
   /** 知识库溯源标签 */
   onSources: (sources: string[]) => void;
-  /** 工具执行中（进行中的状态更新，例如内嵌到 AI 气泡显示） */
+  /** 工具执行中 */
   onToolCall?: (payload: ToolCallPayload) => void;
   /** 工具执行完成 */
   onToolDone?: (payload: ToolDonePayload) => void;
   /** AI 工具触发转接人工 */
   onTransfer: (payload: TransferPayload) => void;
-  /** 域切换信号（访客端静默忽略） */
+  /** 域切换信号（访客端可静默忽略） */
   onDomainSwitch?: (code: string) => void;
-  /** 槽位追问：AI 需要用户补充信息 */
-  onSlotAsk?: (payload: SlotAskPayload) => void;
-  /** 候选选项：AI 提供若干候选让用户点选 */
-  onCandidates?: (list: CandidateItem[]) => void;
   /** 业务错误 */
   onError: (msg: string) => void;
-  /** 流正常结束（[DONE]） */
+  /** 流正常结束（收到 event:done + data:[DONE]） */
   onDone: () => void;
 }
 
@@ -137,25 +139,24 @@ export function useSSEStream(
     abortCtrl?.abort();
   }
 
-  // ---- 内部：SSE 逐行解析 ----
+  // ---- 内部：SSE 逐行解析（严格遵守 WHATWG SSE 规范） ----
   //
-  // 与后端约定（不完全遵循 WHATWG SSE 规范的空格剥离规则）：
+  // https://html.spec.whatwg.org/multipage/server-sent-events.html
   //   - 事件由空行（\n\n 或 \r\n\r\n）分隔，同一事件内多条 `data:` 行用 \n 拼接
-  //   - `data:` 之后的字符原样保留，不剥离前导空格。原因：本项目后端是逐 token 直写
-  //     （典型 LangChain / Spring AI 风格），LLM 分词器输出的 " 似乎"、" 26"、" km/h"
-  //     等 token 天然带前导空格；若按规范剥一个空格，会把 "### 🔴" 拼成 "###🔴"，
-  //     导致 Markdown 标题、加粗、列表项等前置空格语法全部失效。
-  //   - 空的 `data:` 行 → 在同事件多 data 拼接时贡献一个 \n（Markdown 段落/表格边界依赖此）
-  //   - 每行行尾可能是 \r\n，需剥离尾部 \r
+  //   - `data:` / `event:` 之后若紧跟单个空格，该空格被视为分隔符，需剥离
+  //   - 行尾 \r 需剥离（兼容 CRLF）
+  //   - 空 `data:` 行也贡献一条空字符串（同事件多条 data 拼接时形成 \n）
+  //
+  // 之所以能安全遵循规范：本项目 wire format 已升级为 JSON 信封，
+  // token 内的前导空格/换行由 JSON.stringify 编码为 "\u0020"/"\\n"，
+  // 不再依赖 SSE 层保留原始空白。
   async function parseSseStream(
     reader: ReadableStreamDefaultReader<Uint8Array>,
     signal: AbortSignal,
   ): Promise<void> {
     const decoder = new TextDecoder();
     let lineBuffer = '';
-    // currentEvent 记录当前事件的 event 类型，事件边界（空行）后重置
     let currentEvent = '';
-    // dataLines 缓存同一事件内的多条 `data:` 内容，空行时用 \n 拼接后 dispatch
     let dataLines: string[] = [];
 
     const flush = async (): Promise<void> => {
@@ -177,48 +178,62 @@ export function useSSEStream(
       lineBuffer = rawLines.pop() ?? '';
 
       for (const rawLine of rawLines) {
-        // 剥离 CRLF 的尾部 \r，其余字符原样保留
         const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
 
         if (line === '') {
-          // 事件边界：flush 已累积的 data 行
           await flush();
           continue;
         }
         if (line.startsWith(':')) {
-          // 注释行（常用作心跳），跳过
+          // 注释行（心跳），跳过
           continue;
         }
         if (line.startsWith('event:')) {
-          // event 字段按规范剥离一个前导空格（事件名不会含有意义的前置空格）
-          const rest = line.slice(6);
-          currentEvent = rest.startsWith(' ') ? rest.slice(1) : rest;
+          currentEvent = stripFieldPrefix(line, 'event:'.length);
           continue;
         }
         if (line.startsWith('data:')) {
-          // 关键：保留 data 值中的所有字符（含前导空格），后端 token 语义依赖它
-          dataLines.push(line.slice(5));
+          dataLines.push(stripFieldPrefix(line, 'data:'.length));
           continue;
         }
-        // 其他字段（id:、retry:）按规范忽略
+        // 其他字段（id: / retry:）按规范忽略
       }
     }
 
-    // 流正常结束时兜底 flush，避免最后一条事件未带空行边界而丢失
+    // 流末尾兜底 flush，避免最后一条事件未带空行边界而丢失
     await flush();
   }
 
   /**
+   * SSE 字段值提取：截掉字段前缀后，若首字符是空格则再剥离一个空格（WHATWG 要求）。
+   */
+  function stripFieldPrefix(line: string, prefixLen: number): string {
+    const rest = line.slice(prefixLen);
+    return rest.startsWith(' ') ? rest.slice(1) : rest;
+  }
+
+  /**
+   * 安全 JSON 解析：失败返回 undefined 而不抛，调用点可用可选链降级。
+   */
+  function tryParse<T>(data: string): T | undefined {
+    try {
+      return JSON.parse(data) as T;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * 根据 currentEvent 分发到对应处理器。
-   * 所有已知 event 类型必须有明确分支，禁止 fallthrough 到文字拼接。
+   * 所有已知 event 类型必须有明确分支，未知事件静默忽略（防止 JSON 污染文字）。
    */
   async function dispatchEvent(
     event: string,
     data: string,
     reader: ReadableStreamDefaultReader<Uint8Array>,
   ): Promise<void> {
-    if (data === '[DONE]') {
-      // 流结束信号，无论 event 是什么都终止
+    // done 事件是唯一保留字面量的帧（与 OpenAI 规范一致，非 JSON 信封）
+    if (event === 'done' || data === '[DONE]') {
       streaming.value = false;
       handlers.onDone();
       await reader.cancel();
@@ -227,93 +242,62 @@ export function useSSEStream(
 
     switch (event) {
       case '': {
-        // 无 event 行：普通 AI 回复 token
-        if (data) handlers.onToken(data);
-        break;
-      }
-      case 'candidates': {
-        // 候选选项：data 为 JSON 数组 [{id, label}, ...]
-        if (handlers.onCandidates) {
-          try {
-            const list = JSON.parse(data);
-            handlers.onCandidates(Array.isArray(list) ? list : []);
-          } catch {
-            /* 忽略解析失败 */
-          }
+        // token 事件：data 为 TokenPayload JSON 信封，解出 content 追加到当前气泡
+        const payload = tryParse<TokenPayload>(data);
+        if (payload && typeof payload.content === 'string') {
+          if (payload.content) handlers.onToken(payload.content);
+          return;
         }
-        break;
-      }
-      case 'domain_switch': {
-        // 域切换信号，访客端静默忽略（不拼入文字）
-        handlers.onDomainSwitch?.(data);
-        break;
-      }
-      case 'error': {
-        // 业务错误，显示错误文字并终止流
+        // 解析失败视为协议错误（不再兼容裸字符串），交给 onError 并终止流
         streaming.value = false;
-        handlers.onError(data);
+        handlers.onError('接收到非法的 SSE 数据格式');
         await reader.cancel();
         break;
       }
-      case 'slot_ask': {
-        // 槽位追问：data 可能是 JSON {question, slot} 或直接文本
-        if (handlers.onSlotAsk) {
-          let payload: SlotAskPayload;
-          try {
-            payload = JSON.parse(data);
-          } catch {
-            payload = { question: data };
-          }
-          handlers.onSlotAsk(payload);
-        }
+      case 'domain_switch': {
+        const payload = tryParse<DomainSwitchPayload>(data);
+        if (payload?.code) handlers.onDomainSwitch?.(payload.code);
+        break;
+      }
+      case 'error': {
+        const payload = tryParse<ErrorPayload>(data);
+        const message = payload?.message ?? '服务错误';
+        streaming.value = false;
+        handlers.onError(message);
+        await reader.cancel();
         break;
       }
       case 'sources': {
-        // 知识库溯源标签，data 为 JSON 字符串数组
-        try {
-          handlers.onSources(JSON.parse(data));
-        } catch {
-          /* 解析失败静默忽略，不影响正文 */
-        }
+        // sources 是 JSON 数组（不是对象信封），保留原有解析逻辑
+        const list = tryParse<unknown[]>(data);
+        if (Array.isArray(list)) handlers.onSources(list as string[]);
         break;
       }
       case 'tool_call': {
-        // 工具执行中：解析 payload，回调可选（不展示则静默忽略）
-        if (handlers.onToolCall) {
-          try {
-            handlers.onToolCall(JSON.parse(data));
-          } catch {
-            /* 忽略 */
-          }
-        }
+        if (!handlers.onToolCall) return;
+        const payload = tryParse<ToolCallPayload>(data);
+        if (payload) handlers.onToolCall(payload);
         break;
       }
       case 'tool_done': {
-        // 工具执行完成：解析 payload，回调可选
-        if (handlers.onToolDone) {
-          try {
-            handlers.onToolDone(JSON.parse(data));
-          } catch {
-            /* 忽略 */
-          }
-        }
+        if (!handlers.onToolDone) return;
+        const payload = tryParse<ToolDonePayload>(data);
+        if (payload) handlers.onToolDone(payload);
         break;
       }
       case 'transfer': {
-        // AI 工具触发转接人工
-        try {
-          handlers.onTransfer(JSON.parse(data));
-        } catch {
-          // JSON 解析失败时用默认 payload 兜底
-          handlers.onTransfer({
+        const payload = tryParse<TransferPayload>(data);
+        // transfer 是关键 UI 状态切换，JSON 解析失败也走默认 payload 保证前端切态
+        handlers.onTransfer(
+          payload ?? {
             intentCode: 'agent_transfer',
             message: '已为您转接人工客服',
-          });
-        }
+          },
+        );
         break;
       }
       default: {
-        // 未知事件类型：静默忽略，防止 JSON 污染文字
+        // 未知事件：静默忽略（防止 JSON 污染文字气泡）
         break;
       }
     }

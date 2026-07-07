@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { nextTick, onMounted, ref } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -17,9 +17,14 @@ import {
   Tag,
   Textarea,
 } from 'ant-design-vue';
+import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 
 import { getVisitorHistoryApi } from '#/api/session';
+import { useSSEStream } from '#/composables/useSSEStream';
+
+// marked：开启 breaks（\n 转 <br>）+ gfm（表格/删除线），与 chat-widget 保持一致
+marked.use({ breaks: true, gfm: true });
 
 // ===== 状态 =====
 const isAuth = ref(false);
@@ -27,7 +32,6 @@ const authLabel = ref('访客模式');
 const inputText = ref('');
 const msgs = ref<Msg[]>([]);
 const msgsEnd = ref<HTMLDivElement>();
-const streaming = ref(false);
 
 // 会话 ID：持久化到 localStorage，保证多轮对话连贯
 const sessionId = ref('');
@@ -117,7 +121,7 @@ function scrollBottom() {
 
 function sendMsg() {
   const text = inputText.value.trim();
-  if (!text || streaming.value) return;
+  if (!text || sse.streaming.value) return;
   inputText.value = '';
   addMsg('user', text);
   const needsAuth = AUTH_WORDS.some((w) => text.includes(w));
@@ -133,12 +137,40 @@ function sendMsg() {
 }
 
 /**
+ * 当前正在流式填充的 AI 气泡（reactive proxy 引用），由 useSSEStream 的
+ * onToken 回调持续追加内容。
+ */
+let currentAiMsg: Msg | null = null;
+
+// SSE 流：与 chat-widget 复用同一 composable，保证 wire format 契约一致
+const sse = useSSEStream(sessionId, {
+  onToken: (chunk) => {
+    if (currentAiMsg) {
+      currentAiMsg.text += chunk;
+      scrollBottom();
+    }
+  },
+  onSources: (sources) => {
+    if (currentAiMsg) currentAiMsg.sources = sources;
+  },
+  onTransfer: () => {
+    // 后台管理页暂不处理 AI 转接（无 WS 通道），只在气泡内展示提示语
+    if (currentAiMsg) currentAiMsg.text = '已为您转接人工客服，请稍候。';
+  },
+  onError: (msg) => {
+    if (currentAiMsg) currentAiMsg.text = msg;
+  },
+  onDone: () => {
+    /* streaming 状态由 useSSEStream 内部管理 */
+  },
+});
+
+/**
  * 调用 conversation-service SSE 流式接口获取 AI 回复。
  * 代理规则：/api/v1/chat → http://localhost:8082
  */
 async function replyFor(text: string) {
-  streaming.value = true;
-  const m: Msg = {
+  currentAiMsg = {
     id: ++msgId,
     role: 'ai',
     text: '',
@@ -146,83 +178,15 @@ async function replyFor(text: string) {
     sources: [],
     feedback: null,
   };
-  msgs.value.push(m);
+  msgs.value.push(currentAiMsg);
   scrollBottom();
 
-  try {
-    const response = await fetch('/api/v1/chat/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: sessionId.value, message: text }),
-    });
-
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-    if (!response.body) throw new Error('No response body');
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let lineBuffer = '';
-    let currentEvent = ''; // 当前 SSE 事件类型，默认为空（普通 data 事件）
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      lineBuffer += decoder.decode(value, { stream: true });
-      const lines = lineBuffer.split('\n');
-      // 最后一行可能未结束，暂存到 buffer 等下一个 chunk
-      lineBuffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-
-        // 空行：SSE 事件分隔符，重置事件类型
-        if (trimmed === '') {
-          currentEvent = '';
-          continue;
-        }
-
-        // event 行：记录事件类型
-        if (trimmed.startsWith('event:')) {
-          currentEvent = trimmed.slice(6).trim();
-          continue;
-        }
-
-        // comment 行（心跳）：跳过
-        if (trimmed.startsWith(':')) continue;
-
-        // data 行
-        if (trimmed.startsWith('data:')) {
-          const data = trimmed.slice(5).trim();
-          if (data === '[DONE]') {
-            streaming.value = false;
-            return;
-          }
-          if (currentEvent === 'sources') {
-            // 知识库溯源：解析后存入 m.sources，不拼入文本
-            try {
-              m.sources = JSON.parse(data);
-            } catch {
-              /* 解析失败忽略 */
-            }
-          } else if (currentEvent === 'error') {
-            m.text = data;
-            streaming.value = false;
-            return;
-          } else if (data) {
-            // 普通 AI token：拼入回复文本
-            m.text += data;
-            scrollBottom();
-          }
-        }
-      }
-    }
-  } catch {
-    // 后端不可用时降级到友好提示
-    m.text = '抱歉，AI 服务暂时不可用，请稍后重试。如需帮助，请联系人工客服。';
-  } finally {
-    streaming.value = false;
-  }
+  await sse.send(text);
 }
+
+onUnmounted(() => {
+  sse.abort();
+});
 
 function addMsg(role: 'ai' | 'user', text: string) {
   msgs.value.push({ id: ++msgId, role, text, time: nowTime(), feedback: null });
@@ -449,7 +413,7 @@ function handleEnter(e: KeyboardEvent) {
               >
                 <!-- AI 正在思考动画 -->
                 <span
-                  v-if="streaming && m === msgs[msgs.length - 1] && !m.text"
+                  v-if="sse.streaming.value && m === msgs[msgs.length - 1] && !m.text"
                   class="flex gap-1 py-1"
                 >
                   <span
@@ -465,14 +429,19 @@ function handleEnter(e: KeyboardEvent) {
                     style="animation-delay: 300ms"
                   ></span>
                 </span>
-                <!-- Markdown 渲染 -->
+                <!-- Markdown 渲染：AI 消息经 DOMPurify 净化，防 XSS -->
                 <div
-                  v-else
-                  :class="m.role === 'user' ? 'chat-user-md' : 'chat-ai-md'"
-                  v-html="m.role === 'ai' ? marked.parse(m.text) : m.text"
+                  v-else-if="m.role === 'ai'"
+                  class="chat-ai-md"
+                  v-html="
+                    DOMPurify.sanitize(
+                      marked.parse(m.text, { async: false }) as string,
+                    )
+                  "
                 ></div>
+                <div v-else class="chat-user-md">{{ m.text }}</div>
                 <span
-                  v-if="streaming && m === msgs[msgs.length - 1] && m.text"
+                  v-if="sse.streaming.value && m === msgs[msgs.length - 1] && m.text"
                   class="ml-0.5 inline-block h-3.5 w-0.5 animate-pulse bg-indigo-500 align-middle"
                 ></span>
               </div>
@@ -504,7 +473,7 @@ function handleEnter(e: KeyboardEvent) {
               </div>
               <!-- 反馈 -->
               <div
-                v-if="m.role === 'ai' && !streaming"
+                v-if="m.role === 'ai' && !sse.streaming.value"
                 class="ml-1 mt-1.5 flex items-center gap-2"
               >
                 <span class="text-xs text-gray-400">有帮助吗？</span>
@@ -579,7 +548,7 @@ function handleEnter(e: KeyboardEvent) {
             />
             <Button
               type="primary"
-              :loading="streaming"
+              :loading="sse.streaming.value"
               class="flex h-10 w-10 shrink-0 items-center justify-center"
               @click="sendMsg"
             >
