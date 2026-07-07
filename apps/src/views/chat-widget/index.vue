@@ -157,14 +157,14 @@ const sse = useSSEStream(
       if (!currentAiMsg.tools) currentAiMsg.tools = [];
       const idx = currentAiMsg.tools.findIndex((t) => t.name === payload.tool);
       const status = { name: payload.tool, status: 'running' as const };
-      if (idx >= 0) currentAiMsg.tools[idx] = status;
+      if (idx !== -1) currentAiMsg.tools[idx] = status;
       else currentAiMsg.tools.push(status);
       scrollBottom();
     },
     onToolDone: (payload) => {
       if (!currentAiMsg?.tools) return;
       const idx = currentAiMsg.tools.findIndex((t) => t.name === payload.tool);
-      if (idx < 0) return;
+      if (idx === -1) return;
       const isErr = payload.status === 'error' || Boolean(payload.errorMsg);
       currentAiMsg.tools[idx] = {
         name: payload.tool,
@@ -648,10 +648,7 @@ function startNewSession() {
                 <!-- 常规 AI Markdown 消息（DOMPurify 净化）+ 工具状态条 -->
                 <template v-else-if="m.role === 'ai'">
                   <!-- 工具调用状态（内嵌到同一气泡顶部） -->
-                  <div
-                    v-if="m.tools && m.tools.length"
-                    class="tool-status-row"
-                  >
+                  <div v-if="m.tools && m.tools.length" class="tool-status-row">
                     <div
                       v-for="tool in m.tools"
                       :key="tool.name"
@@ -974,24 +971,177 @@ function startNewSession() {
 </template>
 
 <style>
-.widget-ai-md p {
-  margin: 0.35em 0;
+/* ===== Markdown 渲染样式 =====
+ * Tailwind v4 Preflight 会把 h1~h6 / ul / ol / strong / table 等
+ * 原生标签样式清零（list-style: none、margin: 0、font-size: inherit 等），
+ * 导致 marked 输出的 HTML 看起来像纯文本。
+ * 这里必须显式恢复所有 Markdown 常用标签样式。
+ */
+.widget-ai-md {
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: break-word;
 }
 
+.widget-ai-md > :first-child {
+  margin-top: 0;
+}
+
+.widget-ai-md > :last-child {
+  margin-bottom: 0;
+}
+
+.widget-ai-md p {
+  margin: 0.4em 0;
+}
+
+/* 标题 h1~h4 */
+.widget-ai-md h1,
+.widget-ai-md h2,
+.widget-ai-md h3,
+.widget-ai-md h4 {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #1e293b;
+}
+
+.widget-ai-md h1 {
+  font-size: 1.25em;
+}
+
+.widget-ai-md h2 {
+  font-size: 1.15em;
+}
+
+.widget-ai-md h3 {
+  font-size: 1.05em;
+}
+
+.widget-ai-md h4 {
+  font-size: 1em;
+}
+
+/* 加粗 / 斜体 / 删除线 */
+.widget-ai-md strong {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.widget-ai-md em {
+  font-style: italic;
+}
+
+.widget-ai-md del {
+  color: #94a3b8;
+  text-decoration: line-through;
+}
+
+/* 链接 */
+.widget-ai-md a {
+  color: #4f46e5;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.widget-ai-md a:hover {
+  color: #4338ca;
+}
+
+/* 列表：Preflight 清零后必须显式恢复 list-style */
+.widget-ai-md ul,
+.widget-ai-md ol {
+  padding-left: 1.5em;
+  margin: 0.4em 0;
+}
+
+.widget-ai-md ul {
+  list-style: disc;
+}
+
+.widget-ai-md ol {
+  list-style: decimal;
+}
+
+.widget-ai-md li {
+  margin: 0.2em 0;
+}
+
+.widget-ai-md li > ul,
+.widget-ai-md li > ol {
+  margin: 0.2em 0;
+}
+
+/* 引用块 */
+.widget-ai-md blockquote {
+  padding: 2px 10px;
+  margin: 0.5em 0;
+  color: #64748b;
+  background: #f8fafc;
+  border-left: 3px solid #6366f1;
+}
+
+/* 行内代码 */
+.widget-ai-md code {
+  padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85em;
+  color: #be123c;
+  background: #f1f5f9;
+  border-radius: 3px;
+}
+
+/* 代码块 */
 .widget-ai-md pre {
   padding: 0.75em 1em;
+  margin: 0.5em 0;
   overflow-x: auto;
   background: #f1f5f9;
   border-radius: 6px;
 }
 
-.widget-ai-md code {
-  font-size: 0.85em;
+.widget-ai-md pre code {
+  padding: 0;
+  color: #334155;
+  background: none;
 }
 
-.widget-ai-md ul,
-.widget-ai-md ol {
-  padding-left: 1.5em;
+/* 表格 */
+.widget-ai-md table {
+  display: block;
+  width: 100%;
+  margin: 0.5em 0;
+  overflow-x: auto;
+  font-size: 0.9em;
+  border-collapse: collapse;
+}
+
+.widget-ai-md th,
+.widget-ai-md td {
+  padding: 5px 10px;
+  text-align: left;
+  border: 1px solid #e2e8f0;
+}
+
+.widget-ai-md th {
+  font-weight: 600;
+  color: #1e293b;
+  background: #f8fafc;
+}
+
+/* 分隔线 */
+.widget-ai-md hr {
+  height: 1px;
+  margin: 0.8em 0;
+  background: #e2e8f0;
+  border: 0;
+}
+
+/* 图片 */
+.widget-ai-md img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
 }
 
 /* ===== 会话分隔条（session_end / session_start） ===== */

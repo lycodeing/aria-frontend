@@ -138,47 +138,74 @@ export function useSSEStream(
   }
 
   // ---- 内部：SSE 逐行解析 ----
-
+  //
+  // 与后端约定（不完全遵循 WHATWG SSE 规范的空格剥离规则）：
+  //   - 事件由空行（\n\n 或 \r\n\r\n）分隔，同一事件内多条 `data:` 行用 \n 拼接
+  //   - `data:` 之后的字符原样保留，不剥离前导空格。原因：本项目后端是逐 token 直写
+  //     （典型 LangChain / Spring AI 风格），LLM 分词器输出的 " 似乎"、" 26"、" km/h"
+  //     等 token 天然带前导空格；若按规范剥一个空格，会把 "### 🔴" 拼成 "###🔴"，
+  //     导致 Markdown 标题、加粗、列表项等前置空格语法全部失效。
+  //   - 空的 `data:` 行 → 在同事件多 data 拼接时贡献一个 \n（Markdown 段落/表格边界依赖此）
+  //   - 每行行尾可能是 \r\n，需剥离尾部 \r
   async function parseSseStream(
     reader: ReadableStreamDefaultReader<Uint8Array>,
     signal: AbortSignal,
   ): Promise<void> {
     const decoder = new TextDecoder();
     let lineBuffer = '';
-    // currentEvent 记录最近一条 `event:` 行的值，空行后重置
+    // currentEvent 记录当前事件的 event 类型，事件边界（空行）后重置
     let currentEvent = '';
+    // dataLines 缓存同一事件内的多条 `data:` 内容，空行时用 \n 拼接后 dispatch
+    let dataLines: string[] = [];
+
+    const flush = async (): Promise<void> => {
+      if (dataLines.length > 0) {
+        const data = dataLines.join('\n');
+        dataLines = [];
+        await dispatchEvent(currentEvent, data, reader);
+      }
+      currentEvent = '';
+    };
 
     while (!signal.aborted) {
       const { done, value } = await reader.read();
       if (done) break;
 
       lineBuffer += decoder.decode(value, { stream: true });
-      const lines = lineBuffer.split('\n');
+      const rawLines = lineBuffer.split('\n');
       // 最后一段可能不完整，留到下次循环拼接
-      lineBuffer = lines.pop() ?? '';
+      lineBuffer = rawLines.pop() ?? '';
 
-      for (const line of lines) {
-        const trimmed = line.trim();
+      for (const rawLine of rawLines) {
+        // 剥离 CRLF 的尾部 \r，其余字符原样保留
+        const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
 
-        if (trimmed === '') {
-          // 空行：SSE 消息边界，重置当前事件类型
-          currentEvent = '';
+        if (line === '') {
+          // 事件边界：flush 已累积的 data 行
+          await flush();
           continue;
         }
-        if (trimmed.startsWith(':')) {
-          // 注释行（心跳），跳过
+        if (line.startsWith(':')) {
+          // 注释行（常用作心跳），跳过
           continue;
         }
-        if (trimmed.startsWith('event:')) {
-          currentEvent = trimmed.slice(6).trim();
+        if (line.startsWith('event:')) {
+          // event 字段按规范剥离一个前导空格（事件名不会含有意义的前置空格）
+          const rest = line.slice(6);
+          currentEvent = rest.startsWith(' ') ? rest.slice(1) : rest;
           continue;
         }
-        if (trimmed.startsWith('data:')) {
-          const data = trimmed.slice(5).trim();
-          await dispatchEvent(currentEvent, data, reader);
+        if (line.startsWith('data:')) {
+          // 关键：保留 data 值中的所有字符（含前导空格），后端 token 语义依赖它
+          dataLines.push(line.slice(5));
+          continue;
         }
+        // 其他字段（id:、retry:）按规范忽略
       }
     }
+
+    // 流正常结束时兜底 flush，避免最后一条事件未带空行边界而丢失
+    await flush();
   }
 
   /**
@@ -216,6 +243,18 @@ export function useSSEStream(
         }
         break;
       }
+      case 'domain_switch': {
+        // 域切换信号，访客端静默忽略（不拼入文字）
+        handlers.onDomainSwitch?.(data);
+        break;
+      }
+      case 'error': {
+        // 业务错误，显示错误文字并终止流
+        streaming.value = false;
+        handlers.onError(data);
+        await reader.cancel();
+        break;
+      }
       case 'slot_ask': {
         // 槽位追问：data 可能是 JSON {question, slot} 或直接文本
         if (handlers.onSlotAsk) {
@@ -227,18 +266,6 @@ export function useSSEStream(
           }
           handlers.onSlotAsk(payload);
         }
-        break;
-      }
-      case 'domain_switch': {
-        // 域切换信号，访客端静默忽略（不拼入文字）
-        handlers.onDomainSwitch?.(data);
-        break;
-      }
-      case 'error': {
-        // 业务错误，显示错误文字并终止流
-        streaming.value = false;
-        handlers.onError(data);
-        await reader.cancel();
         break;
       }
       case 'sources': {
