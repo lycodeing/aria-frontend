@@ -88,7 +88,10 @@ async function fetchMissingForSession(sid: string) {
     if (!session) return;
     for (const item of missing) {
       // 后端 JacksonLongToStringConfig 将 Long 序列化为字符串，统一 Number() 归一化
-      const seqNum = item.seq === null ? Number.NaN : Number(item.seq);
+      const seqNum =
+        item.seq === null || item.seq === undefined
+          ? Number.NaN
+          : Number(item.seq);
       if (!Number.isFinite(seqNum) || seqNum <= sinceSeqSnapshot) continue;
       if (!item.content) continue;
       if (item.role === 'user') {
@@ -117,7 +120,7 @@ const {
   onUserMessage: (sessionId, msg) => {
     // 跟踪 seq：每条 MESSAGE 都更新 lastSeq，重连时凭此拉增量
     // 后端 Long 序列化为 string，需归一化
-    if (msg.seq !== null) {
+    if (msg.seq !== null && msg.seq !== undefined) {
       const seqNum = Number(msg.seq);
       if (Number.isFinite(seqNum)) writeLastSeq(sessionId, seqNum);
     }
@@ -415,7 +418,8 @@ async function addSessionLocal(params: {
   let maxSeq = 0;
   const loadedMsgs: Msg[] = history.map((h) => {
     // seq 后端 Long 序列化为 string，需 Number() 归一化
-    const seqNum = h.seq === null ? Number.NaN : Number(h.seq);
+    const seqNum =
+      h.seq === null || h.seq === undefined ? Number.NaN : Number(h.seq);
     if (Number.isFinite(seqNum) && seqNum > maxSeq) {
       maxSeq = seqNum;
     }
@@ -553,7 +557,8 @@ onMounted(async () => {
       let maxSeq = 0;
       const loadedMsgs: Msg[] = history.map((h) => {
         // S-07：使用全局 ++msgId 保证 id 全局唯一，避免 :key 碰撞导致 DOM 错乱
-        const seqNum = h.seq === null ? Number.NaN : Number(h.seq);
+        const seqNum =
+          h.seq === null || h.seq === undefined ? Number.NaN : Number(h.seq);
         if (Number.isFinite(seqNum) && seqNum > maxSeq) maxSeq = seqNum;
         return {
           id: ++msgId,
@@ -726,12 +731,14 @@ onMounted(async () => {
                 v-if="tab.key === 'waiting' && queue.length"
                 class="ml-0.5 rounded-full bg-red-500 px-1 text-white"
                 style="font-size: 10px; line-height: 16px"
-                >{{ queue.length }}</span>
+                >{{ queue.length }}</span
+              >
               <span
                 v-if="tab.key === 'active' && sessions.length"
                 class="ml-0.5 rounded-full bg-indigo-500 px-1 text-white"
                 style="font-size: 10px; line-height: 16px"
-                >{{ sessions.length }}</span>
+                >{{ sessions.length }}</span
+              >
             </span>
           </div>
 
@@ -769,8 +776,8 @@ onMounted(async () => {
                   <template #icon>
                     <Icon
                       icon="ant-design:customer-service-outlined"
-                    />
-</template>接入会话
+                    /> </template
+                  >接入会话
                 </Button>
               </div>
 
@@ -791,7 +798,9 @@ onMounted(async () => {
                 >
                   ← 上一页
                 </button>
-                <span class="text-xs text-gray-400">{{ queuePage }} / {{ queueTotalPages }}</span>
+                <span class="text-xs text-gray-400"
+                  >{{ queuePage }} / {{ queueTotalPages }}</span
+                >
                 <button
                   class="rounded px-2 py-0.5 text-xs transition"
                   :class="
@@ -955,12 +964,13 @@ onMounted(async () => {
           <div class="ml-auto flex gap-2">
             <!-- Bug-002 修复：转交按钮打开 Modal -->
             <Button size="small" @click="transferVisible = true">
-              <template #icon><Icon icon="ant-design:swap-outlined" /></template>转交
+              <template #icon><Icon icon="ant-design:swap-outlined" /></template
+              >转交
             </Button>
             <Button type="primary" size="small" @click="closeSession">
               <template #icon>
-                <Icon icon="ant-design:check-outlined" />
-</template>结束会话
+                <Icon icon="ant-design:check-outlined" /> </template
+              >结束会话
             </Button>
           </div>
         </div>
@@ -980,7 +990,8 @@ onMounted(async () => {
                   : 'background:#f0f0f0;color:#6b7280;border-color:#e5e7eb'
               "
               @click="msgFilter = opt.key"
-              >{{ opt.label }}</span>
+              >{{ opt.label }}</span
+            >
           </div>
           <Tag color="processing" class="text-xs">进行中</Tag>
         </div>
@@ -1042,7 +1053,8 @@ onMounted(async () => {
                 <span
                   v-else
                   style="overflow-wrap: break-word; white-space: pre-wrap"
-                  >{{ m.text }}</span>
+                  >{{ m.text }}</span
+                >
               </div>
               <!-- 时间戳 + 复制 -->
               <div
@@ -1241,7 +1253,9 @@ onMounted(async () => {
               class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"
             ></span>
           </span>
-          <span class="text-xs text-emerald-500">实时监听中，新会话将自动推送</span>
+          <span class="text-xs text-emerald-500"
+            >实时监听中，新会话将自动推送</span
+          >
         </div>
       </div>
 
@@ -1289,7 +1303,8 @@ onMounted(async () => {
               <span
                 class="ml-auto font-medium"
                 :class="s.done ? 'text-gray-700' : 'text-amber-500'"
-                >{{ s.value ?? '待确认' }}</span>
+                >{{ s.value ?? '待确认' }}</span
+              >
             </div>
           </div>
         </Card>

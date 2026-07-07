@@ -30,42 +30,64 @@ import {
 } from '#/api/core/menu';
 
 interface MenuVO {
-  id: number; parentId: number; menuType: string; menuName: string
-  menuKey: string; path?: string; component?: string; icon?: string
-  sortOrder: number; isVisible: boolean; isCache: boolean
-  permissionKey?: string; status: string; remark?: string
-  children?: MenuVO[]
+  id: number;
+  parentId: number;
+  menuType: string;
+  menuName: string;
+  menuKey: string;
+  path?: string;
+  component?: string;
+  icon?: string;
+  sortOrder: number;
+  isVisible: boolean;
+  isCache: boolean;
+  permissionKey?: string;
+  status: string;
+  remark?: string;
+  children?: MenuVO[];
 }
 
-const list    = ref<MenuVO[]>([]);
+const list = ref<MenuVO[]>([]);
 const loading = ref(false);
 const expandedRowKeys = ref<number[]>([]);
 
 // 递归收集所有节点 id 用于展开
 function collectIds(items: MenuVO[]): number[] {
-  return items.flatMap(m => [m.id, ...collectIds(m.children ?? [])]);
+  return items.flatMap((m) => [m.id, ...collectIds(m.children ?? [])]);
 }
 
 async function loadList() {
   loading.value = true;
   try {
-    list.value = (await getAllMenuTreeApi() as any) ?? [];
+    list.value = ((await getAllMenuTreeApi()) as any) ?? [];
     expandedRowKeys.value = collectIds(list.value);
+  } catch {
+    message.error('加载失败');
+  } finally {
+    loading.value = false;
   }
-  catch { message.error('加载失败'); }
-  finally { loading.value = false; }
 }
 
 // ===== 弹窗 =====
-const modalOpen  = ref(false);
-const editingId  = ref<null | number>(null);
+const modalOpen = ref(false);
+const editingId = ref<null | number>(null);
 const submitting = ref(false);
 
 const emptyForm = () => ({
-  parentId: 0, menuType: 'MENU', menuName: '', menuKey: '',
-  path: '', component: '', icon: '', sortOrder: 0,
-  isVisible: true, isCache: true, permissionKey: '', status: 'active', remark: '',
-})
+  parentId: 0,
+  menuType: 'MENU',
+  menuName: '',
+  menuKey: '',
+  path: '',
+  component: '',
+  icon: '',
+  sortOrder: 0,
+  isVisible: true,
+  isCache: true,
+  permissionKey: '',
+  status: 'active',
+  remark: '',
+});
 const form = reactive<any>(emptyForm());
 
 function openCreate(parentId = 0) {
@@ -79,15 +101,26 @@ function openEdit(row: MenuVO) {
   modalOpen.value = true;
 }
 async function submit() {
-  if (!form.menuName || !form.menuKey) { message.warning('请填写菜单名称和标识'); return; }
+  if (!form.menuName || !form.menuKey) {
+    message.warning('请填写菜单名称和标识');
+    return;
+  }
   submitting.value = true;
   try {
-    editingId.value
-      ? (await updateMenuApi(editingId.value, { ...form }), message.success('更新成功'))
-      : (await createMenuApi({ ...form }), message.success('创建成功'));
-    modalOpen.value = false; loadList();
-  } catch (e: any) { message.error(e?.response?.data?.msg ?? '操作失败'); }
-  finally { submitting.value = false; }
+    if (editingId.value) {
+      await updateMenuApi(editingId.value, { ...form });
+      message.success('更新成功');
+    } else {
+      await createMenuApi({ ...form });
+      message.success('创建成功');
+    }
+    modalOpen.value = false;
+    loadList();
+  } catch (error: any) {
+    message.error(error?.response?.data?.msg ?? '操作失败');
+  } finally {
+    submitting.value = false;
+  }
 }
 function confirmDelete(row: MenuVO) {
   Modal.confirm({
@@ -95,8 +128,13 @@ function confirmDelete(row: MenuVO) {
     content: '有子菜单时后端会拒绝，需先删除子项。',
     okType: 'danger',
     async onOk() {
-      try { await deleteMenuApi(row.id); message.success('已删除'); loadList(); }
-      catch (e: any) { message.error(e?.response?.data?.msg ?? '删除失败'); }
+      try {
+        await deleteMenuApi(row.id);
+        message.success('已删除');
+        loadList();
+      } catch (error: any) {
+        message.error(error?.response?.data?.msg ?? '删除失败');
+      }
     },
   });
 }
@@ -104,8 +142,8 @@ function confirmDelete(row: MenuVO) {
 // 将菜单树转为 TreeSelect 所需格式（只含目录和菜单，不含按钮）
 function toTreeSelectNodes(items: MenuVO[]): any[] {
   return items
-    .filter(m => m.menuType !== 'BUTTON')
-    .map(m => ({
+    .filter((m) => m.menuType !== 'BUTTON')
+    .map((m) => ({
       title: m.menuName,
       value: m.id,
       children: m.children ? toTreeSelectNodes(m.children) : [],
@@ -114,27 +152,43 @@ function toTreeSelectNodes(items: MenuVO[]): any[] {
 
 // 顶级菜单选项（parentId=0）
 const parentOptions = computed(() => [
-  { title: '顶级菜单（根节点）', value: 0, children: toTreeSelectNodes(list.value) },
+  {
+    title: '顶级菜单（根节点）',
+    value: 0,
+    children: toTreeSelectNodes(list.value),
+  },
 ]);
-const TYPE_COLOR: Record<string, string> = { DIRECTORY: 'processing', MENU: 'success', BUTTON: 'warning' };
-const TYPE_LABEL: Record<string, string> = { DIRECTORY: '目录', MENU: '菜单', BUTTON: '按钮' };
+const TYPE_COLOR: Record<string, string> = {
+  DIRECTORY: 'processing',
+  MENU: 'success',
+  BUTTON: 'warning',
+};
+const TYPE_LABEL: Record<string, string> = {
+  DIRECTORY: '目录',
+  MENU: '菜单',
+  BUTTON: '按钮',
+};
 
 function onExpand(expanded: boolean, record: MenuVO) {
-  if (expanded) {
-    expandedRowKeys.value = [...expandedRowKeys.value, record.id];
-  } else {
-    expandedRowKeys.value = expandedRowKeys.value.filter(k => k !== record.id);
-  }
+  expandedRowKeys.value = expanded
+    ? [...expandedRowKeys.value, record.id]
+    : expandedRowKeys.value.filter((k) => k !== record.id);
 }
 
 const columns = [
-  { title: '菜单名称', key: 'name',  width: 220 },
-  { title: '类型',    key: 'type',   width: 72  },
-  { title: '路由路径', key: 'path',  width: 220 },
-  { title: '权限/组件', key: 'perm', },
-  { title: '排序',    dataIndex: 'sortOrder', key: 'sort', width: 60, align: 'center' as const },
-  { title: '状态',    key: 'status', width: 70, align: 'center' as const },
-  { title: '操作',    key: 'action', width: 120, align: 'center' as const },
+  { title: '菜单名称', key: 'name', width: 220 },
+  { title: '类型', key: 'type', width: 72 },
+  { title: '路由路径', key: 'path', width: 220 },
+  { title: '权限/组件', key: 'perm' },
+  {
+    title: '排序',
+    dataIndex: 'sortOrder',
+    key: 'sort',
+    width: 60,
+    align: 'center' as const,
+  },
+  { title: '状态', key: 'status', width: 70, align: 'center' as const },
+  { title: '操作', key: 'action', width: 120, align: 'center' as const },
 ];
 
 onMounted(loadList);
@@ -160,7 +214,6 @@ onMounted(loadList);
       @expand="onExpand"
     >
       <template #bodyCell="{ column, record }">
-
         <!-- 菜单名称：图标 + 名称 -->
         <template v-if="column.key === 'name'">
           <span class="flex items-center gap-1.5">
@@ -176,15 +229,20 @@ onMounted(loadList);
 
         <!-- 类型 tag -->
         <template v-else-if="column.key === 'type'">
-          <Tag :color="TYPE_COLOR[record.menuType]" style="margin:0">
+          <Tag :color="TYPE_COLOR[record.menuType]" style="margin: 0">
             {{ TYPE_LABEL[record.menuType] }}
           </Tag>
         </template>
 
         <!-- 路由路径 -->
         <template v-else-if="column.key === 'path'">
-          <div v-if="record.path || record.menuKey" class="flex flex-col gap-0.5">
-            <span v-if="record.path" class="font-mono text-xs">{{ record.path }}</span>
+          <div
+            v-if="record.path || record.menuKey"
+            class="flex flex-col gap-0.5"
+          >
+            <span v-if="record.path" class="font-mono text-xs">{{
+              record.path
+            }}</span>
             <span class="text-xs opacity-40">{{ record.menuKey }}</span>
           </div>
         </template>
@@ -192,13 +250,17 @@ onMounted(loadList);
         <!-- 权限标识 / 组件路径 -->
         <template v-else-if="column.key === 'perm'">
           <template v-if="record.menuType === 'BUTTON'">
-            <code class="rounded bg-amber-50 px-1 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+            <code
+              class="rounded bg-amber-50 px-1 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+            >
               {{ record.permissionKey }}
             </code>
           </template>
           <template v-else-if="record.component">
             <Tooltip :title="record.component" placement="topLeft">
-              <span class="max-w-[200px] truncate font-mono text-xs opacity-50 block">
+              <span
+                class="max-w-[200px] truncate font-mono text-xs opacity-50 block"
+              >
                 {{ record.component }}
               </span>
             </Tooltip>
@@ -208,16 +270,19 @@ onMounted(loadList);
         <!-- 状态 -->
         <template v-else-if="column.key === 'status'">
           <span
+            class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
             :class="[
-              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
               record.status === 'active'
                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
                 : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
             ]"
           >
             <span
-              :class="['h-1.5 w-1.5 rounded-full', record.status === 'active' ? 'bg-emerald-500' : 'bg-gray-400']"
-            />
+              class="h-1.5 w-1.5 rounded-full"
+              :class="[
+                record.status === 'active' ? 'bg-emerald-500' : 'bg-gray-400',
+              ]"
+            ></span>
             {{ record.status === 'active' ? '启用' : '禁用' }}
           </span>
         </template>
@@ -227,7 +292,8 @@ onMounted(loadList);
           <Space size="small">
             <Tooltip title="添加子项">
               <Button
-                type="text" size="small"
+                type="text"
+                size="small"
                 class="text-blue-500 hover:text-blue-600"
                 @click="openCreate(record.id)"
               >
@@ -236,7 +302,8 @@ onMounted(loadList);
             </Tooltip>
             <Tooltip title="编辑">
               <Button
-                type="text" size="small"
+                type="text"
+                size="small"
                 class="text-slate-500 hover:text-slate-700"
                 @click="openEdit(record)"
               >
@@ -245,7 +312,8 @@ onMounted(loadList);
             </Tooltip>
             <Tooltip title="删除">
               <Button
-                type="text" size="small"
+                type="text"
+                size="small"
                 class="text-red-400 hover:text-red-600"
                 @click="confirmDelete(record)"
               >
@@ -254,7 +322,6 @@ onMounted(loadList);
             </Tooltip>
           </Space>
         </template>
-
       </template>
     </Table>
 
@@ -281,7 +348,7 @@ onMounted(loadList);
               :tree-data="parentOptions"
               :tree-default-expand-all="true"
               placeholder="请选择上级菜单"
-              style="width:100%"
+              style="width: 100%"
             />
           </FormItem>
         </div>
@@ -299,7 +366,10 @@ onMounted(loadList);
               <Input v-model:value="form.path" placeholder="/system/user" />
             </FormItem>
             <FormItem label="组件路径" class="flex-1">
-              <Input v-model:value="form.component" placeholder="system/user/index" />
+              <Input
+                v-model:value="form.component"
+                placeholder="system/user/index"
+              />
             </FormItem>
           </div>
           <div class="flex gap-3">
@@ -312,25 +382,40 @@ onMounted(loadList);
               </Input>
             </FormItem>
             <FormItem label="排序" class="w-24">
-              <InputNumber v-model:value="form.sortOrder" :min="0" style="width:100%" />
+              <InputNumber
+                v-model:value="form.sortOrder"
+                :min="0"
+                style="width: 100%"
+              />
             </FormItem>
           </div>
           <div class="flex gap-6">
             <FormItem label="是否显示">
-              <Switch v-model:checked="form.isVisible" checked-children="显示" un-checked-children="隐藏" />
+              <Switch
+                v-model:checked="form.isVisible"
+                checked-children="显示"
+                un-checked-children="隐藏"
+              />
             </FormItem>
             <FormItem label="是否缓存">
-              <Switch v-model:checked="form.isCache" checked-children="缓存" un-checked-children="不缓存" />
+              <Switch
+                v-model:checked="form.isCache"
+                checked-children="缓存"
+                un-checked-children="不缓存"
+              />
             </FormItem>
           </div>
         </template>
         <template v-else>
           <FormItem label="权限标识">
-            <Input v-model:value="form.permissionKey" placeholder="如：system:user:create" />
+            <Input
+              v-model:value="form.permissionKey"
+              placeholder="如：system:user:create"
+            />
           </FormItem>
         </template>
         <FormItem label="状态">
-          <Select v-model:value="form.status" style="width:160px">
+          <Select v-model:value="form.status" style="width: 160px">
             <SelectOption value="active">启用</SelectOption>
             <SelectOption value="inactive">禁用</SelectOption>
           </Select>

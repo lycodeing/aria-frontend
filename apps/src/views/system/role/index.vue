@@ -193,7 +193,7 @@ function buildTree(menus: any[], parentId: number): any[] {
   return menus
     .filter((m) => m.parentId === parentId)
     .map((m) => ({
-      title: `${m.menuType === 'BUTTON' ? '🔘' : m.menuType === 'MENU' ? '📄' : '📁'} ${m.menuName}`,
+      title: `${{ BUTTON: '🔘', MENU: '📄', DIRECTORY: '📁' }[m.menuType as 'BUTTON' | 'DIRECTORY' | 'MENU'] ?? '📁'} ${m.menuName}`,
       key: m.id,
       children: buildTree(menus, m.id),
     }))
@@ -209,7 +209,8 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
   <Page title="角色管理" description="管理系统角色，配置菜单权限和数据权限范围">
     <template #extra>
       <Button type="primary" @click="createVisible = true">
-        <template #icon><Icon icon="ant-design:plus-outlined" /></template>新增角色
+        <template #icon><Icon icon="ant-design:plus-outlined" /></template
+        >新增角色
       </Button>
     </template>
 

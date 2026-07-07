@@ -51,6 +51,7 @@ async function injectTokenCtx(ctx: BrowserContext, token: string) {
       });
       localStorage.setItem(`${prefix}-core-access`, payload);
       localStorage.setItem('core-access', payload);
+      // oxlint-disable-next-line no-document-cookie -- E2E addInitScript 为同步上下文，无法使用 cookieStore API
       document.cookie = `Authorization=${tok}; path=/`;
     },
     // N-11 修复：NS_PREFIX 改为从 fixtures 导出的常量，版本升级只需改一处

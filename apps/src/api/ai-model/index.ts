@@ -28,7 +28,7 @@ export interface AiModelPageResult {
 }
 
 export const MODEL_TYPES = [
-  { value: 'CHAT',      label: '对话模型' },
+  { value: 'CHAT', label: '对话模型' },
   { value: 'EMBEDDING', label: '向量模型' },
   { value: 'ROUTER',    label: '路由模型' },
 ];
@@ -93,15 +93,15 @@ export async function updateAiModelApi(
   id: number,
   data: Partial<AiModelConfigItem>,
 ) {
-  return requestClient.put<void>(`/admin/ai-models/${id}`, data);
+  return requestClient.put<undefined>(`/admin/ai-models/${id}`, data);
 }
 
 export async function setDefaultAiModelApi(id: number) {
-  return requestClient.put<void>(`/admin/ai-models/${id}/default`);
+  return requestClient.put<undefined>(`/admin/ai-models/${id}/default`);
 }
 
 export async function deleteAiModelApi(id: number) {
-  return requestClient.delete<void>(`/admin/ai-models/${id}`);
+  return requestClient.delete<undefined>(`/admin/ai-models/${id}`);
 }
 
 export interface AiModelTestResult {
