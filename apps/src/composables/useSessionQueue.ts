@@ -21,7 +21,7 @@ const TAG_COLOR_MAP: Record<string, string> = {
   账单: 'blue',
 };
 
-function resolveTagColor(tag: string): string {
+export function resolveTagColor(tag: string): string {
   return TAG_COLOR_MAP[tag] ?? 'blue';
 }
 
@@ -127,11 +127,21 @@ export function useSessionQueue(pageSize = 5) {
   let sseRetryTimer: null | ReturnType<typeof setTimeout> = null;
   const sseConnected = ref(false); // SSE 连接状态（供模板显示状态点使用）
 
+  // 缓存最近一次 subscribeQueue 的回调，供 reconnect() 手动重连复用，避免重复内联
+  let lastHandlers: null | {
+    onClosed?: (sessionId: string) => void;
+    onEnqueue?: (item: QueueItem) => void;
+    onTransfer?: (event: SessionSseEvent) => void;
+  } = null;
+
   function subscribeQueue(
     onEnqueue?: (item: QueueItem) => void,
     onClosed?: (sessionId: string) => void,
     onTransfer?: (event: SessionSseEvent) => void,
   ) {
+    // 缓存回调，reconnect() 复用同一组处理逻辑
+    lastHandlers = { onEnqueue, onClosed, onTransfer };
+
     // 防止多次调用时 EventSource 泄漏：先关闭旧连接
     eventSource?.close();
     eventSource = null;
@@ -200,6 +210,17 @@ export function useSessionQueue(pageSize = 5) {
     };
   }
 
+  /** 手动立即重连 SSE（断线横幅的「立即重试」按钮调用） */
+  function reconnect() {
+    if (lastHandlers) {
+      subscribeQueue(
+        lastHandlers.onEnqueue,
+        lastHandlers.onClosed,
+        lastHandlers.onTransfer,
+      );
+    }
+  }
+
   onUnmounted(() => {
     eventSource?.close();
     stopWaitTimer();
@@ -215,6 +236,7 @@ export function useSessionQueue(pageSize = 5) {
     loadQueue,
     subscribeQueue,
     acceptItem,
+    reconnect,
     formatWaitTime,
   };
 }

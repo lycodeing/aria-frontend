@@ -4,6 +4,7 @@
 import type {
   SessionQueueItem as ApiSessionItem,
   OnlineAgentItem,
+  SessionSseEvent,
 } from '#/api/session';
 import type { QueueItem } from '#/composables/useSessionQueue';
 
@@ -21,6 +22,7 @@ import {
   Card,
   Descriptions,
   DescriptionsItem,
+  Input,
   message,
   Modal,
   Progress,
@@ -42,7 +44,11 @@ import {
   transferSessionApi,
 } from '#/api/session';
 import { useAgentWebSocket } from '#/composables/useAgentWebSocket';
-import { useSessionQueue } from '#/composables/useSessionQueue';
+import {
+  formatWaitTime,
+  resolveTagColor,
+  useSessionQueue,
+} from '#/composables/useSessionQueue';
 
 // ===== 当前座席身份（与后端 resolveAgentId 保持一致：token 即 agentId）=====
 const accessStore = useAccessStore();
@@ -116,6 +122,7 @@ const {
   connectSession: connectAgentSession,
   disconnectSession: disconnectAgentSession,
   sendMessage: sendAgentMessage,
+  getStatus: getAgentWsStatus,
 } = useAgentWebSocket({
   onUserMessage: (sessionId, msg) => {
     // 跟踪 seq：每条 MESSAGE 都更新 lastSeq，重连时凭此拉增量
@@ -146,6 +153,119 @@ const {
   },
 });
 
+// ===== 当前会话 WS 连接状态（状态点 + 断线提示） =====
+const activeWsStatus = computed(() =>
+  activeSession.value ? getAgentWsStatus(activeSession.value.id) : 'closed',
+);
+const wsStatusMeta = computed(() => {
+  switch (activeWsStatus.value) {
+    case 'connecting': {
+      return { color: '#f59e0b', text: '连接中' };
+    }
+    case 'open': {
+      return { color: '#10b981', text: '已连接' };
+    }
+    default: {
+      return { color: '#ef4444', text: '已断开' };
+    }
+  }
+});
+
+/** 历史/事件消息角色 → 前端 Msg.role（system 居中提示，其余按角色渲染） */
+function mapMsgRole(role: string | undefined): Msg['role'] {
+  if (role === 'user') return 'user';
+  if (role === 'agent') return 'agent';
+  if (role === 'system') return 'system';
+  return 'ai';
+}
+
+// ===== 队列搜索（客户端过滤：姓名 / 标签 / 会话编号） =====
+const queueSearch = ref('');
+function matchKeyword(
+  keyword: string,
+  ...fields: (string | undefined)[]
+): boolean {
+  const k = keyword.trim().toLowerCase();
+  if (!k) return true;
+  return fields.some((f) => (f ?? '').toLowerCase().includes(k));
+}
+const visiblePagedQueue = computed(() =>
+  pagedQueue.value.filter((q) =>
+    matchKeyword(queueSearch.value, q.name, q.tag, q.id),
+  ),
+);
+const visibleSessions = computed(() =>
+  sessions.value.filter((s) =>
+    matchKeyword(queueSearch.value, s.name, s.tag, s.sessionCode, s.id),
+  ),
+);
+
+// ===== 结束会话确认弹窗 =====
+const closeConfirmVisible = ref(false);
+function requestCloseSession() {
+  if (!activeSession.value) return;
+  closeConfirmVisible.value = true;
+}
+async function confirmCloseSession() {
+  closeConfirmVisible.value = false;
+  await doCloseSession();
+}
+
+// ===== SSE 事件处理（命名函数：onMounted 订阅与手动重连复用） =====
+function handleQueueClosed(sid: string) {
+  const closedIdx = sessions.value.findIndex((s) => s.id === sid);
+  if (closedIdx !== -1) {
+    const closedName = sessions.value[closedIdx]?.name ?? '';
+    disconnectAgentSession(sid);
+    sessions.value.splice(closedIdx, 1);
+    if (
+      sessions.value.length > 0 &&
+      !sessions.value.some((s) => s.active) &&
+      sessions.value[0]
+    ) {
+      sessions.value[0].active = true;
+    }
+    message.warning(`会话 ${closedName} 已被关闭`);
+  }
+}
+async function handleQueueTransfer(event: SessionSseEvent) {
+  const myId = currentAgentId.value;
+  const sid = event.item.sessionId;
+  if (!myId) return;
+  // 发起方：本地已在 confirmTransfer 中清理，保持静默
+  if (event.fromAgentId === myId) return;
+  // 接收方：自动接入转交过来的会话
+  if (event.toAgentId === myId) {
+    if (sessions.value.some((s) => s.id === sid)) return;
+    if (concurrent.value >= MAX_CONCURRENT) {
+      message.warning(`收到转交会话 ${event.item.userName}，但已达最大并发数`);
+      return;
+    }
+    try {
+      await addSessionLocal({
+        id: sid,
+        name: event.item.userName,
+        color: '#8b5cf6',
+        transferReason: event.item.transferReason,
+        minLabel: '刚转入',
+        tag: event.item.tag,
+        waitSince: event.item.waitSince,
+      });
+      queueStateTab.value = 'active';
+      message.success(`已自动接入转交会话：${event.item.userName}`);
+    } catch {
+      message.error('自动接入转交会话失败');
+    }
+  }
+}
+function reconnectQueue() {
+  subscribeQueue(undefined, handleQueueClosed, handleQueueTransfer);
+}
+function reconnectActiveSession() {
+  const sid = activeSession.value?.id;
+  if (sid) connectAgentSession(sid);
+}
+
 // ===== 座席状态 =====
 const agentOnline = ref(true);
 const MAX_CONCURRENT = 5;
@@ -153,7 +273,7 @@ const MAX_CONCURRENT = 5;
 // ===== 消息类型 =====
 interface Msg {
   id: number;
-  role: 'agent' | 'ai' | 'user';
+  role: 'agent' | 'ai' | 'system' | 'user';
   text: string;
   time?: string;
 }
@@ -184,11 +304,11 @@ interface SessionData {
   active: boolean;
   sessionCode: string;
   transferReason: string;
+  /** 问题标签（来自转人工请求，后端唯一真实字段） */
+  tag: string;
+  /** 入队时间戳（epoch 秒），用于派生「排队时长」 */
+  waitSince: number;
   msgs: Msg[];
-  userInfo: { label: string; value: string; vip?: boolean }[];
-  slots: { done: boolean; key: string; value: null | string }[];
-  chunks: { preview: string; score: number; title: string }[];
-  memory: string;
 }
 
 const sessions = ref<SessionData[]>([]);
@@ -260,11 +380,7 @@ async function viewClosedSession(item: ClosedSessionItem) {
       .filter((h) => h.role !== 'tool')
       .map((h) => ({
         id: ++msgId,
-        role: (h.role === 'user'
-          ? 'user'
-          : h.role === 'agent'
-            ? 'agent'
-            : 'ai') as Msg['role'],
+        role: mapMsgRole(h.role),
         text: h.content ?? '',
         time: h.timestamp
           ? new Date(Number(h.timestamp)).toLocaleTimeString('zh-CN', {
@@ -411,7 +527,11 @@ async function addSessionLocal(params: {
   id: string;
   minLabel: string;
   name: string;
+  /** 问题标签（来自转人工请求） */
+  tag: string;
   transferReason: string;
+  /** 入队时间戳（epoch 秒） */
+  waitSince: number;
 }) {
   // 首次接入时从全量历史初始化 lastSeq，避免后续 WS 重连重复拉全量
   const history = await getSessionHistoryApi(params.id).catch(() => []);
@@ -425,7 +545,7 @@ async function addSessionLocal(params: {
     }
     return {
       id: ++msgId,
-      role: (h.role === 'user' ? 'user' : 'ai') as 'agent' | 'ai' | 'user',
+      role: mapMsgRole(h.role),
       text: h.content,
       time: h.timestamp
         ? new Date(Number(h.timestamp)).toLocaleTimeString('zh-CN', {
@@ -448,6 +568,8 @@ async function addSessionLocal(params: {
     active: true,
     sessionCode: `#${params.id}`,
     transferReason: params.transferReason,
+    tag: params.tag,
+    waitSince: params.waitSince,
     msgs:
       loadedMsgs.length > 0
         ? loadedMsgs
@@ -459,10 +581,6 @@ async function addSessionLocal(params: {
               time: nowTime(),
             },
           ],
-    userInfo: [{ label: '姓名', value: params.name }],
-    slots: [],
-    chunks: [],
-    memory: '无历史记忆。',
   });
   connectAgentSession(params.id);
 }
@@ -479,6 +597,8 @@ async function acceptQueue(item: QueueItem) {
       name: item.name,
       color: item.color,
       transferReason: item.reason,
+      tag: item.tag,
+      waitSince: item.waitSince,
       minLabel: '刚接入',
     });
     queueStateTab.value = 'active';
@@ -522,7 +642,7 @@ async function doCloseSession() {
 }
 
 function closeSession() {
-  doCloseSession();
+  requestCloseSession();
 }
 
 function quickReply(q: string) {
@@ -562,7 +682,7 @@ onMounted(async () => {
         if (Number.isFinite(seqNum) && seqNum > maxSeq) maxSeq = seqNum;
         return {
           id: ++msgId,
-          role: (h.role === 'user' ? 'user' : 'ai') as 'agent' | 'ai' | 'user',
+          role: mapMsgRole(h.role),
           text: h.content,
         };
       });
@@ -576,14 +696,12 @@ onMounted(async () => {
         active: false,
         sessionCode: `#${item.sessionId}`,
         transferReason: item.transferReason,
+        tag: item.tag,
+        waitSince: item.waitSince,
         msgs:
           loadedMsgs.length > 0
             ? loadedMsgs
             : [{ id: ++msgId, role: 'ai', text: '您好！请问有什么可以帮您？' }],
-        userInfo: [{ label: '姓名', value: item.userName }],
-        slots: [],
-        chunks: [],
-        memory: '无历史记忆。',
       });
     });
     // 激活第一个恢复会话，并重建所有 WebSocket 连接
@@ -592,66 +710,8 @@ onMounted(async () => {
   }
 
   // 3. 订阅 SSE（composable 内置指数退避重连 + 等待时间定时刷新）
-  subscribeQueue(
-    undefined, // onEnqueue：composable 已处理入队通知
-    (sid) => {
-      // CLOSED 事件：同步清理本地 sessions
-      const closedIdx = sessions.value.findIndex((s) => s.id === sid);
-      if (closedIdx !== -1) {
-        const closedName = sessions.value[closedIdx]?.name ?? '';
-        disconnectAgentSession(sid);
-        sessions.value.splice(closedIdx, 1);
-        if (
-          sessions.value.length > 0 &&
-          !sessions.value.some((s) => s.active) &&
-          sessions.value[0]
-        ) {
-          sessions.value[0].active = true;
-        }
-        message.warning(`会话 ${closedName} 已被关闭`);
-      }
-    },
-    async (event) => {
-      // TRANSFER 事件：根据 fromAgentId / toAgentId 区分发起方与接收方
-      const myId = currentAgentId.value;
-      const sid = event.item.sessionId;
-      // 空 token 守卫：myId 为空时不应处理任何 from/to 匹配，避免空串误判
-      if (!myId) return;
-
-      if (event.fromAgentId === myId) {
-        // 发起方：本地已在 confirmTransfer 中清理过，此处保持静默
-        return;
-      }
-
-      if (event.toAgentId === myId) {
-        // 幂等校验：onMounted 恢复 ACTIVE 会话时可能已包含该 sid，
-        // SSE 事件不应再次 push 同一会话，避免左侧列表出现重复项
-        if (sessions.value.some((s) => s.id === sid)) {
-          return;
-        }
-        // 接收方：自动接入转交过来的会话（已 ACTIVE，无需调用 acceptApi）
-        if (concurrent.value >= MAX_CONCURRENT) {
-          message.warning(
-            `收到转交会话 ${event.item.userName}，但已达最大并发数`,
-          );
-          return;
-        }
-        try {
-          await addSessionLocal({
-            id: sid,
-            name: event.item.userName,
-            color: '#8b5cf6',
-            transferReason: event.item.transferReason,
-            minLabel: '刚转入',
-          });
-          queueStateTab.value = 'active';
-          message.success(`已自动接入转交会话：${event.item.userName}`);
-        } catch {
-          message.error('自动接入转交会话失败');
-        }
-      }
-    },
-  );
+  //    复用命名处理函数，reconnectQueue() 可据此手动重连，保持逻辑单一来源
+  subscribeQueue(undefined, handleQueueClosed, handleQueueTransfer);
 });
 
 // onUnmounted 由 composable 自动处理（eventSource.close + agentWsMap.clear）
@@ -664,6 +724,18 @@ onMounted(async () => {
       min-h-0  → 关键！flex 子项默认 min-height:auto 会撑开父容器触发滚动，必须归零
       overflow-hidden → 防止任何子节点溢出触发父级滚动条
     -->
+    <!-- SSE 实时连接断开横幅：composable 已内置指数退避自动重连，此处提供手动「立即重试」 -->
+    <Alert
+      v-if="!sseConnected"
+      class="mb-3"
+      type="warning"
+      show-icon
+      message="实时连接已断开，正在自动重连…"
+    >
+      <template #action>
+        <Button size="small" @click="reconnectQueue">立即重试</Button>
+      </template>
+    </Alert>
     <div class="flex h-full min-h-0 gap-4 overflow-hidden">
       <!-- 左栏：状态 + 队列 + 处理中 -->
       <div class="flex w-56 min-h-0 shrink-0 flex-col gap-3">
@@ -712,6 +784,19 @@ onMounted(async () => {
             </div>
           </template>
 
+          <!-- 队列搜索：按姓名 / 标签 / 会话编号过滤（等待 + 接待中两个 Tab 共用） -->
+          <Input
+            v-model:value="queueSearch"
+            allow-clear
+            class="mb-2"
+            placeholder="搜索姓名 / 标签 / 会话编号"
+            size="small"
+          >
+            <template #prefix>
+              <Icon icon="lucide:search" class="text-gray-400" />
+            </template>
+          </Input>
+
           <!-- 状态 Tab：等待人工 / 人工接待中 -->
           <div class="mb-2 flex rounded-lg bg-gray-100 p-0.5">
             <span
@@ -744,9 +829,9 @@ onMounted(async () => {
 
           <!-- 等待人工 Tab -->
           <template v-if="queueStateTab === 'waiting'">
-            <div v-if="queue.length" class="space-y-2">
+            <div v-if="visiblePagedQueue.length" class="space-y-2">
               <div
-                v-for="item in pagedQueue"
+                v-for="item in visiblePagedQueue"
                 :key="item.id"
                 class="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3"
               >
@@ -816,7 +901,19 @@ onMounted(async () => {
               </div>
             </div>
 
-            <!-- 空队列提示 -->
+            <!-- 搜索无匹配 / 空队列提示 -->
+            <div
+              v-if="queue.length && !visiblePagedQueue.length"
+              class="flex flex-col items-center justify-center py-6 text-center"
+            >
+              <Icon
+                icon="lucide:search-x"
+                class="mb-2 text-2xl text-gray-200"
+              />
+              <p class="text-xs text-gray-400">
+                未找到匹配“{{ queueSearch }}”的会话
+              </p>
+            </div>
             <div
               v-else
               class="flex flex-col items-center justify-center py-6 text-center"
@@ -844,9 +941,9 @@ onMounted(async () => {
 
           <!-- 人工接待中 Tab -->
           <template v-else-if="queueStateTab === 'active'">
-            <div v-if="sessions.length" class="space-y-2">
+            <div v-if="visibleSessions.length" class="space-y-2">
               <div
-                v-for="s in sessions"
+                v-for="s in visibleSessions"
                 :key="s.id"
                 class="cursor-pointer rounded-xl border p-2.5 transition"
                 :class="[
@@ -881,6 +978,18 @@ onMounted(async () => {
                   ></span>
                 </div>
               </div>
+            </div>
+            <div
+              v-if="sessions.length && !visibleSessions.length"
+              class="flex flex-col items-center justify-center py-6 text-center"
+            >
+              <Icon
+                icon="lucide:search-x"
+                class="mb-2 text-2xl text-gray-200"
+              />
+              <p class="text-xs text-gray-400">
+                未找到匹配“{{ queueSearch }}”的会话
+              </p>
             </div>
             <div
               v-else
@@ -961,7 +1070,18 @@ onMounted(async () => {
               }}
             </p>
           </div>
-          <div class="ml-auto flex gap-2">
+          <div class="ml-auto flex items-center gap-2">
+            <!-- 当前会话 WS 连接状态点 -->
+            <span
+              class="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-xs"
+              :title="`WebSocket 状态：${wsStatusMeta.text}`"
+            >
+              <span
+                class="h-2 w-2 rounded-full"
+                :style="{ background: wsStatusMeta.color }"
+              ></span>
+              {{ wsStatusMeta.text }}
+            </span>
             <!-- Bug-002 修复：转交按钮打开 Modal -->
             <Button size="small" @click="transferVisible = true">
               <template #icon><Icon icon="ant-design:swap-outlined" /></template
@@ -974,6 +1094,23 @@ onMounted(async () => {
             </Button>
           </div>
         </div>
+
+        <!-- 当前会话连接断开提示 + 重连 -->
+        <Alert
+          v-if="activeSession && activeWsStatus !== 'open'"
+          banner
+          class="mx-3 mt-2"
+          type="error"
+          :message="
+            activeWsStatus === 'connecting'
+              ? '会话连接建立中，消息可能短暂延迟'
+              : '当前会话连接已断开，消息可能延迟或丢失'
+          "
+        >
+          <template #action>
+            <Button size="small" @click="reconnectActiveSession">重连</Button>
+          </template>
+        </Alert>
 
         <!-- 消息类型筛选 Tab + 会话状态 — 固定在消息区外，始终可见 -->
         <div
@@ -1005,75 +1142,84 @@ onMounted(async () => {
             </Tag>
           </div>
 
-          <div
-            v-for="m in filteredMsgs"
-            :key="m.id"
-            class="flex gap-2"
-            :class="[m.role !== 'user' ? 'flex-row-reverse' : '']"
-          >
-            <Avatar
-              :size="28"
-              :style="{
-                backgroundColor:
-                  m.role === 'user'
-                    ? '#a78bfa'
-                    : m.role === 'agent'
-                      ? '#f97316'
-                      : '#e0e7ff',
-              }"
-              :class="m.role === 'ai' ? 'text-indigo-600' : ''"
-              class="shrink-0"
+          <template v-for="m in filteredMsgs" :key="m.id">
+            <!-- 系统消息：居中提示，无头像气泡 -->
+            <div v-if="m.role === 'system'" class="flex justify-center">
+              <span
+                class="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-400"
+                >{{ m.text }}</span
+              >
+            </div>
+            <!-- 普通消息：头像 + 气泡 -->
+            <div
+              v-else
+              class="flex gap-2"
+              :class="[m.role !== 'user' ? 'flex-row-reverse' : '']"
             >
-              {{
-                m.role === 'user'
-                  ? activeSession.nameChar
-                  : m.role === 'agent'
-                    ? '王'
-                    : 'AI'
-              }}
-            </Avatar>
-            <div>
-              <div
-                class="max-w-xs rounded-xl px-3 py-2 text-sm leading-relaxed"
-                :class="[
+              <Avatar
+                :size="28"
+                :style="{
+                  backgroundColor:
+                    m.role === 'user'
+                      ? '#a78bfa'
+                      : m.role === 'agent'
+                        ? '#f97316'
+                        : '#e0e7ff',
+                }"
+                :class="m.role === 'ai' ? 'text-indigo-600' : ''"
+                class="shrink-0"
+              >
+                {{
                   m.role === 'user'
-                    ? 'rounded-tl-none bg-white border border-gray-200 text-gray-700'
+                    ? activeSession.nameChar
                     : m.role === 'agent'
-                      ? 'rounded-tr-none bg-indigo-500 text-white'
-                      : 'rounded-tr-none bg-indigo-50 text-indigo-800 opacity-80',
-                ]"
-              >
-                <!-- AI/用户消息：Markdown 渲染 -->
+                      ? '王'
+                      : 'AI'
+                }}
+              </Avatar>
+              <div>
                 <div
-                  v-if="m.role === 'ai'"
-                  class="agent-ai-md"
-                  v-html="marked.parse(m.text)"
-                ></div>
-                <!-- 座席/用户：纯文本 -->
-                <span
-                  v-else
-                  style="overflow-wrap: break-word; white-space: pre-wrap"
-                  >{{ m.text }}</span
+                  class="max-w-xs rounded-xl px-3 py-2 text-sm leading-relaxed"
+                  :class="[
+                    m.role === 'user'
+                      ? 'rounded-tl-none bg-white border border-gray-200 text-gray-700'
+                      : m.role === 'agent'
+                        ? 'rounded-tr-none bg-indigo-500 text-white'
+                        : 'rounded-tr-none bg-indigo-50 text-indigo-800 opacity-80',
+                  ]"
                 >
-              </div>
-              <!-- 时间戳 + 复制 -->
-              <div
-                v-if="m.time"
-                class="mt-0.5 flex items-center gap-1.5"
-                :class="m.role === 'user' ? 'justify-start' : 'justify-end'"
-              >
-                <span class="text-xs text-gray-300">{{ m.time }}</span>
-                <button
-                  v-if="m.text"
-                  class="text-xs text-gray-300 transition hover:text-gray-500"
-                  title="复制"
-                  @click.stop="copyMsgText(m.text)"
+                  <!-- AI/用户消息：Markdown 渲染 -->
+                  <div
+                    v-if="m.role === 'ai'"
+                    class="agent-ai-md"
+                    v-html="marked.parse(m.text)"
+                  ></div>
+                  <!-- 座席/用户：纯文本 -->
+                  <span
+                    v-else
+                    style="overflow-wrap: break-word; white-space: pre-wrap"
+                    >{{ m.text }}</span
+                  >
+                </div>
+                <!-- 时间戳 + 复制 -->
+                <div
+                  v-if="m.time"
+                  class="mt-0.5 flex items-center gap-1.5"
+                  :class="m.role === 'user' ? 'justify-start' : 'justify-end'"
                 >
-                  <Icon icon="lucide:copy" class="h-3 w-3" />
-                </button>
+                  <span class="text-xs text-gray-300">{{ m.time }}</span>
+                  <button
+                    v-if="m.text"
+                    class="text-xs text-gray-300 transition hover:text-gray-500"
+                    title="复制"
+                    @click.stop="copyMsgText(m.text)"
+                  >
+                    <Icon icon="lucide:copy" class="h-3 w-3" />
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          </template>
         </div>
         <!-- 滚动锚点 -->
         <div data-msgs-end></div>
@@ -1155,53 +1301,61 @@ onMounted(async () => {
                 轮对话
               </Tag>
             </div>
-            <div
-              v-for="m in closedView.msgs"
-              :key="m.id"
-              class="flex gap-2"
-              :class="[m.role !== 'user' ? 'flex-row-reverse' : '']"
-            >
-              <Avatar
-                :size="28"
-                :style="{
-                  backgroundColor:
-                    m.role === 'user'
-                      ? '#a78bfa'
-                      : m.role === 'agent'
-                        ? '#f97316'
-                        : '#e0e7ff',
-                }"
-                class="shrink-0"
-              >
-                {{
-                  m.role === 'user'
-                    ? closedView.session.nameChar
-                    : m.role === 'agent'
-                      ? '客'
-                      : 'AI'
-                }}
-              </Avatar>
-              <div
-                class="max-w-xs rounded-xl px-3 py-2 text-sm leading-relaxed"
-                :class="[
-                  m.role === 'user'
-                    ? 'rounded-tl-none border border-gray-200 bg-white text-gray-700'
-                    : m.role === 'agent'
-                      ? 'rounded-tr-none bg-indigo-500 text-white'
-                      : 'rounded-tr-none bg-indigo-50 text-indigo-800 opacity-80',
-                ]"
-              >
-                <div
-                  v-if="m.role === 'ai'"
-                  class="agent-ai-md"
-                  v-html="marked.parse(m.text)"
-                ></div>
+            <template v-for="m in closedView.msgs" :key="m.id">
+              <div v-if="m.role === 'system'" class="flex justify-center">
                 <span
-                  v-else
-                  style="overflow-wrap: break-word; white-space: pre-wrap"
-                  >{{ m.text }}</span>
+                  class="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-400"
+                  >{{ m.text }}</span
+                >
               </div>
-            </div>
+              <div
+                v-else
+                class="flex gap-2"
+                :class="[m.role !== 'user' ? 'flex-row-reverse' : '']"
+              >
+                <Avatar
+                  :size="28"
+                  :style="{
+                    backgroundColor:
+                      m.role === 'user'
+                        ? '#a78bfa'
+                        : m.role === 'agent'
+                          ? '#f97316'
+                          : '#e0e7ff',
+                  }"
+                  class="shrink-0"
+                >
+                  {{
+                    m.role === 'user'
+                      ? closedView.session.nameChar
+                      : m.role === 'agent'
+                        ? '客'
+                        : 'AI'
+                  }}
+                </Avatar>
+                <div
+                  class="max-w-xs rounded-xl px-3 py-2 text-sm leading-relaxed"
+                  :class="[
+                    m.role === 'user'
+                      ? 'rounded-tl-none border border-gray-200 bg-white text-gray-700'
+                      : m.role === 'agent'
+                        ? 'rounded-tr-none bg-indigo-500 text-white'
+                        : 'rounded-tr-none bg-indigo-50 text-indigo-800 opacity-80',
+                  ]"
+                >
+                  <div
+                    v-if="m.role === 'ai'"
+                    class="agent-ai-md"
+                    v-html="marked.parse(m.text)"
+                  ></div>
+                  <span
+                    v-else
+                    style="overflow-wrap: break-word; white-space: pre-wrap"
+                    >{{ m.text }}</span
+                  >
+                </div>
+              </div>
+            </template>
           </template>
         </div>
       </div>
@@ -1264,84 +1418,40 @@ onMounted(async () => {
         v-if="activeSession"
         class="flex w-64 shrink-0 flex-col gap-3 overflow-auto"
       >
-        <Card title="用户信息" :bordered="false" class="shadow-sm" size="small">
+        <Card title="会话信息" :bordered="false" class="shadow-sm" size="small">
           <Descriptions :column="1" size="small">
+            <DescriptionsItem label="访客姓名">
+              {{ activeSession.name }}
+            </DescriptionsItem>
+            <DescriptionsItem label="会话编号">
+              {{ activeSession.sessionCode }}
+            </DescriptionsItem>
+            <DescriptionsItem label="问题标签">
+              <Tag :color="resolveTagColor(activeSession.tag)">
+                {{ activeSession.tag || '未标记' }}
+              </Tag>
+            </DescriptionsItem>
             <DescriptionsItem
-              v-for="info in activeSession.userInfo"
-              :key="info.label"
-              :label="info.label"
+              v-if="activeSession.waitSince > 0"
+              label="排队时长"
             >
-              <Tag v-if="info.vip" color="gold">{{ info.value }}</Tag>
-              <span v-else>{{ info.value }}</span>
+              {{ formatWaitTime(activeSession.waitSince) }}
+            </DescriptionsItem>
+            <DescriptionsItem label="消息轮数">
+              {{ activeSession.msgs.filter((m) => m.role !== 'agent').length }}
+            </DescriptionsItem>
+            <DescriptionsItem label="接入状态">
+              <Tag color="processing">进行中</Tag>
             </DescriptionsItem>
           </Descriptions>
         </Card>
 
-        <Card
-          title="已收集信息（槽位）"
-          :bordered="false"
-          class="shadow-sm"
-          size="small"
-        >
-          <div class="space-y-1.5">
-            <div
-              v-for="s in activeSession.slots"
-              :key="s.key"
-              class="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs"
-              :class="[s.done ? 'bg-emerald-50' : 'bg-gray-50']"
-            >
-              <Icon
-                v-if="s.done"
-                icon="ant-design:check-outlined"
-                class="text-emerald-500"
-              />
-              <span
-                v-else
-                class="inline-block h-3 w-3 rounded-full border border-gray-300"
-              ></span>
-              <span class="text-gray-500">{{ s.key }}</span>
-              <span
-                class="ml-auto font-medium"
-                :class="s.done ? 'text-gray-700' : 'text-amber-500'"
-                >{{ s.value ?? '待确认' }}</span
-              >
-            </div>
-          </div>
-        </Card>
-
         <Card title="转接原因" :bordered="false" class="shadow-sm" size="small">
           <Alert
-            :message="activeSession.transferReason"
+            :message="activeSession.transferReason || '用户主动请求转人工'"
             type="warning"
             show-icon
           />
-        </Card>
-
-        <Card
-          title="AI 参考知识"
-          :bordered="false"
-          class="flex-1 shadow-sm"
-          size="small"
-        >
-          <div class="space-y-2">
-            <div
-              v-for="c in activeSession.chunks"
-              :key="c.title"
-              class="cursor-pointer rounded-lg border border-gray-100 bg-gray-50 p-2.5 text-xs transition hover:border-indigo-200"
-            >
-              <p class="mb-1 font-medium text-indigo-600">📄 {{ c.title }}</p>
-              <p class="line-clamp-2 text-gray-500">{{ c.preview }}</p>
-              <Tag color="success" class="mt-1 text-xs">
-                相关度 {{ c.score }}
-              </Tag>
-            </div>
-          </div>
-        </Card>
-
-        <Card title="历史记忆" :bordered="false" class="shadow-sm" size="small">
-          <p class="text-xs leading-relaxed text-gray-500">
-            {{ activeSession.memory }}
-          </p>
         </Card>
       </div>
     </div>
@@ -1397,6 +1507,20 @@ onMounted(async () => {
           <p class="mt-1 text-xs text-gray-300">其他座席离线或已达并发上限</p>
         </div>
       </RadioGroup>
+    </Modal>
+
+    <!-- 结束会话确认弹窗 -->
+    <Modal
+      v-model:open="closeConfirmVisible"
+      title="结束会话"
+      ok-text="确认结束"
+      cancel-text="取消"
+      @ok="confirmCloseSession"
+    >
+      <p class="text-sm text-gray-600">
+        确认结束与 <strong>{{ activeSession?.name }}</strong> 的会话吗？<br />
+        结束后访客端会话将关闭且不可恢复。
+      </p>
     </Modal>
   </Page>
 </template>
