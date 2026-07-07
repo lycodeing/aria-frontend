@@ -4,8 +4,9 @@
  * 职责：
  *   - sessionId 的创建与 localStorage 恢复
  *   - 消息列表的 localStorage 持久化（最近 100 条）
- *   - lastSeq 的 sessionStorage 管理（供断线重连增量同步使用）
- *   - 会话清除（含关联的转接标志）
+ *   - lastSeq 的 localStorage 管理（跨标签/关闭浏览器仍保留，
+ *     下次进入相同 sessionId 时增量拉取，避免 sessionStorage 关标签即丢导致回退全量）
+ *   - 会话清除（含关联的转接标志与 lastSeq 游标）
  *
  * 不包含：SSE、WebSocket、转接、身份验证任何逻辑。
  */
@@ -129,11 +130,11 @@ export function useVisitorSession() {
     return msgs.value.at(-1) as Msg;
   }
 
-  // ---- lastSeq（增量同步游标） ----
+  // ---- lastSeq（增量同步游标，localStorage 跨标签持久化） ----
 
   /** 读取当前 lastSeq，脏数据或缺省返回 0 */
   function readLastSeq(): number {
-    const raw = sessionStorage.getItem(LAST_SEQ_KEY_PREFIX + sessionId.value);
+    const raw = localStorage.getItem(LAST_SEQ_KEY_PREFIX + sessionId.value);
     const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? n : 0;
   }
@@ -142,7 +143,7 @@ export function useVisitorSession() {
   function writeLastSeq(newSeq: number): void {
     if (!Number.isFinite(newSeq) || newSeq <= 0) return;
     if (newSeq > readLastSeq()) {
-      sessionStorage.setItem(
+      localStorage.setItem(
         LAST_SEQ_KEY_PREFIX + sessionId.value,
         String(newSeq),
       );
@@ -157,8 +158,9 @@ export function useVisitorSession() {
     const sid = sessionId.value;
     localStorage.removeItem(HISTORY_KEY_PREFIX + sid);
     localStorage.removeItem('chat_session_id');
-    // 同步清除转接标志，避免下次进入时误入 WS 重连
+    // 同步清除转接标志与 lastSeq 游标，避免残留干扰下一会话
     localStorage.removeItem(`chat_transferred_${sid}`);
+    localStorage.removeItem(LAST_SEQ_KEY_PREFIX + sid);
     sessionId.value = '';
   }
 

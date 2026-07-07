@@ -40,19 +40,33 @@ export interface TransferPayload {
 
 // ---- composable ----
 
+export interface CandidateItem {
+  id: string;
+  label: string;
+}
+
+export interface SlotAskPayload {
+  question: string;
+  slot?: string;
+}
+
 export interface SSEStreamHandlers {
   /** AI 回复 token（无 event 行的 data） */
   onToken: (text: string) => void;
   /** 知识库溯源标签 */
   onSources: (sources: string[]) => void;
-  /** 工具执行中（静默：不展示 loading，不拼入文字） */
+  /** 工具执行中（进行中的状态更新，例如内嵌到 AI 气泡显示） */
   onToolCall?: (payload: ToolCallPayload) => void;
-  /** 工具执行完成（静默） */
+  /** 工具执行完成 */
   onToolDone?: (payload: ToolDonePayload) => void;
   /** AI 工具触发转接人工 */
   onTransfer: (payload: TransferPayload) => void;
   /** 域切换信号（访客端静默忽略） */
   onDomainSwitch?: (code: string) => void;
+  /** 槽位追问：AI 需要用户补充信息 */
+  onSlotAsk?: (payload: SlotAskPayload) => void;
+  /** 候选选项：AI 提供若干候选让用户点选 */
+  onCandidates?: (list: CandidateItem[]) => void;
   /** 业务错误 */
   onError: (msg: string) => void;
   /** 流正常结束（[DONE]） */
@@ -62,6 +76,11 @@ export interface SSEStreamHandlers {
 export function useSSEStream(
   sessionId: { value: string },
   handlers: SSEStreamHandlers,
+  /**
+   * 可选：域码取值器。返回非空字符串时会以 `domainCode` 字段随请求体一起发送，
+   * 供后端做域路由（例如 ?domainCode=weather 走天气域小模型）。
+   */
+  domainCode?: () => string,
 ) {
   const streaming = ref(false);
   let abortCtrl: AbortController | null = null;
@@ -79,8 +98,13 @@ export function useSSEStream(
 
     let reader: null | ReadableStreamDefaultReader<Uint8Array> = null;
     try {
+      const code = domainCode?.() ?? '';
       const response = await fetch('/api/v1/chat/stream', {
-        body: JSON.stringify({ message, sessionId: sessionId.value }),
+        body: JSON.stringify({
+          message,
+          sessionId: sessionId.value,
+          ...(code ? { domainCode: code } : {}),
+        }),
         headers: { 'Content-Type': 'application/json' },
         method: 'POST',
         signal,
@@ -180,9 +204,29 @@ export function useSSEStream(
         if (data) handlers.onToken(data);
         break;
       }
-      case 'candidates':
+      case 'candidates': {
+        // 候选选项：data 为 JSON 数组 [{id, label}, ...]
+        if (handlers.onCandidates) {
+          try {
+            const list = JSON.parse(data);
+            handlers.onCandidates(Array.isArray(list) ? list : []);
+          } catch {
+            /* 忽略解析失败 */
+          }
+        }
+        break;
+      }
       case 'slot_ask': {
-        // 预留事件，后端暂未发射，静默忽略
+        // 槽位追问：data 可能是 JSON {question, slot} 或直接文本
+        if (handlers.onSlotAsk) {
+          let payload: SlotAskPayload;
+          try {
+            payload = JSON.parse(data);
+          } catch {
+            payload = { question: data };
+          }
+          handlers.onSlotAsk(payload);
+        }
         break;
       }
       case 'domain_switch': {

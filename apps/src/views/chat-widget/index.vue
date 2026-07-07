@@ -4,7 +4,8 @@
 
 import type { Msg } from '#/composables/useVisitorSession';
 
-import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { useRoute } from 'vue-router';
 
 import { Icon } from '@iconify/vue';
 import {
@@ -54,6 +55,16 @@ const inputText = ref('');
 let pendingMsg = '';
 /** 座席主动结束会话后为 true，此时底部显示「开始新对话」按钮 */
 const sessionEnded = ref(false);
+/** slot_ask 气泡内的补充输入 */
+const slotInputText = ref('');
+
+// ===== URL 参数：域码（用于后端域路由） =====
+// 支持 ?domain=weather 和 ?domainCode=weather 两种写法
+const route = useRoute();
+const domainCode = computed(
+  () =>
+    (route.query.domainCode as string) || (route.query.domain as string) || '',
+);
 
 // ===== Composables =====
 
@@ -126,34 +137,72 @@ const ws = useVisitorWs(sessionId, readLastSeq, writeLastSeq, {
   },
 });
 
-// 5. SSE 流式对话
-const sse = useSSEStream(sessionId, {
-  onToken: (text) => {
-    // 将 token 追加到当前 AI 气泡（由 replyFor 创建并传引用）
-    if (currentAiMsg) {
-      currentAiMsg.text += text;
+// 5. SSE 流式对话（第 3 个参数把 URL 上的 domainCode 透传给后端）
+const sse = useSSEStream(
+  sessionId,
+  {
+    onToken: (text) => {
+      // 将 token 追加到当前 AI 气泡（由 replyFor 创建并传引用）
+      if (currentAiMsg) {
+        currentAiMsg.text += text;
+        scrollBottom();
+      }
+    },
+    onSources: (sources) => {
+      if (currentAiMsg) currentAiMsg.sources = sources;
+    },
+    onToolCall: (payload) => {
+      // 工具调用中：把状态内嵌到当前 AI 气泡（同名工具去重覆盖）
+      if (!currentAiMsg) return;
+      if (!currentAiMsg.tools) currentAiMsg.tools = [];
+      const idx = currentAiMsg.tools.findIndex((t) => t.name === payload.tool);
+      const status = { name: payload.tool, status: 'running' as const };
+      if (idx >= 0) currentAiMsg.tools[idx] = status;
+      else currentAiMsg.tools.push(status);
       scrollBottom();
-    }
+    },
+    onToolDone: (payload) => {
+      if (!currentAiMsg?.tools) return;
+      const idx = currentAiMsg.tools.findIndex((t) => t.name === payload.tool);
+      if (idx < 0) return;
+      const isErr = payload.status === 'error' || Boolean(payload.errorMsg);
+      currentAiMsg.tools[idx] = {
+        name: payload.tool,
+        status: isErr ? 'error' : 'done',
+        durationMs: payload.durationMs,
+      };
+    },
+    onSlotAsk: (payload) => {
+      // 槽位追问：单独气泡，附带输入框由模板渲染
+      appendMsg('ai', payload.question, { subType: 'slot_ask' });
+      scrollBottom();
+    },
+    onCandidates: (list) => {
+      // 候选选项：单独气泡，附带候选按钮列表
+      appendMsg('ai', '请选择：', {
+        subType: 'candidates',
+        candidates: list,
+      });
+      scrollBottom();
+    },
+    onTransfer: () => {
+      // 后端工具已完成入队（session → WAITING），前端只需同步 UI 状态
+      // 不重复调用 POST /chat/transfer（会二次入队导致 SessionEnqueueException）
+      transfer.markTransferred(sessionId.value);
+      ws.connect(sessionId.value);
+    },
+    onError: (msg) => {
+      if (currentAiMsg) {
+        currentAiMsg.text = msg;
+        currentAiMsg.failed = true;
+      }
+    },
+    onDone: () => {
+      /* streaming 状态由 useSSEStream 内部管理 */
+    },
   },
-  onSources: (sources) => {
-    if (currentAiMsg) currentAiMsg.sources = sources;
-  },
-  onTransfer: () => {
-    // 后端工具已完成入队（session → WAITING），前端只需同步 UI 状态
-    // 不重复调用 POST /chat/transfer（会二次入队导致 SessionEnqueueException）
-    transfer.markTransferred(sessionId.value);
-    ws.connect(sessionId.value);
-  },
-  onError: (msg) => {
-    if (currentAiMsg) {
-      currentAiMsg.text = msg;
-      currentAiMsg.failed = true;
-    }
-  },
-  onDone: () => {
-    /* streaming 状态由 useSSEStream 内部管理 */
-  },
-});
+  () => domainCode.value,
+);
 
 /** 当前正在流式填充的 AI 气泡（reactive proxy 引用） */
 let currentAiMsg: Msg | null = null;
@@ -211,6 +260,24 @@ function handleEnter(e: KeyboardEvent) {
 function quickAsk(q: string) {
   inputText.value = q;
   sendMsg();
+}
+
+/** 提交 slot_ask 气泡内的补充输入，走一次 AI 流 */
+function submitSlotInput() {
+  const text = slotInputText.value.trim();
+  if (!text || sse.streaming.value) return;
+  slotInputText.value = '';
+  appendMsg('user', text, { retryText: text });
+  scrollBottom();
+  replyFor(text);
+}
+
+/** 点击候选气泡里的某一项，把 label 作为用户输入发送 */
+function pickCandidate(c: { id: string; label: string }) {
+  if (sse.streaming.value) return;
+  appendMsg('user', c.label, { retryText: c.label });
+  scrollBottom();
+  replyFor(c.label);
 }
 
 // ===== AI 流式回复 =====
@@ -540,16 +607,82 @@ function startNewSession() {
                     <span>{{ m.text }}</span>
                   </div>
                 </template>
-                <!-- 常规 AI Markdown 消息（DOMPurify 净化） -->
-                <div
-                  v-else-if="m.role === 'ai'"
-                  class="widget-ai-md"
-                  v-html="
-                    DOMPurify.sanitize(
-                      marked.parse(m.text, { async: false }) as string,
-                    )
-                  "
-                ></div>
+                <!-- 槽位追问：气泡内嵌输入框 -->
+                <template v-else-if="m.subType === 'slot_ask'">
+                  <div class="slot-ask-bubble">
+                    <p>{{ m.text }}</p>
+                    <div class="slot-input-row">
+                      <Input
+                        v-model:value="slotInputText"
+                        placeholder="请输入..."
+                        size="small"
+                        style="flex: 1"
+                        @press-enter="submitSlotInput"
+                      />
+                      <Button
+                        type="primary"
+                        size="small"
+                        @click="submitSlotInput"
+                      >
+                        确认
+                      </Button>
+                    </div>
+                  </div>
+                </template>
+                <!-- 候选选项：点击即发送 -->
+                <template v-else-if="m.subType === 'candidates'">
+                  <div class="candidates-bubble">
+                    <p>{{ m.text }}</p>
+                    <div class="candidates-list">
+                      <div
+                        v-for="c in m.candidates"
+                        :key="c.id"
+                        class="candidate-item"
+                        @click="pickCandidate(c)"
+                      >
+                        {{ c.label }}
+                      </div>
+                    </div>
+                  </div>
+                </template>
+                <!-- 常规 AI Markdown 消息（DOMPurify 净化）+ 工具状态条 -->
+                <template v-else-if="m.role === 'ai'">
+                  <!-- 工具调用状态（内嵌到同一气泡顶部） -->
+                  <div
+                    v-if="m.tools && m.tools.length"
+                    class="tool-status-row"
+                  >
+                    <div
+                      v-for="tool in m.tools"
+                      :key="tool.name"
+                      class="tool-status-item"
+                    >
+                      <span v-if="tool.status === 'running'" class="tool-run">
+                        🔄
+                      </span>
+                      <span v-else-if="tool.status === 'done'" class="tool-ok">
+                        ✅
+                      </span>
+                      <span v-else class="tool-err">❌</span>
+                      <span class="tool-name">{{ tool.name }}</span>
+                      <span v-if="tool.status === 'running'" class="tool-hint">
+                        查询中...
+                      </span>
+                      <span v-else-if="tool.durationMs" class="tool-hint">
+                        {{ tool.durationMs }}ms
+                      </span>
+                    </div>
+                  </div>
+                  <div
+                    v-if="m.text"
+                    class="widget-ai-md"
+                    v-html="
+                      DOMPurify.sanitize(
+                        marked.parse(m.text, { async: false }) as string,
+                      )
+                    "
+                  ></div>
+                </template>
                 <span
                   v-else
                   style="
@@ -881,5 +1014,90 @@ function startNewSession() {
   color: #4f46e5;
   background: #eef2ff;
   border: 1px solid #c7d2fe;
+}
+
+/* ===== 工具状态条（内嵌在 AI 气泡顶部） ===== */
+.tool-status-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px dashed #e2e8f0;
+}
+
+.tool-status-item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.tool-status-item .tool-name {
+  font-family: monospace;
+  color: #334155;
+}
+
+.tool-status-item .tool-hint {
+  color: #94a3b8;
+}
+
+.tool-status-item .tool-run {
+  animation: tool-spin 1.2s linear infinite;
+}
+
+@keyframes tool-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ===== 槽位追问气泡 ===== */
+.slot-ask-bubble {
+  padding: 10px 12px;
+  background: #e6f7ff;
+  border: 1px solid #91d5ff;
+  border-radius: 8px;
+}
+
+.slot-input-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ===== 候选选项气泡 ===== */
+.candidates-bubble {
+  padding: 10px 12px;
+  background: #f0f5ff;
+  border: 1px solid #adc6ff;
+  border-radius: 8px;
+}
+
+.candidates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.candidate-item {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #1d4ed8;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.candidate-item:hover {
+  background: #eff6ff;
 }
 </style>
