@@ -167,6 +167,9 @@ const {
           (el as HTMLElement)?.scrollIntoView({ behavior: 'smooth' });
         });
         refreshSuggestions(sessionId, 800);
+      } else {
+        // 非当前会话：累计未读数
+        session.unread = (session.unread ?? 0) + 1;
       }
     }
   },
@@ -566,7 +569,13 @@ async function confirmTransfer() {
 function switchSession(s: SessionData) {
   sessions.value.forEach((x) => (x.active = false));
   s.active = true;
+  s.unread = 0;
   msgFilter.value = '全部';
+  // 切换后滚动到最新消息
+  nextTick(() => {
+    const el = document.querySelector('[data-msgs-end]');
+    (el as HTMLElement)?.scrollIntoView({ behavior: 'smooth' });
+  });
 }
 
 async function addSessionLocal(params: {
@@ -601,6 +610,7 @@ async function addSessionLocal(params: {
     transferReason: params.transferReason,
     tag: params.tag,
     waitSince: params.waitSince,
+    unread: 0,
     msgs:
       loadedMsgs.length > 0
         ? loadedMsgs
@@ -723,6 +733,7 @@ onMounted(async () => {
         transferReason: item.transferReason,
         tag: item.tag,
         waitSince: item.waitSince,
+        unread: 0,
         msgs:
           loadedMsgs.length > 0
             ? loadedMsgs

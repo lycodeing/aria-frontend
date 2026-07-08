@@ -303,11 +303,20 @@ const queueStateTabs = [
               :class="s.active ? 'bg-[#f5fafe]' : 'bg-white hover:bg-[#f5fafe]'"
               @click="emit('switchSession', s)"
             >
-              <div
-                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[13px] font-medium text-white"
-                :style="{ background: s.color }"
-              >
-                {{ s.nameChar }}
+              <!-- 头像 + 未读红点 -->
+              <div class="relative shrink-0">
+                <div
+                  class="flex h-8 w-8 items-center justify-center rounded-full text-[13px] font-medium text-white"
+                  :style="{ background: s.color }"
+                >
+                  {{ s.nameChar }}
+                </div>
+                <span
+                  v-if="!s.active && s.unread > 0"
+                  class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium text-white"
+                >
+                  {{ s.unread > 99 ? '99+' : s.unread }}
+                </span>
               </div>
               <div class="min-w-0 flex-1">
                 <p class="text-[13px] font-medium text-[#0a0a0b]">

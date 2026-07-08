@@ -30,6 +30,8 @@ export interface SessionData {
   /** 入队时间戳（epoch 秒） */
   waitSince: number;
   msgs: Msg[];
+  /** 非当前会话时收到的未读消息数，切换到该会话时归零 */
+  unread: number;
 }
 
 export interface ClosedSessionItem {
