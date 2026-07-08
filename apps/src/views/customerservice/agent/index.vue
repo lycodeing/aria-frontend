@@ -204,6 +204,23 @@ function mapMsgRole(role: string | undefined): Msg['role'] {
   return 'ai';
 }
 
+/**
+ * 过滤历史记录中残留的 TYPING 信号。
+ * 旧版后端在 TYPING 过滤逻辑上线前会把 {"type":"TYPING"} 当普通消息写入历史，
+ * 前端加载时需要识别并丢弃，避免渲染成用户消息气泡。
+ */
+function isTypingSignal(content?: string): boolean {
+  if (!content) return false;
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{')) return false;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed?.type === 'TYPING';
+  } catch {
+    return false;
+  }
+}
+
 function historyItemToMsg(h: {
   content?: string;
   role?: string;
@@ -400,7 +417,9 @@ async function viewClosedSession(item: ClosedSessionItem) {
   closedView.value = { session: item, msgs: [] };
   try {
     const history = await getSessionHistoryApi(item.id, 0);
-    closedView.value.msgs = history.map((h) => historyItemToMsg(h));
+    closedView.value.msgs = history
+      .filter((h) => !isTypingSignal(h.content))
+      .map((h) => historyItemToMsg(h));
   } catch {
     message.error('加载会话记录失败');
   } finally {
@@ -561,12 +580,14 @@ async function addSessionLocal(params: {
 }) {
   const history = await getSessionHistoryApi(params.id).catch(() => []);
   let maxSeq = 0;
-  const loadedMsgs: Msg[] = history.map((h) => {
-    const seqNum =
-      h.seq === null || h.seq === undefined ? Number.NaN : Number(h.seq);
-    if (Number.isFinite(seqNum) && seqNum > maxSeq) maxSeq = seqNum;
-    return historyItemToMsg(h);
-  });
+  const loadedMsgs: Msg[] = history
+    .filter((h) => !isTypingSignal(h.content))
+    .map((h) => {
+      const seqNum =
+        h.seq === null || h.seq === undefined ? Number.NaN : Number(h.seq);
+      if (Number.isFinite(seqNum) && seqNum > maxSeq) maxSeq = seqNum;
+      return historyItemToMsg(h);
+    });
   if (maxSeq > 0) writeLastSeq(params.id, maxSeq);
   sessions.value.forEach((s) => (s.active = false));
   sessions.value.push({
@@ -682,12 +703,14 @@ onMounted(async () => {
     activeSessions.forEach((item, idx) => {
       const history = histories[idx] ?? [];
       let maxSeq = 0;
-      const loadedMsgs: Msg[] = history.map((h) => {
-        const seqNum =
-          h.seq === null || h.seq === undefined ? Number.NaN : Number(h.seq);
-        if (Number.isFinite(seqNum) && seqNum > maxSeq) maxSeq = seqNum;
-        return historyItemToMsg(h);
-      });
+      const loadedMsgs: Msg[] = history
+        .filter((h) => !isTypingSignal(h.content))
+        .map((h) => {
+          const seqNum =
+            h.seq === null || h.seq === undefined ? Number.NaN : Number(h.seq);
+          if (Number.isFinite(seqNum) && seqNum > maxSeq) maxSeq = seqNum;
+          return historyItemToMsg(h);
+        });
       if (maxSeq > 0) writeLastSeq(item.sessionId, maxSeq);
       sessions.value.push({
         id: item.sessionId,
