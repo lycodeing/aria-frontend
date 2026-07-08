@@ -115,7 +115,6 @@ const ws = useVisitorWs(sessionId, readLastSeq, writeLastSeq, {
     scrollBottom();
   },
   onAgentJoined: () => {
-    appendMsg('agent', '👤 人工客服已接入，请直接输入您的问题。');
     scrollBottom();
   },
   onSessionClosed: () => {
@@ -206,6 +205,7 @@ onUnmounted(() => {
   sse.abort();
   ws.disconnect();
   auth.cleanup();
+  if (typingDebounceTimer) clearTimeout(typingDebounceTimer);
 });
 
 // ===== 消息发送 =====
@@ -240,6 +240,17 @@ function handleEnter(e: KeyboardEvent) {
     e.preventDefault();
     sendMsg();
   }
+}
+
+// 访客输入中信号：仅在转人工模式下发送，防抖 500ms 避免频繁触发
+let typingDebounceTimer: null | ReturnType<typeof setTimeout> = null;
+function handleTypingInput() {
+  if (!transfer.transferred.value) return;
+  if (typingDebounceTimer) return; // 防抖：500ms 内只发一次
+  ws.sendTyping();
+  typingDebounceTimer = setTimeout(() => {
+    typingDebounceTimer = null;
+  }, 500);
 }
 
 function quickAsk(q: string) {
@@ -804,6 +815,7 @@ function startNewSession() {
               placeholder="输入您的问题..."
               :auto-size="{ minRows: 1, maxRows: 4 }"
               class="flex-1"
+              @input="handleTypingInput"
               @keydown.enter="handleEnter"
             />
             <Button
@@ -1135,5 +1147,4 @@ function startNewSession() {
     transform: rotate(360deg);
   }
 }
-
 </style>

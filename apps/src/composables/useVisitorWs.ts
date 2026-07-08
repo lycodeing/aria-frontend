@@ -16,6 +16,7 @@ import { ref } from 'vue';
 import {
   connectVisitorWs,
   getVisitorHistoryApi,
+  sendTypingSignal,
   sendWsMessage,
 } from '#/api/session';
 
@@ -177,5 +178,13 @@ export function useVisitorWs(
     }
   }
 
-  return { wsStatus, connect, disconnect, sendText };
+  /**
+   * 发送输入中信号（访客正在打字）。
+   * 不写入历史，由后端仅转发给座席。
+   */
+  function sendTyping(): void {
+    sendTypingSignal(visitorWs);
+  }
+
+  return { wsStatus, connect, disconnect, sendText, sendTyping };
 }

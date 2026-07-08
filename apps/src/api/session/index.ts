@@ -47,7 +47,7 @@ export interface SessionQueueItem {
 }
 
 export interface WsChatMessage {
-  type: 'AGENT_JOINED' | 'CONNECTED' | 'MESSAGE';
+  type: 'AGENT_JOINED' | 'CONNECTED' | 'MESSAGE' | 'TYPING';
   sessionId: string;
   role?: 'agent' | 'user';
   content?: string;
@@ -311,5 +311,93 @@ export function connectAgentWs(
 /** 通过 WebSocket 发送文本消息 */
 export function sendWsMessage(ws: null | WebSocket, content: string): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ content }));
+  ws.send(JSON.stringify({ type: 'MESSAGE', content }));
+}
+
+/** 通过 WebSocket 发送访客输入中信号（不存入历史，仅通知座席） */
+export function sendTypingSignal(ws: null | WebSocket): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'TYPING' }));
+}
+
+// -------------------------------------------------------
+// 历史工单 + AI 总结
+// -------------------------------------------------------
+
+/** 访客历史工单摘要 */
+export interface VisitorHistorySession {
+  sessionId: string;
+  tag: string;
+  transferReason: string;
+  startedAt: string; // ISO 8601
+  endedAt: string;
+  msgCount: number;
+  aiSummary?: null | string; // 已缓存则有值，否则 null
+}
+
+/**
+ * 查询同一访客的历史已结束工单（排除当前会话）
+ */
+export async function getVisitorSessionHistoryApi(
+  visitorName: string,
+  excludeSessionId: string,
+): Promise<VisitorHistorySession[]> {
+  return agentClient.get('/api/v1/sessions/visitor-history', {
+    params: { visitorName, excludeSessionId },
+  });
+}
+
+/**
+ * 查询已缓存的 AI 总结。
+ * summary 为 null 表示后端尚未生成，空字符串同样视为无内容。
+ */
+export async function getAiSummaryApi(
+  sessionId: string,
+): Promise<{ summary: null | string }> {
+  return agentClient.get(`/api/v1/sessions/${sessionId}/ai-summary`);
+}
+
+/**
+ * 创建 AI 总结流式 SSE 连接（与 subscribeSessionEvents 保持相同的 token 鉴权模式）。
+ * token 在函数内部从 Pinia store 读取，调用方无需感知鉴权细节。
+ * 返回 EventSource 实例，调用方负责在适当时机调用 close()。
+ */
+export function createAiSummaryEventSource(sessionId: string): EventSource {
+  const accessStore = useAccessStore();
+  const token = accessStore.accessToken ?? '';
+  const url = token
+    ? `/api/v1/sessions/${sessionId}/ai-summary/stream?token=${encodeURIComponent(token)}`
+    : `/api/v1/sessions/${sessionId}/ai-summary/stream`;
+  return new EventSource(url);
+}
+
+// -------------------------------------------------------
+// AI 回复建议
+// -------------------------------------------------------
+
+/** AI 回复建议条目 */
+export interface ReplySuggestion {
+  /** 前端 v-for key */
+  id: string;
+  /** 建议回复内容 */
+  content: string;
+  /** 置信度 0-1 */
+  confidence: number;
+  /** KB=知识库命中, CONTEXT=上下文推理 */
+  source: 'CONTEXT' | 'KB';
+}
+
+/**
+ * 根据当前会话上下文 + 知识库生成回复建议（KB + 上下文双路并行）
+ * @param signal 可选的 AbortSignal，用于取消进行中的请求（切换会话时防止过期响应覆盖）
+ */
+export async function getReplySuggestionsApi(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<ReplySuggestion[]> {
+  return agentClient.post(
+    `/api/v1/sessions/${sessionId}/reply-suggestions`,
+    undefined,
+    { signal },
+  );
 }

@@ -27,9 +27,17 @@ export function resolveTagColor(tag: string): string {
 
 export function formatWaitTime(waitSince: number): string {
   const sec = Math.max(0, Math.floor(Date.now() / 1000 - waitSince));
+  if (sec >= 3600) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return `${h}小时${m}分钟`;
+  }
+  if (sec < 60) {
+    return `${sec}秒`;
+  }
   const m = Math.floor(sec / 60);
   const s = sec % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
+  return `${m}分钟${String(s).padStart(2, '0')}秒`;
 }
 
 export interface QueueItem {

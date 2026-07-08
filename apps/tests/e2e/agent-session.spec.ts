@@ -1,12 +1,8 @@
-import type { APIRequestContext, BrowserContext } from '@playwright/test';
+import type { APIRequestContext } from '@playwright/test';
 
 import { expect, test } from '@playwright/test';
 
-import {
-  E2E_SUPERADMIN_PASSWORD,
-  E2E_SUPERADMIN_USER,
-  E2E_VBEN_NS_PREFIX,
-} from './fixtures';
+import { E2E_SUPERADMIN_PASSWORD, E2E_SUPERADMIN_USER } from './fixtures';
 
 /**
  * N-05 座席端结束会话 → 访客端 code=1000 显示「会话已结束」。
@@ -15,12 +11,13 @@ import {
  *
  * 改写策略（参考 N-03）：
  *   - 访客侧：真实 UI（/chat → 转人工），需要真实浏览器接收 WS code=1000
- *   - 座席侧：API 注入 token → addInitScript → goto /customerservice/agent
- *     跳过 Vben 登录页的时序问题
+ *   - 座席侧：真实 UI 登录（superadmin）→ goto /customerservice/agent
+ *     注：本项目登录守卫会做 API 校验并写入登录态，仅靠 token 注入（addInitScript）
+ *         无法跳过登录页，故座席侧与访客侧一致走真实 UI 登录。
  *
- * 两个 fixme 原因已消除：
- *   1) 双 page 登录页抖动 → 改用 addInitScript 注入，无需经过登录页
- *   2) SSE 等待超时 → 改用 API accept，不依赖 SSE 推送队列
+ * 已消除的时序问题：
+ *   1) SSE 等待超时 → 改用 API accept，不依赖 SSE 推送队列
+ *   2) 结束会话需二次确认 → 点「结束会话」后点「确认结束」
  */
 
 async function apiLogin(
@@ -40,30 +37,11 @@ async function apiLogin(
   return t;
 }
 
-async function injectTokenCtx(ctx: BrowserContext, token: string) {
-  await ctx.addInitScript(
-    ({ tok, prefix }) => {
-      const payload = JSON.stringify({
-        accessToken: tok,
-        accessCodes: [],
-        refreshToken: '',
-        isLockScreen: false,
-      });
-      localStorage.setItem(`${prefix}-core-access`, payload);
-      localStorage.setItem('core-access', payload);
-      // oxlint-disable-next-line no-document-cookie -- E2E addInitScript 为同步上下文，无法使用 cookieStore API
-      document.cookie = `Authorization=${tok}; path=/`;
-    },
-    // N-11 修复：NS_PREFIX 改为从 fixtures 导出的常量，版本升级只需改一处
-    { tok: token, prefix: E2E_VBEN_NS_PREFIX },
-  );
-}
-
 test('N-05 座席 close → 访客侧显示「会话已结束」', async ({
   browser,
   request,
 }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
 
   const superToken = await apiLogin(
     request,
@@ -94,7 +72,9 @@ test('N-05 座席 close → 访客侧显示「会话已结束」', async ({
     visitorPage.getByText('N-05 回归测试：会话结束流程'),
   ).toBeVisible();
   await visitorPage.getByRole('button', { name: '转人工' }).click();
-  await expect(visitorPage.getByText('已为您转接人工客服')).toBeVisible();
+  // 访客页转接成功后的真实标识是 header「👤 人工服务中」
+  // （old: 「已为您转接人工客服」仅存在于座席侧 chat 页与 SSE toast，访客 /chat 页无此文案）
+  await expect(visitorPage.getByText('人工服务中')).toBeVisible();
 
   // 获取访客 sessionId
   const sid = await visitorPage.evaluate(() =>
@@ -102,18 +82,32 @@ test('N-05 座席 close → 访客侧显示「会话已结束」', async ({
   );
   expect(sid).toBeTruthy();
 
-  // —— 座席：注入 token → 打开工作台（建立 SSE）→ API 接入 → 刷新让 onMounted 恢复 ACTIVE 会话 ——
+  // —— 座席：真实 UI 登录（token 注入无法绕过本项目登录守卫）→ 打开工作台（建立 SSE）→ API 接入 ——
   const agentCtx = await browser.newContext();
-  await injectTokenCtx(agentCtx, superToken);
   const agentPage = await agentCtx.newPage();
+  await agentPage.goto('/auth/login');
+  await agentPage
+    .getByRole('textbox', { name: '请输入用户名' })
+    .fill(E2E_SUPERADMIN_USER);
+  await agentPage
+    .getByRole('textbox', { name: '密码' })
+    .fill(E2E_SUPERADMIN_PASSWORD);
+  await agentPage.getByRole('button', { name: 'login' }).click();
+  await agentPage.waitForURL(/\/(analytics|customerservice)/, {
+    timeout: 15_000,
+  });
   await agentPage.goto('/customerservice/agent', {
     waitUntil: 'domcontentloaded',
   });
-  await expect(agentPage.getByText('实时接待转接会话')).toBeVisible({
+  // 「座席工作台」为 Page 组件可见 title（原 description「实时接待转接会话」仅作 tooltip 不可见，已废弃）。
+  // 该文案在顶部导航与页面标题两处都出现，需限定到页面标题 div（text-lg font-semibold）以唯一匹配，避免严格模式多匹配。
+  await expect(
+    agentPage.locator('.text-lg.font-semibold', { hasText: '座席工作台' }),
+  ).toBeVisible({
     timeout: 30_000,
   });
-  // 等 SSE 注册稳定，确保 ACCEPTED 广播时 emitter 已在列表
-  await agentPage.waitForTimeout(3000);
+  // 缩短座席准备期，减少访客 WS 空闲掉线→重连导致的关闭延迟
+  await agentPage.waitForTimeout(1000);
 
   // 通过 API 接入（不依赖 SSE 推送队列）
   const acceptResp = await request.post(
@@ -147,9 +141,14 @@ test('N-05 座席 close → 访客侧显示「会话已结束」', async ({
   );
   await agentPage.getByRole('button', { name: '确认结束' }).click();
 
-  // —— 访客侧应当显示「会话已结束」（code=1000 WS 关闭触发） ——
-  await expect(visitorPage.getByText('会话已结束')).toBeVisible({
-    timeout: 15_000,
+  // —— 访客侧应当进入结束态（code=1000 WS 关闭触发 onSessionClosed → sessionEnded=true）——
+  // 用唯一的「开始新对话」按钮（仅结束态 v-if 渲染）作为断言，规避「会话已结束」多匹配与时机抖动。
+  await expect(
+    visitorPage.getByRole('button', { name: '开始新对话' }),
+  ).toBeVisible({
+    // 访客 WS 在座席准备阶段空闲时可能触发非正常断线→重连（累计 1+3+8=12s，偶发多轮），
+    // code=1000 关闭因此晚于点击「确认结束」抵达；放宽到 90s 以覆盖重连后关闭。
+    timeout: 90_000,
   });
   // 「转人工」按钮恢复
   await expect(

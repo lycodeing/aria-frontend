@@ -4,47 +4,105 @@ import { onUnmounted, reactive } from 'vue';
 
 import { connectAgentWs, sendWsMessage } from '#/api/session';
 
-/**
- * useAgentWebSocket — 座席 WebSocket 连接管理 Composable。
- *
- * 职责：
- * - 维护 agentWsMap（sessionId → WebSocket）
- * - 暴露 connectSession / disconnectSession / sendMessage
- * - WS 连接建立或重连成功时触发 onReconnect 钩子（用于拉增量历史）
- * - 跟踪每个会话的 WS 连接状态（connecting / open / closed），供 UI 状态点与断线横幅使用
- * - 组件卸载时自动关闭所有连接
- *
- * 使用方：
- * <pre>
- *   const { connectSession, disconnectSession, sendMessage, getStatus } = useAgentWebSocket({
- *     onUserMessage: (sid, msg) => { ... },     // 收到访客消息时
- *     onReconnect:    (sid) => { ... },         // WS 连接打开时（含重连）
- *   });
- * </pre>
- */
 export type WsStatus = 'closed' | 'connecting' | 'error' | 'open';
 
 export interface AgentWebSocketOptions {
-  /** 访客消息回调，传完整 WsChatMessage（含 seq 字段） */
   onUserMessage: (sessionId: string, msg: WsChatMessage) => void;
-  /** WS 连接成功（含重连）钩子，调用方可凭 lastSeq 拉增量补齐空窗消息 */
+  onTyping?: (sessionId: string) => void;
   onReconnect?: (sessionId: string) => void;
-  /** WS 连接状态变化钩子（open / closed / connecting），供 UI 展示状态点与断线提示 */
   onStatusChange?: (sessionId: string, status: WsStatus) => void;
 }
 
+const BASE_DELAY_MS = 1000;
+const MAX_DELAY_MS = 30_000;
+const MAX_RETRIES = 10;
+const HEARTBEAT_MS = 12_000; // 每 12s 检查一次连接健康
+
 export function useAgentWebSocket(options: AgentWebSocketOptions) {
   const agentWsMap = new Map<string, WebSocket>();
-  // 每个会话的 WS 连接状态，供 UI 展示状态点与断线横幅（reactive 保证模板响应）
   const statusMap = reactive<Record<string, WsStatus>>({});
+  const retryMap = new Map<
+    string,
+    { count: number; timer: null | ReturnType<typeof setTimeout> }
+  >();
+  const heartbeatMap = new Map<string, ReturnType<typeof setInterval>>();
+  const intentionalClose = new Set<string>();
 
   function setStatus(sessionId: string, status: WsStatus) {
     statusMap[sessionId] = status;
     options.onStatusChange?.(sessionId, status);
   }
 
+  // ===== 心跳：定期检查 readyState，配合 offline 事件主动感知断线 =====
+  function startHeartbeat(sessionId: string) {
+    stopHeartbeat(sessionId);
+    const timer = setInterval(() => {
+      const ws = agentWsMap.get(sessionId);
+      if (!ws) {
+        stopHeartbeat(sessionId);
+        return;
+      }
+
+      const dead =
+        ws.readyState === WebSocket.CLOSED ||
+        ws.readyState === WebSocket.CLOSING ||
+        !navigator.onLine;
+
+      if (dead && statusMap[sessionId] === 'open') {
+        console.warn(`[WS:Agent] 心跳检测到连接断开（sessionId=${sessionId}）`);
+        ws.close(); // 触发 onclose → scheduleReconnect
+      }
+    }, HEARTBEAT_MS);
+    heartbeatMap.set(sessionId, timer);
+  }
+
+  function stopHeartbeat(sessionId: string) {
+    const t = heartbeatMap.get(sessionId);
+    if (t) {
+      clearInterval(t);
+      heartbeatMap.delete(sessionId);
+    }
+  }
+
+  // ===== 指数退避重连 =====
+  function scheduleReconnect(sessionId: string) {
+    if (intentionalClose.has(sessionId)) return;
+    if (!retryMap.has(sessionId))
+      retryMap.set(sessionId, { count: 0, timer: null });
+    const retry = retryMap.get(sessionId);
+    if (!retry) return;
+
+    if (retry.count >= MAX_RETRIES) {
+      console.warn(
+        `[WS:Agent] 会话 ${sessionId} 达到最大重试次数，停止自动重连`,
+      );
+      return;
+    }
+
+    const delay = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** retry.count);
+    retry.count++;
+    console.warn(
+      `[WS:Agent] 会话 ${sessionId} 将在 ${delay}ms 后重连（第 ${retry.count} 次）`,
+    );
+
+    retry.timer = setTimeout(() => {
+      if (!intentionalClose.has(sessionId)) connectSession(sessionId);
+    }, delay);
+  }
+
+  // ===== 核心：建立连接 =====
   function connectSession(sessionId: string) {
-    if (agentWsMap.has(sessionId)) return;
+    const existing = agentWsMap.get(sessionId);
+    if (existing) {
+      if (
+        existing.readyState === WebSocket.CONNECTING ||
+        existing.readyState === WebSocket.OPEN
+      )
+        return;
+      existing.close();
+      agentWsMap.delete(sessionId);
+    }
+
     setStatus(sessionId, 'connecting');
 
     const ws = connectAgentWs(
@@ -52,48 +110,79 @@ export function useAgentWebSocket(options: AgentWebSocketOptions) {
       (msg: WsChatMessage) => {
         if (msg.type === 'MESSAGE' && msg.role === 'user') {
           options.onUserMessage(sessionId, msg);
+        } else if (msg.type === 'TYPING') {
+          options.onTyping?.(sessionId);
         }
       },
       () => {
-        // WS onopen：首次连接 + 重连均触发，调用方据此拉 sinceSeq 增量
         setStatus(sessionId, 'open');
+        const retry = retryMap.get(sessionId);
+        if (retry) retry.count = 0;
+        startHeartbeat(sessionId);
         options.onReconnect?.(sessionId);
       },
       () => {
-        // WS onclose：异常断开或主动关闭，UI 据此提示可重连
+        agentWsMap.delete(sessionId);
+        stopHeartbeat(sessionId);
         setStatus(sessionId, 'closed');
+        scheduleReconnect(sessionId);
       },
     );
+
     agentWsMap.set(sessionId, ws);
   }
 
+  // ===== 主动断开（不触发自动重连） =====
   function disconnectSession(sessionId: string) {
+    intentionalClose.add(sessionId);
+    const retry = retryMap.get(sessionId);
+    if (retry?.timer) clearTimeout(retry.timer);
+    retryMap.delete(sessionId);
+    stopHeartbeat(sessionId);
     agentWsMap.get(sessionId)?.close();
     agentWsMap.delete(sessionId);
-    // 保留键但置为 closed，避免动态 delete 触发 lint；getStatus 对缺失键同样返回 closed
     statusMap[sessionId] = 'closed';
   }
 
   function sendMessage(sessionId: string, content: string): boolean {
     const ws = agentWsMap.get(sessionId);
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return false;
-    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     sendWsMessage(ws, content);
     return true;
   }
 
-  /** 读取某会话当前 WS 状态（未连接过视为 closed） */
   function getStatus(sessionId: string): WsStatus {
     return statusMap[sessionId] ?? 'closed';
   }
 
   function disconnectAll() {
+    retryMap.forEach((r) => {
+      if (r.timer) clearTimeout(r.timer);
+    });
+    retryMap.clear();
+    heartbeatMap.forEach((t) => clearInterval(t));
+    heartbeatMap.clear();
     agentWsMap.forEach((ws) => ws.close());
     agentWsMap.clear();
+    intentionalClose.clear();
   }
 
-  onUnmounted(disconnectAll);
+  // ===== 监听浏览器 offline 事件，断网时立即感知 =====
+  function onBrowserOffline() {
+    agentWsMap.forEach((ws, sessionId) => {
+      if (statusMap[sessionId] === 'open') {
+        console.warn(`[WS:Agent] 浏览器 offline 事件，主动关闭 ${sessionId}`);
+        ws.close(); // 触发 onclose → scheduleReconnect
+      }
+    });
+  }
+
+  window.addEventListener('offline', onBrowserOffline);
+
+  onUnmounted(() => {
+    window.removeEventListener('offline', onBrowserOffline);
+    disconnectAll();
+  });
 
   return {
     connectSession,
