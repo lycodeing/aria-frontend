@@ -47,8 +47,12 @@ export interface SessionQueueItem {
 }
 
 export interface WsChatMessage {
-  type: 'AGENT_JOINED' | 'CONNECTED' | 'MESSAGE' | 'TYPING';
-  sessionId: string;
+  type: 'AGENT_JOINED' | 'CONNECTED' | 'KICKED_OUT' | 'MESSAGE' | 'TYPING';
+  /**
+   * 会话 ID。MESSAGE / TYPING / AGENT_JOINED 必填；
+   * CONNECTED / KICKED_OUT 为连接级信令，后端不带此字段。
+   */
+  sessionId?: string;
   role?: 'agent' | 'user';
   content?: string;
   /**
@@ -278,11 +282,9 @@ export function connectVisitorWs(
  * 座席端 WebSocket 连接。
  * 路径：/ws/agent/{sessionId}?token=xxx（经 Vite proxy 转发到 localhost:8082）
  *
- * 后端 AgentHandshakeInterceptor 在握手阶段从 ?token= 参数校验座席身份。
- * WebSocket 握手不支持自定义 Header，因此统一使用 query param 携带 token。
- *
- * I-05 修复：onClose 传入 CloseEvent，调用方可根据 code 区分主动关闭（1000）和异常断线，
- * 与 connectVisitorWs 保持一致的接口签名。
+ * @deprecated 改造为单连接多路复用后，座席端不再直接使用此函数。
+ * 请通过 useAgentWsChannel.init() 建立连接，旧路径 /ws/agent/{sessionId} 已废弃。
+ * 访客端 connectVisitorWs 不受影响。
  */
 export function connectAgentWs(
   sessionId: string,
