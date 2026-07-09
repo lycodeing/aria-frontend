@@ -1,8 +1,8 @@
 import type { WsChatMessage } from '#/api/session';
 
-import { onUnmounted, reactive } from 'vue';
+import { onScopeDispose, reactive, watch } from 'vue';
 
-import { connectAgentWs, sendWsMessage } from '#/api/session';
+import { useAgentWsChannel } from './useAgentWsChannel';
 
 export type WsStatus = 'closed' | 'connecting' | 'error' | 'open';
 
@@ -13,176 +13,96 @@ export interface AgentWebSocketOptions {
   onStatusChange?: (sessionId: string, status: WsStatus) => void;
 }
 
-const BASE_DELAY_MS = 1000;
-const MAX_DELAY_MS = 30_000;
-const MAX_RETRIES = 10;
-const HEARTBEAT_MS = 12_000; // 每 12s 检查一次连接健康
-
+/**
+ * useAgentWebSocket — 座席端会话订阅层
+ *
+ * 职责：
+ *   - 将业务回调（onUserMessage / onTyping / onReconnect）注册到 useAgentWsChannel
+ *   - 对外暴露与改造前完全一致的接口，调用方（agent/index.vue）零感知
+ *
+ * 不包含：
+ *   - WebSocket 连接管理（由 useAgentWsChannel 负责）
+ *   - 心跳 / 重连逻辑（由 useAgentWsChannel 负责）
+ *   - channel 生命周期（由 layouts/basic.vue watch accessToken 驱动）
+ */
 export function useAgentWebSocket(options: AgentWebSocketOptions) {
-  const agentWsMap = new Map<string, WebSocket>();
+  const channel = useAgentWsChannel();
+  const subscribedSessions = new Set<string>();
   const statusMap = reactive<Record<string, WsStatus>>({});
-  const retryMap = new Map<
-    string,
-    { count: number; timer: null | ReturnType<typeof setTimeout> }
-  >();
-  const heartbeatMap = new Map<string, ReturnType<typeof setInterval>>();
-  const intentionalClose = new Set<string>();
 
-  function setStatus(sessionId: string, status: WsStatus) {
-    statusMap[sessionId] = status;
-    options.onStatusChange?.(sessionId, status);
-  }
-
-  // ===== 心跳：定期检查 readyState，配合 offline 事件主动感知断线 =====
-  function startHeartbeat(sessionId: string) {
-    stopHeartbeat(sessionId);
-    const timer = setInterval(() => {
-      const ws = agentWsMap.get(sessionId);
-      if (!ws) {
-        stopHeartbeat(sessionId);
-        return;
-      }
-
-      const dead =
-        ws.readyState === WebSocket.CLOSED ||
-        ws.readyState === WebSocket.CLOSING ||
-        !navigator.onLine;
-
-      if (dead && statusMap[sessionId] === 'open') {
-        console.warn(`[WS:Agent] 心跳检测到连接断开（sessionId=${sessionId}）`);
-        ws.close(); // 触发 onclose → scheduleReconnect
-      }
-    }, HEARTBEAT_MS);
-    heartbeatMap.set(sessionId, timer);
-  }
-
-  function stopHeartbeat(sessionId: string) {
-    const t = heartbeatMap.get(sessionId);
-    if (t) {
-      clearInterval(t);
-      heartbeatMap.delete(sessionId);
+  // channel 整体状态变化时同步到所有已订阅会话
+  // （单连接模式下所有会话共享同一连接状态）
+  watch(channel.status, (s) => {
+    let mapped: WsStatus;
+    if (s === 'open') {
+      mapped = 'open';
+    } else if (s === 'connecting') {
+      mapped = 'connecting';
+    } else if (s === 'error') {
+      mapped = 'error';
+    } else {
+      mapped = 'closed';
     }
-  }
-
-  // ===== 指数退避重连 =====
-  function scheduleReconnect(sessionId: string) {
-    if (intentionalClose.has(sessionId)) return;
-    if (!retryMap.has(sessionId))
-      retryMap.set(sessionId, { count: 0, timer: null });
-    const retry = retryMap.get(sessionId);
-    if (!retry) return;
-
-    if (retry.count >= MAX_RETRIES) {
-      console.warn(
-        `[WS:Agent] 会话 ${sessionId} 达到最大重试次数，停止自动重连`,
-      );
-      return;
+    for (const sid of subscribedSessions) {
+      statusMap[sid] = mapped;
+      options.onStatusChange?.(sid, mapped);
     }
+  });
 
-    const delay = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** retry.count);
-    retry.count++;
-    console.warn(
-      `[WS:Agent] 会话 ${sessionId} 将在 ${delay}ms 后重连（第 ${retry.count} 次）`,
-    );
+  /**
+   * 订阅某个会话的消息，幂等（同一 sessionId 重复调用安全）。
+   * 初始状态跟随 channel 当前状态。
+   */
+  function connectSession(sessionId: string): void {
+    if (subscribedSessions.has(sessionId)) return;
+    subscribedSessions.add(sessionId);
+    statusMap[sessionId] =
+      channel.status.value === 'open' ? 'open' : 'connecting';
 
-    retry.timer = setTimeout(() => {
-      if (!intentionalClose.has(sessionId)) connectSession(sessionId);
-    }, delay);
-  }
-
-  // ===== 核心：建立连接 =====
-  function connectSession(sessionId: string) {
-    const existing = agentWsMap.get(sessionId);
-    if (existing) {
-      if (
-        existing.readyState === WebSocket.CONNECTING ||
-        existing.readyState === WebSocket.OPEN
-      )
-        return;
-      existing.close();
-      agentWsMap.delete(sessionId);
-    }
-
-    setStatus(sessionId, 'connecting');
-
-    const ws = connectAgentWs(
-      sessionId,
-      (msg: WsChatMessage) => {
+    channel.subscribe(sessionId, {
+      onMessage(msg) {
+        // 只处理用户消息（AGENT_JOINED / CONNECTED 等由访客端处理）
         if (msg.type === 'MESSAGE' && msg.role === 'user') {
           options.onUserMessage(sessionId, msg);
-        } else if (msg.type === 'TYPING') {
-          options.onTyping?.(sessionId);
         }
       },
-      () => {
-        setStatus(sessionId, 'open');
-        const retry = retryMap.get(sessionId);
-        if (retry) retry.count = 0;
-        startHeartbeat(sessionId);
+      onTyping() {
+        options.onTyping?.(sessionId);
+      },
+      onReconnect() {
+        statusMap[sessionId] = 'open';
         options.onReconnect?.(sessionId);
       },
-      () => {
-        agentWsMap.delete(sessionId);
-        stopHeartbeat(sessionId);
-        setStatus(sessionId, 'closed');
-        scheduleReconnect(sessionId);
-      },
-    );
-
-    agentWsMap.set(sessionId, ws);
+    });
   }
 
-  // ===== 主动断开（不触发自动重连） =====
-  function disconnectSession(sessionId: string) {
-    intentionalClose.add(sessionId);
-    const retry = retryMap.get(sessionId);
-    if (retry?.timer) clearTimeout(retry.timer);
-    retryMap.delete(sessionId);
-    stopHeartbeat(sessionId);
-    agentWsMap.get(sessionId)?.close();
-    agentWsMap.delete(sessionId);
+  /** 注销某个会话的订阅（座席结束会话时调用）。 */
+  function disconnectSession(sessionId: string): void {
+    subscribedSessions.delete(sessionId);
+    channel.unsubscribe(sessionId);
     statusMap[sessionId] = 'closed';
+    options.onStatusChange?.(sessionId, 'closed');
   }
 
   function sendMessage(sessionId: string, content: string): boolean {
-    const ws = agentWsMap.get(sessionId);
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    sendWsMessage(ws, content);
-    return true;
+    return channel.send(sessionId, content);
   }
 
   function getStatus(sessionId: string): WsStatus {
     return statusMap[sessionId] ?? 'closed';
   }
 
-  function disconnectAll() {
-    retryMap.forEach((r) => {
-      if (r.timer) clearTimeout(r.timer);
-    });
-    retryMap.clear();
-    heartbeatMap.forEach((t) => clearInterval(t));
-    heartbeatMap.clear();
-    agentWsMap.forEach((ws) => ws.close());
-    agentWsMap.clear();
-    intentionalClose.clear();
+  /** 注销所有订阅（页面卸载时调用）。注意：不调用 channel.dispose()，channel 生命周期由登录态管理。 */
+  function disconnectAll(): void {
+    for (const sid of subscribedSessions) {
+      channel.unsubscribe(sid);
+      statusMap[sid] = 'closed';
+    }
+    subscribedSessions.clear();
   }
 
-  // ===== 监听浏览器 offline 事件，断网时立即感知 =====
-  function onBrowserOffline() {
-    agentWsMap.forEach((ws, sessionId) => {
-      if (statusMap[sessionId] === 'open') {
-        console.warn(`[WS:Agent] 浏览器 offline 事件，主动关闭 ${sessionId}`);
-        ws.close(); // 触发 onclose → scheduleReconnect
-      }
-    });
-  }
-
-  window.addEventListener('offline', onBrowserOffline);
-
-  onUnmounted(() => {
-    window.removeEventListener('offline', onBrowserOffline);
-    disconnectAll();
-  });
+  // 组件（或 composable scope）卸载时自动清理订阅，防止回调泄漏
+  onScopeDispose(() => disconnectAll());
 
   return {
     connectSession,
