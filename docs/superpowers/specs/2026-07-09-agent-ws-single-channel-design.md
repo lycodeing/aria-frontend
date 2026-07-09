@@ -676,15 +676,19 @@ watch(
 
 ### 7.4 KICK 模式（踢出旧端）
 
-新端连入时，后端找到该 agentId 的所有旧连接，逐一推送 `KICKED_OUT` 消息后关闭：
+新端连入时，后端**先注册新连接，再踢出旧连接**（顺序不能颠倒，否则踢出期间推送的消息会丢失）：
 
 ```
 Browser B 新建连接
     └── AgentChannelWsHandler.afterConnectionEstablished
             └── if (mode == KICK)
-                    ├── registry.broadcast(agentId, { type: 'KICKED_OUT' })  // 推给旧端
-                    ├── registry.closeAll(agentId)                            // 关闭旧连接
-                    └── registry.register(agentId, newSession)               // 注册新端
+                    ├── registry.register(agentId, newSession)               // 1. 先注册新端
+                    ├── registry.broadcast(agentId, { type: 'KICKED_OUT' })  // 2. 推 KICKED_OUT 给旧端（此时新端也会收到，需在前端过滤）
+                    └── registry.closeAll(agentId, except=newSession)        // 3. 关闭旧连接
+
+⚠️  步骤 1 必须先于步骤 2/3，保证新连接注册成功后才开始踢出，
+    中间窗口期的访客消息会推给新连接，不会丢失。
+    具体实现见 §8.6 kickAndRegister()。
 ```
 
 前端收到 `KICKED_OUT` 后：

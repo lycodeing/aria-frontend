@@ -108,15 +108,18 @@ export interface ChannelCallbacks {
   onReconnect?: (sessionId: string) => void;
 }
 
-export type MultiLoginMode = 'BROADCAST' | 'KICK';
-
 export interface AgentWsChannelOptions {
-  multiLoginMode?: MultiLoginMode;
+  // multiLoginMode 由后端 application.yml 配置，前端无需传递
   onKickedOut?: () => void;
 }
 
 export interface AgentWsChannel {
   init(token: string, options?: AgentWsChannelOptions): void;
+  /**
+   * token 刷新时调用：只更换 token 重建 WS，不清 subscriberMap。
+   * 与 dispose()+init() 的区别：保留所有会话订阅，避免 token 刷新导致消息丢失。
+   */
+  reconnect(newToken: string): void;
   dispose(): void;
   subscribe(sessionId: string, callbacks: ChannelCallbacks): void;
   unsubscribe(sessionId: string): void;
@@ -223,18 +226,20 @@ function onMessage(event: MessageEvent): void {
   });
 }
 
-function onClose(): void {
-  ws = null;
+function onClose(this: WebSocket): void {
+  // 只清理触发 onclose 的那个实例，防止 dispose()+init() 后旧连接的 onclose 抹掉新 ws
+  if (ws === this) ws = null;
   stopHeartbeat();
-  // kicked 或主动 dispose（status='closed'）时不重连
-  if (status.value !== 'closed' && !kicked) {
+  // 先判断 kicked（语义更清晰），再判断 status
+  if (!kicked && status.value !== 'closed') {
     status.value = 'connecting';
     scheduleReconnect();
   }
 }
 
 function onError(): void {
-  // 握手失败（401）时 ws 会随即触发 onclose，状态由 onclose 处理
+  // 握手失败（401）时浏览器触发 onerror 后紧跟 onclose；
+  // 若 status 已到 'error'（重试耗尽），basic.vue 负责监听并触发 token 刷新
 }
 
 function onBrowserOffline(): void {
@@ -250,11 +255,14 @@ function connect(): void {
   ) return;
 
   status.value = 'connecting';
-  ws = new WebSocket(buildWsUrl());
-  ws.addEventListener('open', onOpen);
-  ws.addEventListener('message', onMessage);
-  ws.addEventListener('close', onClose);
-  ws.addEventListener('error', onError);
+  // 捕获当前实例，onclose 回调用 this 而非闭包 ws，防止竞态覆盖
+  const socket = new WebSocket(buildWsUrl());
+  ws = socket;
+  socket.addEventListener('open', onOpen);
+  socket.addEventListener('message', onMessage);
+  // 用普通函数而非箭头函数，让 onClose 可通过 this 拿到对应实例
+  socket.addEventListener('close', function (this: WebSocket) { onClose.call(this); });
+  socket.addEventListener('error', onError);
 }
 
 // ---- 导出单例 ----
@@ -269,6 +277,24 @@ export function useAgentWsChannel(): AgentWsChannel {
       window.addEventListener('offline', onBrowserOffline);
       connect();
     },
+    /**
+     * token 刷新时调用：只换 token 重建 WS，保留 subscriberMap。
+     * 不能用 dispose()+init()，因为 dispose 会清空订阅，token 刷新后会话静默丢消息。
+     */
+    reconnect(newToken: string) {
+      _token = newToken;
+      kicked = false;
+      // 清除重连计时器，终止退避循环
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      retryCount = 0;
+      stopHeartbeat();
+      ws?.close(); // 触发 onclose，但 subscriberMap 不清
+      // onclose 异步触发后会调 scheduleReconnect，但 retryCount 已重置
+      // 直接立即重连更可靠：强制状态并建连
+      status.value = 'connecting';
+      // 延迟一个 tick，确保旧 ws 的 close 事件已发出
+      setTimeout(connect, 0);
+    },
     dispose() {
       status.value = 'closed';
       kicked = false;
@@ -277,7 +303,8 @@ export function useAgentWsChannel(): AgentWsChannel {
       window.removeEventListener('offline', onBrowserOffline);
       ws?.close();
       ws = null;
-      subscriberMap.clear();
+      // 注意：不清 subscriberMap，token 刷新走 reconnect()；
+      // 只有真正登出时才调 dispose()，此时组件也会卸载，订阅自然消亡
     },
     subscribe(sessionId: string, callbacks: ChannelCallbacks) {
       if (!subscriberMap.has(sessionId)) subscriberMap.set(sessionId, new Set());
@@ -407,6 +434,41 @@ describe('useAgentWsChannel', () => {
     expect(onMessage).not.toHaveBeenCalled();
     ch.dispose();
   });
+
+  it('CONNECTING 状态下 init 幂等：不重复建连', async () => {
+    const { useAgentWsChannel } = await import('../useAgentWsChannel');
+    mockWsInstance = new MockWs();
+    mockWsInstance.readyState = MockWs.CONNECTING; // 模拟连接中
+    const ch = useAgentWsChannel();
+    ch.init('tok');
+    const callCount = (WebSocket as any).mock.calls.length;
+    // 再次 init 不应新建 WebSocket
+    ch.init('tok');
+    expect((WebSocket as any).mock.calls.length).toBe(callCount);
+    ch.dispose();
+  });
+
+  it('reconnect 更换 token 重建连接，不清 subscriberMap', async () => {
+    const { useAgentWsChannel } = await import('../useAgentWsChannel');
+    const ch = useAgentWsChannel();
+    ch.init('old-token');
+    const onMessage = vi.fn();
+    ch.subscribe('sid-A', { onMessage });
+    mockWsInstance.emit('open');
+
+    // token 刷新
+    ch.reconnect('new-token');
+
+    // subscriberMap 保留，新连接建立后仍能收到消息
+    mockWsInstance.emit('open');
+    mockWsInstance.emit('message', {
+      data: JSON.stringify({ type: 'MESSAGE', sessionId: 'sid-A', role: 'user', content: 'after-reconnect' }),
+    });
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ content: 'after-reconnect' }),
+    );
+    ch.dispose();
+  });
 });
 ```
 
@@ -448,7 +510,7 @@ git commit -m "feat(@vben/web-antd): 新增 useAgentWsChannel 单连接传输层
 // apps/src/composables/useAgentWebSocket.ts
 import type { WsChatMessage } from '#/api/session';
 
-import { reactive, watch } from 'vue';
+import { onScopeDispose, reactive, watch } from 'vue';
 
 import { useAgentWsChannel } from './useAgentWsChannel';
 
@@ -482,8 +544,6 @@ export function useAgentWebSocket(options: AgentWebSocketOptions) {
   function connectSession(sessionId: string): void {
     if (subscribedSessions.has(sessionId)) return; // 幂等
     subscribedSessions.add(sessionId);
-
-    // 初始状态跟随 channel 当前状态
     statusMap[sessionId] = channel.status.value === 'open' ? 'open' : 'connecting';
 
     channel.subscribe(sessionId, {
@@ -523,8 +583,11 @@ export function useAgentWebSocket(options: AgentWebSocketOptions) {
       statusMap[sid] = 'closed';
     }
     subscribedSessions.clear();
-    // 注意：不调用 channel.dispose()，channel 生命周期由登录态管理
+    // 不调用 channel.dispose()，channel 生命周期由登录态（basic.vue）管理
   }
+
+  // 组件卸载时自动清理订阅，防止回调泄漏
+  onScopeDispose(() => disconnectAll());
 
   return {
     connectSession,
@@ -652,7 +715,10 @@ git commit -m "refactor(@vben/web-antd): useAgentWebSocket 改为 channel 订阅
 ```ts
 import { useAgentWsChannel } from '#/composables/useAgentWsChannel';
 import { message as antMessage } from 'ant-design-vue';
+import { useAuthStore } from '#/store';
 ```
+
+注意：`useAuthStore` 在 `basic.vue` 中已有 `authStore` 实例，确认是否已 import，避免重复。
 
 - [ ] **Step 2: 在 script 末尾追加 channel 初始化逻辑**
 
@@ -665,21 +731,39 @@ const agentChannel = useAgentWsChannel();
 watch(
   () => accessStore.accessToken,
   (newToken, oldToken) => {
-    if (newToken && newToken !== oldToken) {
-      // token 出现或刷新：dispose 旧连接再重建（dispose 幂等，首次 ws=null 直接跳过）
-      agentChannel.dispose();
+    if (newToken && !oldToken) {
+      // 首次登录：全量初始化
       agentChannel.init(newToken, {
-        multiLoginMode: 'BROADCAST', // 可按需改为 'KICK'
         onKickedOut: () => {
           antMessage.warning('您的账号已在其他设备登录，当前连接已断开');
         },
       });
+    } else if (newToken && newToken !== oldToken) {
+      // token 刷新：只换 token 重建 WS，保留 subscriberMap 避免会话订阅丢失
+      agentChannel.reconnect(newToken);
     } else if (!newToken) {
       // 登出：销毁 channel
       agentChannel.dispose();
     }
   },
   { immediate: true },
+);
+
+// 401 握手失败耗尽重试后 status='error'，尝试刷新 token
+watch(
+  () => agentChannel.status.value,
+  async (s) => {
+    if (s === 'error') {
+      try {
+        await authStore.refreshAccessToken();
+        // refreshAccessToken 成功后会更新 accessStore.accessToken，
+        // 上方的 watch(accessToken) 会触发 reconnect()，无需在此手动调用
+      } catch {
+        // refresh 也失败，强制登出
+        await authStore.logout(false);
+      }
+    }
+  },
 );
 ```
 
