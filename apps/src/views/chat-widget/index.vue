@@ -231,7 +231,10 @@ onMounted(async () => {
   loadHistory();
   scrollBottom();
   // 两重兜底恢复转接状态（localStorage 快路径 + 后端状态查询兜底）
-  await transfer.restoreTransferState(sid);
+  // 若后端确认为 ACTIVE（座席已接入），同步设置 agentJoined，确保 TYPING 信号守卫正确
+  await transfer.restoreTransferState(sid, () => {
+    agentJoined.value = true;
+  });
 });
 
 onUnmounted(() => {
@@ -378,6 +381,7 @@ function startNewSession() {
   sessionId.value = newSid;
   sessionEnded.value = false;
   transfer.clearTransferred(newSid);
+  agentJoined.value = false;
   currentAiMsgId = null;
   inputText.value = '';
 }

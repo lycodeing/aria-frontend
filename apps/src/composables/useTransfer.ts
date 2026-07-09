@@ -86,13 +86,28 @@ export function useTransfer(
    * 第二重：localStorage 无标志 → 查询后端 session 状态（兜底 AI 工具触发转接后页面关闭的场景）
    *         若后端返回 WAITING/ACTIVE，补写 localStorage 并恢复 WS 连接
    *
+   * @param onAgentActive 可选回调：当确认后端状态为 ACTIVE（座席已接入）时触发，
+   *                      调用方可借此同步本地 agentJoined 标志。
+   *                      快路径（localStorage）无法直接知道状态，会补查后端确认。
    * @returns 是否恢复了转接状态
    */
-  async function restoreTransferState(sid: string): Promise<boolean> {
-    // 快路径：localStorage 已有标志，无需请求后端
+  async function restoreTransferState(
+    sid: string,
+    onAgentActive?: () => void,
+  ): Promise<boolean> {
+    // 快路径：localStorage 已有标志，无需请求后端恢复 WS
     if (localStorage.getItem(TRANSFER_KEY(sid)) === '1') {
       transferred.value = true;
       onTransferSuccess();
+      // 快路径不知道后端当前状态，若调用方关心是否 ACTIVE，补查一次
+      if (onAgentActive) {
+        try {
+          const { status } = await getSessionStateApi(sid);
+          if (status === 'ACTIVE') onAgentActive();
+        } catch {
+          // 网络错误静默忽略
+        }
+      }
       return true;
     }
 
@@ -103,6 +118,7 @@ export function useTransfer(
         // 补写 localStorage，下次刷新走快路径
         markTransferred(sid);
         onTransferSuccess();
+        if (status === 'ACTIVE') onAgentActive?.();
         return true;
       }
     } catch {
