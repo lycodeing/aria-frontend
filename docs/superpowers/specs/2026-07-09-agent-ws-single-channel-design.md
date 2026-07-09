@@ -122,9 +122,23 @@ export interface ChannelCallbacks {
   onReconnect?: (sessionId: string) => void;
 }
 
+/**
+ * 多登录模式（后端配置一致）
+ *   BROADCAST - 多端共存，所有登录端同时接收消息（默认）
+ *   KICK       - 新端登录时踢掉旧端，旧端收到 KICKED_OUT 后不再重连
+ */
+export type MultiLoginMode = 'BROADCAST' | 'KICK';
+
+export interface AgentWsChannelOptions {
+  /** 多登录模式，默认 BROADCAST */
+  multiLoginMode?: MultiLoginMode;
+  /** KICK 模式下被踢出时回调，用于 UI 提示并跳转登录页 */
+  onKickedOut?: () => void;
+}
+
 export interface AgentWsChannel {
   /** 初始化 channel，传入 token；已初始化则幂等 */
-  init(token: string): void;
+  init(token: string, options?: AgentWsChannelOptions): void;
   /** 销毁 channel（登出时调用） */
   dispose(): void;
   /** 订阅某个会话的消息 */
@@ -136,7 +150,7 @@ export interface AgentWsChannel {
   /** 发送 TYPING 信号 */
   sendTyping(sessionId: string): void;
   /** 当前连接状态（响应式） */
-  readonly status: Ref<'closed' | 'connecting' | 'open' | 'error'>;
+  readonly status: Ref<'closed' | 'connecting' | 'kicked' | 'open' | 'error'>;
 }
 ```
 
@@ -149,12 +163,17 @@ let token = '';
 let retryCount = 0;
 let retryTimer: null | ReturnType<typeof setTimeout> = null;
 let heartbeatTimer: null | ReturnType<typeof setInterval> = null;
+let kicked = false; // KICK 模式下被踢出，禁止自动重连
+
+// 多登录配置
+let multiLoginMode: MultiLoginMode = 'BROADCAST';
+let onKickedOutCallback: (() => void) | undefined;
 
 // sessionId → 订阅回调集合
 const subscriberMap = new Map<string, Set<ChannelCallbacks>>();
 
 // 响应式状态（供 UI 展示连接状态）
-const status = ref<'closed' | 'connecting' | 'open' | 'error'>('closed');
+const status = ref<'closed' | 'connecting' | 'kicked' | 'open' | 'error'>('closed');
 ```
 
 ### 3.4 连接建立
@@ -193,6 +212,15 @@ function onMessage(event: MessageEvent): void {
   try {
     msg = JSON.parse(event.data as string);
   } catch {
+    return;
+  }
+
+  // KICKED_OUT：被新登录端踢出，不重连，通知 UI
+  if (msg.type === 'KICKED_OUT') {
+    kicked = true;
+    status.value = 'kicked';
+    ws?.close();
+    onKickedOutCallback?.();
     return;
   }
 
@@ -246,7 +274,8 @@ function scheduleReconnect(): void {
 function onClose(): void {
   ws = null;
   stopHeartbeat();
-  if (status.value !== 'closed') { // closed = 主动 dispose，不重连
+  // kicked = true 时不重连（被踢出），status 已在 onMessage 里设为 'kicked'
+  if (status.value !== 'closed' && !kicked) {
     status.value = 'connecting';
     scheduleReconnect();
   }
@@ -258,14 +287,18 @@ function onClose(): void {
 ```ts
 export function useAgentWsChannel(): AgentWsChannel {
   return {
-    init(t: string) {
+    init(t: string, options?: AgentWsChannelOptions) {
       if (ws) return; // 幂等
       token = t;
+      kicked = false;
+      multiLoginMode = options?.multiLoginMode ?? 'BROADCAST';
+      onKickedOutCallback = options?.onKickedOut;
       window.addEventListener('offline', onBrowserOffline);
       connect();
     },
     dispose() {
       status.value = 'closed';
+      kicked = false;
       clearTimeout(retryTimer ?? undefined);
       stopHeartbeat();
       window.removeEventListener('offline', onBrowserOffline);
@@ -414,9 +447,9 @@ export function useAgentWebSocket(options: AgentWebSocketOptions) {
 ### 5.1 现有协议回顾
 
 ```ts
-// 现有 WsChatMessage 类型（api/session/index.ts）
+// 现有 WsChatMessage 类型（api/session/index.ts）— 新增 KICKED_OUT
 export interface WsChatMessage {
-  type: 'AGENT_JOINED' | 'CONNECTED' | 'MESSAGE' | 'TYPING';
+  type: 'AGENT_JOINED' | 'CONNECTED' | 'KICKED_OUT' | 'MESSAGE' | 'TYPING';
   sessionId: string;   // ← 字段已存在，原先只是"携带信息"，未用于路由
   role?: 'agent' | 'user';
   content?: string;
@@ -425,7 +458,7 @@ export interface WsChatMessage {
 }
 ```
 
-`sessionId` 字段已经在类型定义中，**无需修改类型**。
+`sessionId` 字段已经在类型定义中，**无需修改类型**（仅新增 `KICKED_OUT` 枚举值）。
 
 ### 5.2 发送方向变化
 
@@ -480,6 +513,9 @@ ws.send(JSON.stringify({ type: 'TYPING', sessionId }));
 | `TYPING` | 双向 | ✓ 必填 | — | — | — |
 | `CONNECTED` | 后端→前端 | ✓ 必填 | — | — | — |
 | `AGENT_JOINED` | 后端→前端 | ✓ 必填 | — | — | — |
+| `KICKED_OUT` | 后端→前端 | — | — | — | — |
+
+`KICKED_OUT` 仅在后端配置为 `KICK` 模式时发送，表示当前连接被更新的登录端强制下线。
 
 ## 6. 连接生命周期 & 重连策略
 
@@ -611,11 +647,97 @@ watch(
 
 ### 7.1 场景描述
 
-同一座席在多个浏览器（或同一浏览器的多个标签）同时登录，每个浏览器各自建立一条 WS 连接到 `/ws/agent?token=xxx`。后端解析出的 `agentId` 相同，需要同时维持多条连接。
+同一座席在多个浏览器（或同一浏览器的多个标签）同时登录，每个浏览器各自建立一条 WS 连接到 `/ws/agent?token=xxx`。后端解析出的 `agentId` 相同，需要决策如何处理并发连接。
 
-### 7.2 后端广播模型
+### 7.2 多登录模式（可配置）
 
-后端 `AgentConnectionRegistry` 使用 `Map<agentId, Set<WebSocketSession>>` 而非 `Map<agentId, WebSocketSession>`，支持同一 agentId 注册多条连接：
+后端通过配置项 `agent.ws.multi-login-mode` 控制行为：
+
+| 模式 | 值 | 行为 | 适用场景 |
+|------|-----|------|---------|
+| 广播共存（默认） | `BROADCAST` | 多端同时在线，消息广播给所有连接 | 座席多开标签、双屏工作 |
+| 踢出旧端 | `KICK` | 新端连入时向旧端推送 `KICKED_OUT`，旧端断开且不重连 | 安全要求较高、防止消息泄露 |
+
+**默认选 `BROADCAST`**，符合客服场景的实际使用习惯（座席多开标签很常见）。
+
+### 7.3 BROADCAST 模式（广播共存）
+
+后端 `AgentConnectionRegistry` 使用 `Map<agentId, Set<WebSocketSession>>`，推送时遍历广播：
+
+```
+访客发消息
+    └── ConversationService
+            └── registry.broadcast(agentId, msg)
+                    ├── Browser A 的 WS → 显示消息
+                    └── Browser B 的 WS → 显示消息
+```
+
+前端的 `seq` 去重逻辑确保消息不重复渲染。座席从 Browser A 发消息时，后端 `broadcastExcept` echo 给 Browser B，保持两端同步。
+
+### 7.4 KICK 模式（踢出旧端）
+
+新端连入时，后端找到该 agentId 的所有旧连接，逐一推送 `KICKED_OUT` 消息后关闭：
+
+```
+Browser B 新建连接
+    └── AgentChannelWsHandler.afterConnectionEstablished
+            └── if (mode == KICK)
+                    ├── registry.broadcast(agentId, { type: 'KICKED_OUT' })  // 推给旧端
+                    ├── registry.closeAll(agentId)                            // 关闭旧连接
+                    └── registry.register(agentId, newSession)               // 注册新端
+```
+
+前端收到 `KICKED_OUT` 后：
+
+```ts
+// onMessage 中处理
+if (msg.type === 'KICKED_OUT') {
+  kicked = true;
+  status.value = 'kicked';
+  ws?.close();
+  onKickedOutCallback?.();  // 通知 UI：弹提示 + 跳转登录页或仅提示
+  return;
+}
+```
+
+UI 建议展示提示：**"您的账号已在其他设备登录，当前连接已断开"**，并禁止自动重连。
+
+### 7.5 前端无感知（BROADCAST 模式）
+
+每个浏览器的 `useAgentWsChannel` 只管自己的单条连接，不感知其他浏览器的存在。多浏览器的消息同步完全由后端广播解决，前端代码无需任何修改。
+
+**前提：每个标签页的 `subscriberMap` 如何保证订阅到正确的 session**
+
+"无感知"成立的基础是每个标签页在打开时都会独立完成订阅，依赖两个已有机制：
+
+1. **onMounted 加载活跃会话**：工作台页面挂载时调用 `getActiveSessionsApi()`，拿到当前所有活跃 session，逐一调用 `connectSession(sessionId)` → `channel.subscribe(sessionId, callbacks)`，Tab B 打开时会把已有会话全部订阅进 `subscriberMap`。
+
+2. **SSE 事件驱动新会话订阅**：每个标签页独立订阅 SSE 事件流，收到 `ACCEPTED` 事件时调用 `connectSession(sessionId)`，新会话到来时两个标签页同步完成订阅。
+
+```
+Tab B 打开工作台
+  └── onMounted
+        └── getActiveSessionsApi() → [session-A, session-B]
+              ├── connectSession('session-A') → subscriberMap.set('session-A', callbacks)
+              └── connectSession('session-B') → subscriberMap.set('session-B', callbacks)
+
+新访客入队 → 座席接入
+  └── SSE ACCEPTED 事件
+        ├── Tab A: connectSession('session-C') → subscriberMap.set('session-C', ...)
+        └── Tab B: connectSession('session-C') → subscriberMap.set('session-C', ...)
+```
+
+结论：后端广播把消息推给两个标签的 WS 连接，前端 channel 的分发逻辑能找到对应的 callbacks，消息正确渲染。整个过程前端无需额外的跨标签通信（不需要 BroadcastChannel / SharedWorker）。
+
+### 7.6 异常场景处理
+
+| 场景 | 处理方式 |
+|------|---------|
+| Browser A 断线，Browser B 正常（BROADCAST） | 访客消息仍推给 Browser B；Browser A 重连后拉增量补齐 |
+| 两个浏览器同时离线 | 各自独立重连，重连后各自拉增量（互不影响） |
+| 座席在 Browser A 登出 | `channel.dispose()` 关闭 A 的连接，registry 中 A 被移除；B 不受影响 |
+| 座席关闭会话（结束工单） | 后端广播 `CLOSED` 消息给所有连接，所有浏览器同步移除该会话 |
+| Browser B 连入时 KICK 模式 | Browser A 收到 `KICKED_OUT`，`status='kicked'`，不重连，UI 弹提示 |
 
 ```java
 // AgentConnectionRegistry.java（伪代码）
@@ -725,9 +847,10 @@ Tab B 打开工作台
 |------|------|------|
 | `AgentWsHandler`（旧，按 sessionId 路由） | 废弃 | 替换为 AgentChannelWsHandler |
 | `AgentChannelWsHandler`（新） | 新增 | 处理 `/ws/agent` 端点，按消息体 sessionId 路由 |
-| `AgentConnectionRegistry`（新） | 新增 | `Map<agentId, Set<WsSession>>` 广播模型 |
+| `AgentConnectionRegistry`（新） | 新增 | `Map<agentId, Set<WsSession>>` 广播模型 + KICK 支持 |
 | `AgentHandshakeInterceptor` | 修改 | 去掉 `pathVariable sessionId`，仍从 `?token=` 解析 agentId |
 | WS 路由配置 | 修改 | 注册新端点 `/ws/agent`，保留旧端点至灰度结束后删除 |
+| `application.yml` | 新增 | `agent.ws.multi-login-mode: BROADCAST` 配置项 |
 
 ### 8.2 新端点注册（Spring WebSocket 示例）
 
@@ -858,9 +981,36 @@ public class AgentConnectionRegistry {
     // WsSession.getId() → agentId 反向索引（afterConnectionClosed 时快速查找）
     private final ConcurrentHashMap<String, String> sessionToAgent = new ConcurrentHashMap<>();
 
+    private static final String KICKED_OUT_PAYLOAD = "{\"type\":\"KICKED_OUT\"}";
+
     public void register(String agentId, WebSocketSession session) {
         registry.computeIfAbsent(agentId, k -> new CopyOnWriteArraySet<>()).add(session);
         sessionToAgent.put(session.getId(), agentId);
+    }
+
+    /**
+     * KICK 模式：向 agentId 的所有旧连接推送 KICKED_OUT，关闭旧连接，再注册新连接。
+     * 注意：close() 会触发 afterConnectionClosed → unregister，因此先把旧连接快照，
+     *       再执行踢出，避免并发修改 Set。
+     */
+    public void kickAndRegister(String agentId, WebSocketSession newSession) {
+        CopyOnWriteArraySet<WebSocketSession> existing =
+            registry.getOrDefault(agentId, new CopyOnWriteArraySet<>());
+        List<WebSocketSession> snapshot = new ArrayList<>(existing);
+
+        // 先注册新连接，再踢出旧连接（保证消息不丢）
+        register(agentId, newSession);
+
+        for (WebSocketSession old : snapshot) {
+            if (old.isOpen()) {
+                try {
+                    old.sendMessage(new TextMessage(KICKED_OUT_PAYLOAD));
+                    old.close(CloseStatus.NORMAL);
+                } catch (IOException e) {
+                    log.warn("[WS:Agent] kickAndRegister close failed sid={}", old.getId(), e);
+                }
+            }
+        }
     }
 
     public void unregister(String agentId, WebSocketSession session) {
@@ -898,6 +1048,35 @@ public class AgentConnectionRegistry {
 }
 ```
 
+### 8.7 多登录模式配置
+
+`application.yml`：
+
+```yaml
+agent:
+  ws:
+    # 多登录模式：BROADCAST（默认，多端共存）| KICK（新端踢旧端）
+    multi-login-mode: BROADCAST
+```
+
+`AgentChannelWsHandler` 注入配置，在 `afterConnectionEstablished` 中按模式分支：
+
+```java
+@Value("${agent.ws.multi-login-mode:BROADCAST}")
+private String multiLoginMode;
+
+@Override
+public void afterConnectionEstablished(WebSocketSession session) {
+    String agentId = (String) session.getAttributes().get("agentId");
+    if ("KICK".equalsIgnoreCase(multiLoginMode)) {
+        registry.kickAndRegister(agentId, session);
+    } else {
+        registry.register(agentId, session);
+    }
+    log.info("[WS:Agent] 连接建立 agentId={} mode={}", agentId, multiLoginMode);
+}
+```
+
 ## 9. 迁移计划
 
 ### 9.1 迁移策略
@@ -910,13 +1089,14 @@ public class AgentConnectionRegistry {
 
 ```
 Step 1：后端新增 /ws/agent 端点
-Step 2：后端新增 AgentConnectionRegistry
-Step 3：后端改造消息推送逻辑（broadcast 替换单点发送）
-Step 4：前端新增 useAgentWsChannel.ts
-Step 5：前端改造 useAgentWebSocket.ts（订阅层）
-Step 6：前端在 layouts/basic.vue 绑定登录态生命周期
-Step 7：联调测试（单会话 → 多会话 → 多浏览器 → 断线重连）
-Step 8：清理旧端点 /ws/agent/{sessionId} 及相关代码
+Step 2：后端新增 AgentConnectionRegistry（含 KICK 模式）
+Step 3：后端新增 application.yml 配置项 agent.ws.multi-login-mode
+Step 4：后端改造消息推送逻辑（broadcast 替换单点发送）
+Step 5：前端新增 useAgentWsChannel.ts（含 KICKED_OUT 处理）
+Step 6：前端改造 useAgentWebSocket.ts（订阅层）
+Step 7：前端在 layouts/basic.vue 绑定登录态生命周期，传入 onKickedOut 回调
+Step 8：联调测试（单会话 → 多会话 → 多浏览器 → 断线重连 → KICK 模式）
+Step 9：清理旧端点 /ws/agent/{sessionId} 及相关代码
 ```
 
 ### 9.3 文件变更清单
@@ -953,8 +1133,10 @@ Step 8：清理旧端点 /ws/agent/{sessionId} 及相关代码
 | 多会话并发 | 同时接入 3 个会话，消息按 sessionId 正确路由，互不串扰 |
 | 断线重连 | 模拟网络断开后恢复，channel 自动重连，`fetchMissingForSession` 补齐漏消息 |
 | 重连幂等 | 快速断线重连多次，不出现重复消息 |
-| 多浏览器广播 | 两个浏览器同时登录，访客消息两端均收到，一端发消息另一端 echo |
-| 登出清理 | 登出后 channel 关闭，重新登录后 channel 重建 |
+| 多浏览器广播（BROADCAST） | 两个浏览器同时登录，访客消息两端均收到，一端发消息另一端 echo |
+| KICK 模式踢出 | Browser B 登录后，Browser A 收到 `KICKED_OUT`，`status='kicked'`，不触发重连，UI 弹出提示 |
+| KICK 模式消息不丢 | Browser B 踢出 Browser A 后，新消息仍能正常收发 |
+| 登出清理 | 登出后 channel 关闭，重新登录后 channel 重建，`kicked` 标志重置 |
 | token 刷新 | accessToken 刷新后 channel 用新 token 重建，消息收发正常 |
 | TYPING 信号 | 访客输入中信号正确路由到对应会话，3s 无信号后自动清除 |
 
