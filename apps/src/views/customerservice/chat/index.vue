@@ -80,12 +80,19 @@ const verifying = ref(false);
 let pendingMsg = '';
 let cdTimer: ReturnType<typeof setInterval>;
 
+interface ToolStatus {
+  name: string;
+  status: 'done' | 'error' | 'running';
+  durationMs?: number;
+}
+
 interface Msg {
   id: number;
   role: 'ai' | 'user';
   text: string;
   time: string;
   sources?: string[];
+  tools?: ToolStatus[];
   feedback?: 'down' | 'up' | null;
 }
 
@@ -152,6 +159,26 @@ const sse = useSSEStream(sessionId, {
   },
   onSources: (sources) => {
     if (currentAiMsg) currentAiMsg.sources = sources;
+  },
+  onToolCall: (payload) => {
+    if (!currentAiMsg) return;
+    if (!currentAiMsg.tools) currentAiMsg.tools = [];
+    const idx = currentAiMsg.tools.findIndex((t) => t.name === payload.tool);
+    const s: ToolStatus = { name: payload.tool, status: 'running' };
+    if (idx === -1) currentAiMsg.tools.push(s);
+    else currentAiMsg.tools[idx] = s;
+    scrollBottom();
+  },
+  onToolDone: (payload) => {
+    if (!currentAiMsg?.tools) return;
+    const idx = currentAiMsg.tools.findIndex((t) => t.name === payload.tool);
+    if (idx === -1) return;
+    const isErr = payload.status === 'error' || Boolean(payload.errorMsg);
+    currentAiMsg.tools[idx] = {
+      name: payload.tool,
+      status: isErr ? 'error' : 'done',
+      durationMs: payload.durationMs,
+    };
   },
   onTransfer: () => {
     // 后台管理页暂不处理 AI 转接（无 WS 通道），只在气泡内展示提示语
@@ -413,7 +440,11 @@ function handleEnter(e: KeyboardEvent) {
               >
                 <!-- AI 正在思考动画 -->
                 <span
-                  v-if="sse.streaming.value && m === msgs[msgs.length - 1] && !m.text"
+                  v-if="
+                    sse.streaming.value &&
+                    m === msgs[msgs.length - 1] &&
+                    !m.text
+                  "
                   class="flex gap-1 py-1"
                 >
                   <span
@@ -430,18 +461,44 @@ function handleEnter(e: KeyboardEvent) {
                   ></span>
                 </span>
                 <!-- Markdown 渲染：AI 消息经 DOMPurify 净化，防 XSS -->
-                <div
-                  v-else-if="m.role === 'ai'"
-                  class="chat-ai-md"
-                  v-html="
-                    DOMPurify.sanitize(
-                      marked.parse(m.text, { async: false }) as string,
-                    )
-                  "
-                ></div>
+                <div v-else-if="m.role === 'ai'">
+                  <!-- 工具调用状态条（内嵌到气泡顶部） -->
+                  <div v-if="m.tools && m.tools.length" class="tool-status-row">
+                    <div
+                      v-for="tool in m.tools"
+                      :key="tool.name"
+                      class="tool-status-item"
+                    >
+                      <span v-if="tool.status === 'running'" class="tool-run"
+                        >🔄</span
+                      >
+                      <span v-else-if="tool.status === 'done'" class="tool-ok"
+                        >✅</span
+                      >
+                      <span v-else class="tool-err">❌</span>
+                      <span class="tool-name">{{ tool.name }}</span>
+                      <span v-if="tool.status === 'running'" class="tool-hint"
+                        >查询中...</span
+                      >
+                      <span v-else-if="tool.durationMs" class="tool-hint"
+                        >{{ tool.durationMs }}ms</span
+                      >
+                    </div>
+                  </div>
+                  <div
+                    class="chat-ai-md"
+                    v-html="
+                      DOMPurify.sanitize(
+                        marked.parse(m.text, { async: false }) as string,
+                      )
+                    "
+                  ></div>
+                </div>
                 <div v-else class="chat-user-md">{{ m.text }}</div>
                 <span
-                  v-if="sse.streaming.value && m === msgs[msgs.length - 1] && m.text"
+                  v-if="
+                    sse.streaming.value && m === msgs[msgs.length - 1] && m.text
+                  "
                   class="ml-0.5 inline-block h-3.5 w-0.5 animate-pulse bg-indigo-500 align-middle"
                 ></span>
               </div>
@@ -665,6 +722,46 @@ function handleEnter(e: KeyboardEvent) {
 
 .chat-ai-md li {
   margin: 0.2em 0;
+}
+
+.tool-status-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px dashed #e2e8f0;
+}
+
+.tool-status-item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.tool-status-item .tool-name {
+  font-family: monospace;
+  color: #334155;
+}
+
+.tool-status-item .tool-hint {
+  color: #94a3b8;
+}
+
+.tool-status-item .tool-run {
+  animation: tool-spin 1.2s linear infinite;
+}
+
+@keyframes tool-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .chat-ai-md code {
