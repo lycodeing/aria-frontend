@@ -109,12 +109,15 @@ const transfer = useTransfer(
 );
 
 // 4. WebSocket
+// agentJoined：座席真正接入后才为 true（区别于 transferred，后者在排队时就是 true）
+const agentJoined = ref(false);
 const ws = useVisitorWs(sessionId, readLastSeq, writeLastSeq, {
   onAgentMessage: (content) => {
     appendMsg('agent', content);
     scrollBottom();
   },
   onAgentJoined: () => {
+    agentJoined.value = true;
     scrollBottom();
   },
   onSessionClosed: () => {
@@ -123,14 +126,16 @@ const ws = useVisitorWs(sessionId, readLastSeq, writeLastSeq, {
       subType: 'session_end',
     });
     transfer.clearTransferred(sessionId.value);
+    agentJoined.value = false;
     sessionEnded.value = true;
   },
   onMaxRetryExceeded: () => {
-    appendMsg('ai', '⚠️ 与客服的连接已断开，请重新点击「转人工」或刷新页面。');
+    // 静默处理：不在聊天框展示断线提示，仅清理转接状态
     transfer.clearTransferred(sessionId.value);
+    agentJoined.value = false;
   },
-  onReconnecting: (attempt, delaySec) => {
-    appendMsg('ai', `⚠️ 连接中断，${delaySec}s 后自动重连（${attempt}/3）...`);
+  onReconnecting: (_attempt, _delaySec) => {
+    // 静默重连，不在聊天框展示倒计时提示
   },
 });
 
@@ -270,10 +275,11 @@ function handleEnter(e: KeyboardEvent) {
   }
 }
 
-// 访客输入中信号：仅在转人工模式下发送，防抖 500ms 避免频繁触发
+// 访客输入中信号：仅在座席已接入（agentJoined）时发送。
+// transferred=true 时会话可能仍在排队（WAITING），座席未接入，发送无意义。
 let typingDebounceTimer: null | ReturnType<typeof setTimeout> = null;
 function handleTypingInput() {
-  if (!transfer.transferred.value) return;
+  if (!agentJoined.value) return;
   if (typingDebounceTimer) return; // 防抖：500ms 内只发一次
   ws.sendTyping();
   typingDebounceTimer = setTimeout(() => {
