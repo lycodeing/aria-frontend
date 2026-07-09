@@ -18,6 +18,9 @@ import { preferences, usePreferences } from '@vben/preferences';
 import { useAccessStore, useUserStore } from '@vben/stores';
 import { openWindow } from '@vben/utils';
 
+import { message as antMessage } from 'ant-design-vue';
+
+import { useAgentWsChannel } from '#/composables/useAgentWsChannel';
 import { $t } from '#/locales';
 import { useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
@@ -129,6 +132,43 @@ const avatar = computed(() => {
 async function handleLogout() {
   await authStore.logout(false);
 }
+
+// ===== 座席端 WS Channel 生命周期（绑定登录态） =====
+// Channel 在 accessToken 存在时建连，token 刷新时换 token 重建，登出时销毁。
+// 设计文档：docs/superpowers/specs/2026-07-09-agent-ws-single-channel-design.md
+const agentChannel = useAgentWsChannel();
+
+watch(
+  () => accessStore.accessToken,
+  (newToken, oldToken) => {
+    if (newToken && !oldToken) {
+      // 首次登录：全量初始化
+      agentChannel.init(newToken, {
+        onKickedOut: () => {
+          antMessage.warning('您的账号已在其他设备登录，当前连接已断开');
+        },
+      });
+    } else if (newToken && newToken !== oldToken) {
+      // token 刷新：保留 subscriberMap，只换 token 重建 WS
+      agentChannel.reconnect(newToken);
+    } else if (!newToken) {
+      // 登出：销毁 channel
+      agentChannel.dispose();
+    }
+  },
+  { immediate: true },
+);
+
+// 401 握手失败耗尽重试后 status='error'。
+// token 刷新由 HTTP 拦截器处理；此处仅在 WS 连接彻底失败时提示用户刷新页面。
+watch(
+  () => agentChannel.status.value,
+  (s) => {
+    if (s === 'error') {
+      antMessage.warning('与服务器的连接已断开，请刷新页面重试');
+    }
+  },
+);
 
 function handleNoticeClear() {
   notifications.value = [];
