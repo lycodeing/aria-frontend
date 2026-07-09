@@ -685,6 +685,29 @@ Browser A 发消息
 
 每个浏览器的 `useAgentWsChannel` 只管自己的单条连接，不感知其他浏览器的存在。多浏览器的消息同步完全由后端广播解决，前端代码无需任何修改。
 
+**前提：每个标签页的 `subscriberMap` 如何保证订阅到正确的 session**
+
+"无感知"成立的基础是每个标签页在打开时都会独立完成订阅，依赖两个已有机制：
+
+1. **onMounted 加载活跃会话**：工作台页面挂载时调用 `getActiveSessionsApi()`，拿到当前所有活跃 session，逐一调用 `connectSession(sessionId)` → `channel.subscribe(sessionId, callbacks)`，Tab B 打开时会把已有会话全部订阅进 `subscriberMap`。
+
+2. **SSE 事件驱动新会话订阅**：每个标签页独立订阅 SSE 事件流，收到 `ACCEPTED` 事件时调用 `connectSession(sessionId)`，新会话到来时两个标签页同步完成订阅。
+
+```
+Tab B 打开工作台
+  └── onMounted
+        └── getActiveSessionsApi() → [session-A, session-B]
+              ├── connectSession('session-A') → subscriberMap.set('session-A', callbacks)
+              └── connectSession('session-B') → subscriberMap.set('session-B', callbacks)
+
+新访客入队 → 座席接入
+  └── SSE ACCEPTED 事件
+        ├── Tab A: connectSession('session-C') → subscriberMap.set('session-C', ...)
+        └── Tab B: connectSession('session-C') → subscriberMap.set('session-C', ...)
+```
+
+结论：后端广播把消息推给两个标签的 WS 连接，前端 channel 的分发逻辑能找到对应的 callbacks，消息正确渲染。整个过程前端无需额外的跨标签通信（不需要 BroadcastChannel / SharedWorker）。
+
 ### 7.6 异常场景处理
 
 | 场景 | 处理方式 |
