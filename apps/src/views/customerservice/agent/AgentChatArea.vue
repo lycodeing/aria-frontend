@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ClosedView, Msg, SessionData } from './types';
 
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
 import { Icon } from '@iconify/vue';
 import { Button, Spin } from 'ant-design-vue';
@@ -47,6 +47,27 @@ const MSG_FILTER_OPTIONS = [
 function renderMarkdown(text: string): string {
   return DOMPurify.sanitize(String(marked.parse(text)));
 }
+
+/**
+ * 预渲染 AI 消息 Markdown，按 msg.id 缓存。
+ * 用 computed 替代模板内直接调用，避免父组件每次 re-render 都重新 parse 全部消息。
+ */
+const renderedHtmlMap = computed<Record<number, string>>(() => {
+  const map: Record<number, string> = {};
+  for (const m of props.filteredMsgs) {
+    if (m.role === 'ai' && m.text) {
+      map[m.id] = renderMarkdown(m.text);
+    }
+  }
+  if (props.closedView) {
+    for (const m of props.closedView.msgs) {
+      if (m.role === 'ai' && m.text) {
+        map[m.id] = renderMarkdown(m.text);
+      }
+    }
+  }
+  return map;
+});
 
 /** 检测是否是后端序列化的 SystemMessage { text = "..." } 格式 */
 function isSystemPrompt(text: string): boolean {
@@ -371,7 +392,7 @@ function toggleClosedTool(id: number) {
               <div
                 v-if="m.role === 'ai'"
                 class="agent-ai-md"
-                v-html="renderMarkdown(m.text)"
+                v-html="renderedHtmlMap[m.id] ?? ''"
               ></div>
               <span
                 v-else
@@ -612,7 +633,7 @@ function toggleClosedTool(id: number) {
                 <div
                   v-if="m.role === 'ai'"
                   class="agent-ai-md"
-                  v-html="renderMarkdown(m.text)"
+                  v-html="renderedHtmlMap[m.id] ?? ''"
                 ></div>
                 <span
                   v-else

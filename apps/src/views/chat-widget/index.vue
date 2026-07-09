@@ -140,30 +140,35 @@ const sse = useSSEStream(
   {
     onToken: (text) => {
       // 将 token 追加到当前 AI 气泡（由 replyFor 创建并传引用）
-      if (currentAiMsg) {
-        currentAiMsg.text += text;
-        scrollBottom();
+      if (currentAiMsgId !== null) {
+        const m = getCurrentAiMsg();
+        if (m) {
+          m.text += text;
+          scrollBottom();
+        }
       }
     },
     onSources: (sources) => {
-      if (currentAiMsg) currentAiMsg.sources = sources;
+      const m = getCurrentAiMsg();
+      if (m) m.sources = sources;
     },
     onToolCall: (payload) => {
-      // 工具调用中：把状态内嵌到当前 AI 气泡（同名工具去重覆盖）
-      if (!currentAiMsg) return;
-      if (!currentAiMsg.tools) currentAiMsg.tools = [];
-      const idx = currentAiMsg.tools.findIndex((t) => t.name === payload.tool);
+      const m = getCurrentAiMsg();
+      if (!m) return;
+      if (!m.tools) m.tools = [];
+      const idx = m.tools.findIndex((t) => t.name === payload.tool);
       const status = { name: payload.tool, status: 'running' as const };
-      if (idx === -1) currentAiMsg.tools.push(status);
-      else currentAiMsg.tools[idx] = status;
+      if (idx === -1) m.tools.push(status);
+      else m.tools[idx] = status;
       scrollBottom();
     },
     onToolDone: (payload) => {
-      if (!currentAiMsg?.tools) return;
-      const idx = currentAiMsg.tools.findIndex((t) => t.name === payload.tool);
+      const m = getCurrentAiMsg();
+      if (!m?.tools) return;
+      const idx = m.tools.findIndex((t) => t.name === payload.tool);
       if (idx === -1) return;
       const isErr = payload.status === 'error' || Boolean(payload.errorMsg);
-      currentAiMsg.tools[idx] = {
+      m.tools[idx] = {
         name: payload.tool,
         status: isErr ? 'error' : 'done',
         durationMs: payload.durationMs,
@@ -176,9 +181,10 @@ const sse = useSSEStream(
       ws.connect(sessionId.value);
     },
     onError: (msg) => {
-      if (currentAiMsg) {
-        currentAiMsg.text = msg;
-        currentAiMsg.failed = true;
+      const m = getCurrentAiMsg();
+      if (m) {
+        m.text = msg;
+        m.failed = true;
       }
     },
     onDone: () => {
@@ -188,8 +194,30 @@ const sse = useSSEStream(
   () => domainCode.value,
 );
 
-/** 当前正在流式填充的 AI 气泡（reactive proxy 引用） */
-let currentAiMsg: Msg | null = null;
+/** 当前正在流式填充的 AI 气泡 ID（通过 ID 查找规避 splice 后 proxy 引用失效） */
+let currentAiMsgId: null | number = null;
+
+/** 获取当前流式气泡的响应式引用，找不到返回 null */
+function getCurrentAiMsg(): Msg | null {
+  if (currentAiMsgId === null) return null;
+  return msgs.value.find((m) => m.id === currentAiMsgId) ?? null;
+}
+
+/**
+ * Markdown 渲染缓存：按 msg.id 缓存 DOMPurify 净化后的 HTML，
+ * 避免每次 re-render 都对全部 AI 消息重新执行 marked.parse + sanitize。
+ */
+const renderedHtmlMap = computed<Record<number, string>>(() => {
+  const map: Record<number, string> = {};
+  for (const m of msgs.value) {
+    if (m.role === 'ai' && m.text) {
+      map[m.id] = DOMPurify.sanitize(
+        marked.parse(m.text, { async: false }) as string,
+      );
+    }
+  }
+  return map;
+});
 
 // ===== 生命周期 =====
 
@@ -261,7 +289,7 @@ function quickAsk(q: string) {
 // ===== AI 流式回复 =====
 
 async function replyFor(text: string) {
-  currentAiMsg = appendMsg('ai', '', { sources: [], retryText: text });
+  currentAiMsgId = appendMsg('ai', '', { sources: [], retryText: text }).id;
   scrollBottom();
   await sse.send(text);
 }
@@ -320,7 +348,7 @@ async function copyText(text: string) {
 
 function clearHistory() {
   clearSession();
-  currentAiMsg = null;
+  currentAiMsgId = null;
   sessionEnded.value = false;
   // 清除后立即初始化新 sessionId，避免用户下一条消息发送时无 sessionId
   initSession();
@@ -344,7 +372,7 @@ function startNewSession() {
   sessionId.value = newSid;
   sessionEnded.value = false;
   transfer.clearTransferred(newSid);
-  currentAiMsg = null;
+  currentAiMsgId = null;
   inputText.value = '';
 }
 </script>
@@ -613,11 +641,7 @@ function startNewSession() {
                   <div
                     v-if="m.text"
                     class="widget-ai-md"
-                    v-html="
-                      DOMPurify.sanitize(
-                        marked.parse(m.text, { async: false }) as string,
-                      )
-                    "
+                    v-html="renderedHtmlMap[m.id] ?? ''"
                   ></div>
                 </template>
                 <span

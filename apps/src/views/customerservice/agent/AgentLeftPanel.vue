@@ -212,7 +212,7 @@ const queueStateTabs = [
         </template>
 
         <!-- 等待人工 Tab -->
-        <template v-if="queueStateTab === 'waiting'">
+        <template v-else-if="queueStateTab === 'waiting'">
           <div v-if="visiblePagedQueue.length" class="space-y-2">
             <div
               v-for="item in visiblePagedQueue"
