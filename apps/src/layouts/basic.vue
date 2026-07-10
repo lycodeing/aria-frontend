@@ -21,6 +21,7 @@ import { openWindow } from '@vben/utils';
 import { message as antMessage } from 'ant-design-vue';
 
 import { useAgentWsChannel } from '#/composables/useAgentWsChannel';
+import { useSessionQueueChannel } from '#/composables/useSessionQueueChannel';
 import { $t } from '#/locales';
 import { useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
@@ -168,6 +169,27 @@ watch(
       antMessage.warning('与服务器的连接已断开，请刷新页面重试');
     }
   },
+);
+
+// ===== 座席端 SSE Queue Channel 生命周期（绑定登录态） =====
+// 随 WS Channel 同步建连/销毁，保证离开 agent 页面后队列推送不中断。
+const queueChannel = useSessionQueueChannel();
+
+watch(
+  () => accessStore.accessToken,
+  async (newToken, oldToken) => {
+    if (newToken && !oldToken) {
+      // 首次登录：建立 SSE 连接 + 加载初始队列
+      queueChannel.init(newToken);
+      await queueChannel.loadQueue();
+    } else if (!newToken) {
+      // 登出：销毁 SSE channel
+      queueChannel.dispose();
+    }
+    // token 刷新时 SSE 连接不受影响（EventSource 使用 query-token，
+    // token 变更后浏览器下一次重连自动携带新 token）
+  },
+  { immediate: true },
 );
 
 function handleNoticeClear() {
