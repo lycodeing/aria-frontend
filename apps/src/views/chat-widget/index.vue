@@ -130,12 +130,12 @@ const ws = useVisitorWs(sessionId, readLastSeq, writeLastSeq, {
     sessionEnded.value = true;
   },
   onMaxRetryExceeded: () => {
-    // 静默处理：不在聊天框展示断线提示，仅清理转接状态
-    transfer.clearTransferred(sessionId.value);
+    // 重试耗尽：仅清除座席已接入标记，保留转接状态让用户可手动重连
+    // （wsStatus 变为 'disconnected'，banner 自动切换为红色「立即重连」按钮）
     agentJoined.value = false;
   },
   onReconnecting: (_attempt, _delaySec) => {
-    // 静默重连，不在聊天框展示倒计时提示
+    // wsStatus 已变为 'connecting'，banner 会自动显示旋转动画，无需额外处理
   },
 });
 
@@ -507,6 +507,71 @@ function startNewSession() {
           >
           后可查询订单、申请退款等。
         </div>
+      </div>
+
+      <!-- ===== WS 重连提示条（转人工模式下断线时显示） ===== -->
+      <div
+        v-if="transfer.transferred.value && ws.wsStatus.value !== 'connected'"
+        class="mx-4 mt-2 shrink-0 flex items-center gap-2.5 rounded-lg px-3.5 py-2.5"
+        :style="
+          ws.wsStatus.value === 'connecting'
+            ? 'background:#fff7e6;border:1px solid #ffd591'
+            : 'background:#fff1f0;border:1px solid #ffa39e'
+        "
+      >
+        <Icon
+          :icon="
+            ws.wsStatus.value === 'connecting'
+              ? 'lucide:loader-2'
+              : 'lucide:wifi-off'
+          "
+          class="shrink-0 text-sm"
+          :class="[ws.wsStatus.value === 'connecting' ? 'animate-spin' : '']"
+          :style="
+            ws.wsStatus.value === 'connecting'
+              ? 'color:#d46b08'
+              : 'color:#cf1322'
+          "
+        />
+        <span
+          class="flex-1 text-xs"
+          :style="
+            ws.wsStatus.value === 'connecting'
+              ? 'color:#d46b08'
+              : 'color:#cf1322'
+          "
+        >
+          {{
+            ws.wsStatus.value === 'connecting'
+              ? '正在自动重连，消息可能短暂延迟…'
+              : '会话连接已断开，自动重连已停止'
+          }}
+        </span>
+        <!-- 重连中：脉冲点 -->
+        <div
+          v-if="ws.wsStatus.value === 'connecting'"
+          class="flex items-center"
+        >
+          <span class="relative flex h-2 w-2">
+            <span
+              class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60"
+              style="background: #d46b08"
+            ></span>
+            <span
+              class="relative inline-flex h-2 w-2 rounded-full"
+              style="background: #d46b08"
+            ></span>
+          </span>
+        </div>
+        <!-- 断线停止：手动重连按钮 -->
+        <button
+          v-else
+          class="shrink-0 rounded px-2.5 py-1 text-xs font-medium transition"
+          style="color: #cf1322; background: #fff1f0; border: 1px solid #ffa39e"
+          @click="ws.connect(sessionId)"
+        >
+          立即重连
+        </button>
       </div>
 
       <!-- ===== 消息区 ===== -->

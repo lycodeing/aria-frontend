@@ -17,31 +17,31 @@ export default defineConfig(async () => {
             target: 'http://localhost:8084',
           },
 
-          // conversation-service (8082)：对话 + 会话队列 + DIT 管理
+          // WebSocket 双向对话（经 nginx 8090 负载均衡到 conversation-service 集群）
+          '/ws': {
+            changeOrigin: true,
+            target: 'http://localhost:8090',
+            ws: true,
+          },
+
+          // conversation-service (经 nginx 8090 负载均衡)：对话 + 会话队列 + DIT 管理
           '/api/v1/chat': {
             changeOrigin: true,
-            target: 'http://localhost:8082',
+            target: 'http://localhost:8090',
           },
           '/api/v1/sessions': {
             changeOrigin: true,
-            target: 'http://localhost:8082',
+            target: 'http://localhost:8090',
           },
           '/api/v1/admin/dit': {
             changeOrigin: true,
-            target: 'http://localhost:8082',
+            target: 'http://localhost:8090',
           },
 
-          // conversation-service (8082)：Dashboard 统计接口
+          // conversation-service (经 nginx 8090)：Dashboard 统计接口
           '/api/v1/dashboard': {
             changeOrigin: true,
-            target: 'http://localhost:8082',
-          },
-
-          // WebSocket 双向对话（conversation-service 8082）
-          '/ws': {
-            changeOrigin: true,
-            target: 'http://localhost:8082',
-            ws: true,
+            target: 'http://localhost:8090',
           },
 
           // auth-service (8083)：兜底规则，匹配其他所有 /api/v1/** 请求
