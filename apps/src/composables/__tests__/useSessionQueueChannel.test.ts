@@ -139,7 +139,7 @@ describe('useSessionQueueChannel', () => {
 
   // ---- ENQUEUE ----
 
-  it('eNQUEUE 事件加入 queue', async () => {
+  it('enqueue 事件加入 queue', async () => {
     channel.init();
     getEs().emit('open');
     getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s1', '张三') });
@@ -148,7 +148,7 @@ describe('useSessionQueueChannel', () => {
     expect(channel.queue.value[0]?.id).toBe('s1');
   });
 
-  it('eNQUEUE 事件触发 onEnqueue 回调', async () => {
+  it('enqueue 事件触发 onEnqueue 回调', async () => {
     const handler = vi.fn();
     channel.init();
     channel.onEnqueue(handler);
@@ -159,7 +159,7 @@ describe('useSessionQueueChannel', () => {
     expect(handler.mock.calls[0]?.[0]?.id).toBe('s2');
   });
 
-  it('eNQUEUE 去重：同 sessionId 不重复添加', async () => {
+  it('enqueue 去重：同 sessionId 不重复添加', async () => {
     channel.init();
     getEs().emit('open');
     const payload = { type: 'ENQUEUE', item: makeItem('s3', '王五') };
@@ -171,7 +171,7 @@ describe('useSessionQueueChannel', () => {
 
   // ---- ACCEPTED ----
 
-  it('aCCEPTED 事件从 queue 移除，不触发 onClosed', async () => {
+  it('accepted 事件从 queue 移除，不触发 onClosed', async () => {
     const closedHandler = vi.fn();
     channel.init();
     channel.onClosed(closedHandler);
@@ -185,7 +185,7 @@ describe('useSessionQueueChannel', () => {
 
   // ---- CLOSED ----
 
-  it('cLOSED 事件从 queue 移除并触发 onClosed', async () => {
+  it('closed 事件从 queue 移除并触发 onClosed', async () => {
     const closedHandler = vi.fn();
     channel.init();
     channel.onClosed(closedHandler);
@@ -199,7 +199,7 @@ describe('useSessionQueueChannel', () => {
 
   // ---- TRANSFER ----
 
-  it('tRANSFER 事件从 queue 移除并触发 onTransfer', async () => {
+  it('transfer 事件从 queue 移除并触发 onTransfer', async () => {
     const transferHandler = vi.fn();
     channel.init();
     channel.onTransfer(transferHandler);
@@ -220,7 +220,7 @@ describe('useSessionQueueChannel', () => {
 
   // ---- 断线重连 ----
 
-  it('sSE error 触发重连，sseConnected=false', async () => {
+  it('sse error 触发重连，sseConnected=false', async () => {
     vi.useFakeTimers();
     channel.init();
     getEs().emit('open');
@@ -246,6 +246,25 @@ describe('useSessionQueueChannel', () => {
     await nextTick();
     expect(lastEventSource).not.toBe(first);
     expect(lastEventSource).not.toBeNull();
+  });
+
+  it('mAX_RETRIES 耗尽后停止重连，sseStatus=error', async () => {
+    vi.useFakeTimers();
+    channel.init();
+    const MAX = 10;
+    for (let i = 0; i < MAX; i++) {
+      const es = getEs();
+      es.emit('error');
+      await nextTick();
+      vi.advanceTimersByTime(30_001); // advance past max delay
+      await nextTick();
+    }
+    // 第 MAX+1 次 error 触发耗尽逻辑（sseRetryCount 此时已等于 MAX_RETRIES）
+    getEs().emit('error');
+    await nextTick();
+    expect(channel.sseStatus.value).toBe('error');
+    expect(channel.sseConnected.value).toBe(false);
+    vi.useRealTimers();
   });
 
   // ---- dispose ----

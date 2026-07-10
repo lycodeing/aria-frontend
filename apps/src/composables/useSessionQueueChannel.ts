@@ -31,6 +31,7 @@ export interface SessionQueueChannel {
   offClosed(handler: ClosedHandler): void;
   onTransfer(handler: TransferHandler): void;
   offTransfer(handler: TransferHandler): void;
+  removeFromQueue(id: string): void;
 }
 
 // ---- 重连常量 ----
@@ -163,8 +164,7 @@ export function useSessionQueueChannel(): SessionQueueChannel {
     sseConnected,
     sseStatus,
 
-    // token は subscribeSessionEvents 内部で useAccessStore から取得するため、
-    // パラメータは不要。(M-1)
+    // token 由 subscribeSessionEvents 内部通过 useAccessStore 读取，无需外部传入。
     init() {
       if (eventSource) return; // 幂等：已连接则不重复建连
       sseRetryCount = 0;
@@ -179,14 +179,13 @@ export function useSessionQueueChannel(): SessionQueueChannel {
       queue.value.splice(0);
       sseRetryCount = 0;
       sseStatus.value = 'closed';
-      // 清空所有事件监听器，防止 logout → re-login 场景下回调残留
-      enqueueHandlers.clear();
-      closedHandlers.clear();
-      transferHandlers.clear();
+      // handler Sets are not cleared here: page components are responsible for
+      // calling offClosed/offTransfer in their own onUnmounted hooks.
     },
 
     reconnect() {
       sseRetryCount = 0;
+      sseStatus.value = 'connecting';
       _connect();
     },
 
@@ -209,6 +208,10 @@ export function useSessionQueueChannel(): SessionQueueChannel {
     },
     offTransfer(handler) {
       transferHandlers.delete(handler);
+    },
+    removeFromQueue(id: string) {
+      const idx = queue.value.findIndex((q) => q.id === id);
+      if (idx !== -1) queue.value.splice(idx, 1);
     },
   };
 }

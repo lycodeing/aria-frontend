@@ -182,12 +182,13 @@ watch(
       // 首次登录：建立 SSE 连接 + 加载初始队列
       queueChannel.init();
       await queueChannel.loadQueue();
+    } else if (newToken && newToken !== oldToken) {
+      // token 刷新：重建 SSE 连接以使用新 token
+      queueChannel.reconnect();
     } else if (!newToken) {
       // 登出：销毁 SSE channel
       queueChannel.dispose();
     }
-    // token 刷新时 SSE 连接不受影响（EventSource 使用 query-token，
-    // token 变更后浏览器下一次重连自动携带新 token）
   },
   { immediate: true },
 );

@@ -465,8 +465,7 @@ watch(
 
 async function acceptItem(item: QueueItem): Promise<ApiSessionItem> {
   await acceptSessionApi(item.id);
-  const filtered = queue.value.filter((q) => q.id !== item.id);
-  queue.value.splice(0, queue.value.length, ...filtered);
+  queueChannel.removeFromQueue(item.id);
   return {
     sessionId: item.id,
     userName: item.name,
