@@ -174,6 +174,10 @@ export function useSessionQueueChannel(): SessionQueueChannel {
       _stopWaitTimer();
       queue.value = [];
       sseRetryCount = 0;
+      // 清空所有事件监听器，防止 logout → re-login 场景下回调残留
+      enqueueHandlers.clear();
+      closedHandlers.clear();
+      transferHandlers.clear();
     },
 
     reconnect() {
