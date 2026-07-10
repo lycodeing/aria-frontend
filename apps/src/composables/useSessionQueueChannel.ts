@@ -116,6 +116,7 @@ function _connect(): void {
       if (eventSource !== es) return;
       // 断线：指数退避重连
       sseConnected.value = false;
+      es.close(); // 阻止原生 EventSource 自动重连，避免与 setTimeout 重连并存（双重连接）
       eventSource = null;
       if (sseRetryCount >= MAX_RETRIES) {
         sseStatus.value = 'error';
