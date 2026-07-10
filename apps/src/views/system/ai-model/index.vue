@@ -19,6 +19,7 @@ import {
   SelectOption,
   Space,
   Spin,
+  Switch,
   Table,
   TabPane,
   Tabs,
@@ -35,6 +36,7 @@ import {
   PROVIDERS,
   setDefaultAiModelApi,
   testAiModelApi,
+  toggleAiModelEnabledApi,
   updateAiModelApi,
 } from '#/api/ai-model';
 
@@ -58,8 +60,8 @@ const loading = ref(false);
 async function loadList() {
   loading.value = true;
   try {
-    const res = await listAiModelsApi(1, 50, activeTab.value);
-    list.value = (res as any)?.records ?? [];
+    const res = await listAiModelsApi(0, 50, activeTab.value);
+    list.value = res?.items ?? [];
   } catch {
     message.error('加载列表失败');
   } finally {
@@ -86,6 +88,7 @@ const emptyForm = (): Partial<AiModelConfigItem> => {
       temperature: 0,
       maxTokens: 0,
       timeoutSec: 30,
+      isEnabled: true,
       remark: '',
     };
   }
@@ -101,6 +104,7 @@ const emptyForm = (): Partial<AiModelConfigItem> => {
       temperature: 0,
       maxTokens: 32,
       timeoutSec: 5,
+      isEnabled: true,
       remark: '',
     };
   }
@@ -115,6 +119,7 @@ const emptyForm = (): Partial<AiModelConfigItem> => {
     temperature: 0.7,
     maxTokens: 2048,
     timeoutSec: 60,
+    isEnabled: true,
     remark: '',
   };
 };
@@ -203,6 +208,18 @@ function confirmDelete(row: AiModelConfigItem) {
   });
 }
 
+// ===== 启用/禁用 =====
+async function toggleEnable(row: AiModelConfigItem) {
+  const newStatus = !row.isEnabled;
+  try {
+    await toggleAiModelEnabledApi(row.id, newStatus);
+    message.success(`「${row.name}」已${newStatus ? '启用' : '禁用'}`);
+    loadList();
+  } catch {
+    message.error('操作失败');
+  }
+}
+
 onMounted(loadList);
 
 // ===== 测试连接 =====
@@ -267,7 +284,7 @@ const routerColumns = [
 
 const columns = computed(() => {
   if (isEmbeddingTab.value) return embeddingColumns;
-  if (isRouterTab.value)    return routerColumns;
+  if (isRouterTab.value) return routerColumns;
   return chatColumns;
 });
 </script>
@@ -313,6 +330,15 @@ const columns = computed(() => {
         </template>
         <template v-else-if="column.key === 'action'">
           <Space>
+            <Button
+              size="small"
+              :type="
+                (record as AiModelConfigItem).isEnabled ? 'default' : 'primary'
+              "
+              @click="toggleEnable(record as AiModelConfigItem)"
+            >
+              {{ (record as AiModelConfigItem).isEnabled ? '禁用' : '启用' }}
+            </Button>
             <Button
               size="small"
               :disabled="(record as AiModelConfigItem).isDefault"
@@ -489,7 +515,11 @@ const columns = computed(() => {
         <!-- 路由模型：Max Tokens（输出极短）和超时（要求快速响应）-->
         <template v-else>
           <div style="display: flex; gap: 12px">
-            <FormItem label="Max Tokens" style="flex: 1" help="路由模型只输出域 code，设 32 即可">
+            <FormItem
+              label="Max Tokens"
+              style="flex: 1"
+              help="路由模型只输出域 code，设 32 即可"
+            >
               <InputNumber
                 v-model:value="form.maxTokens"
                 :min="1"
@@ -497,7 +527,11 @@ const columns = computed(() => {
                 style="width: 100%"
               />
             </FormItem>
-            <FormItem label="超时（秒）" style="flex: 1" help="路由判断需快速响应，建议 ≤ 10s">
+            <FormItem
+              label="超时（秒）"
+              style="flex: 1"
+              help="路由判断需快速响应，建议 ≤ 10s"
+            >
               <InputNumber
                 v-model:value="form.timeoutSec"
                 :min="1"
@@ -507,6 +541,17 @@ const columns = computed(() => {
             </FormItem>
           </div>
         </template>
+
+        <FormItem label="启用状态">
+          <Switch
+            v-model:checked="form.isEnabled"
+            checked-children="启用"
+            un-checked-children="禁用"
+          />
+          <span class="ml-2 text-xs opacity-50"
+            >禁用后该模型不参与对话和路由</span
+          >
+        </FormItem>
 
         <FormItem label="备注">
           <Textarea

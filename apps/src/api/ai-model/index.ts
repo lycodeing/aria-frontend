@@ -21,16 +21,16 @@ export interface AiModelConfigItem {
 }
 
 export interface AiModelPageResult {
-  records: AiModelConfigItem[];
+  items: AiModelConfigItem[];
   total: number;
   size: number;
-  current: number;
+  page: number;
 }
 
 export const MODEL_TYPES = [
   { value: 'CHAT', label: '对话模型' },
   { value: 'EMBEDDING', label: '向量模型' },
-  { value: 'ROUTER',    label: '路由模型' },
+  { value: 'ROUTER', label: '路由模型' },
 ];
 
 export const PROVIDERS = [
@@ -73,15 +73,13 @@ export const PROVIDER_PROTOCOL_MAP: Record<string, string> = {
 
 /**
  * 分页查询 AI 模型配置。
- * @param modelType 可选，'CHAT' 或 'EMBEDDING'，不传则返回全部
+ * @param page      0-based 页码，默认 0
+ * @param size      每页条数，默认 20
+ * @param modelType 可选，'CHAT' / 'EMBEDDING' / 'ROUTER'，不传则返回全部
  */
-export async function listAiModelsApi(
-  pageNum = 1,
-  pageSize = 20,
-  modelType?: string,
-) {
+export async function listAiModelsApi(page = 0, size = 20, modelType?: string) {
   return requestClient.get<AiModelPageResult>('/admin/ai-models', {
-    params: { pageNum, pageSize, ...(modelType ? { modelType } : {}) },
+    params: { page, size, ...(modelType ? { modelType } : {}) },
   });
 }
 
@@ -94,6 +92,16 @@ export async function updateAiModelApi(
   data: Partial<AiModelConfigItem>,
 ) {
   return requestClient.put<undefined>(`/admin/ai-models/${id}`, data);
+}
+
+/**
+ * 启用/禁用 AI 模型配置。
+ * 使用独立的 PATCH 端点，避免触发 PUT 接口的完整字段校验。
+ */
+export async function toggleAiModelEnabledApi(id: number, enabled: boolean) {
+  return requestClient.patch<undefined>(`/admin/ai-models/${id}/enabled`, {
+    enabled,
+  });
 }
 
 export async function setDefaultAiModelApi(id: number) {

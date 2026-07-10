@@ -37,9 +37,9 @@ async function loadRoles() {
   loading.value = true;
   try {
     const res: any = await requestClient.get('/roles', {
-      params: { keyword: keyword.value || undefined, pageSize: 50 },
+      params: { keyword: keyword.value || undefined, size: 50 },
     });
-    roles.value = res.list ?? res.items ?? [];
+    roles.value = res.items ?? [];
   } catch {
     // 演示数据
     roles.value = [
@@ -98,6 +98,42 @@ async function submitCreate() {
   } catch {
     /* 校验失败 */
   }
+}
+
+// ===== 编辑角色 =====
+const editVisible = ref(false);
+const editRef = ref();
+const editingRole = ref<null | RoleVO>(null);
+const editForm = ref({ roleName: '', status: '' });
+
+function openEditRole(role: RoleVO) {
+  editingRole.value = role;
+  editForm.value = { roleName: role.roleName, status: role.status };
+  editVisible.value = true;
+}
+
+async function submitEdit() {
+  try {
+    await editRef.value?.validate();
+    if (!editingRole.value) return;
+    await requestClient.put(`/roles/${editingRole.value.id}`, editForm.value);
+    message.success(`角色 ${editForm.value.roleName} 已更新`);
+    editVisible.value = false;
+    loadRoles();
+  } catch {
+    /* 校验或接口失败 */
+  }
+}
+
+async function toggleRoleStatus(role: RoleVO) {
+  const newStatus = role.status === 'active' ? 'inactive' : 'active';
+  await requestClient
+    .put(`/roles/${role.id}`, { roleName: role.roleName, status: newStatus })
+    .catch(() => null);
+  role.status = newStatus;
+  message.success(
+    `角色 ${role.roleName} 已${newStatus === 'active' ? '启用' : '停用'}`,
+  );
 }
 
 // ===== 分配菜单抽屉 =====
@@ -252,6 +288,21 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
             <Button
               size="small"
               type="link"
+              @click="openEditRole(record as RoleVO)"
+            >
+              编辑
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              :disabled="record.isSystem"
+              @click="toggleRoleStatus(record as RoleVO)"
+            >
+              {{ record.status === 'active' ? '停用' : '启用' }}
+            </Button>
+            <Button
+              size="small"
+              type="link"
               @click="openMenuDrawer(record as RoleVO)"
             >
               分配菜单
@@ -300,6 +351,35 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
         >
           <Input
             v-model:value="createForm.roleName"
+            placeholder="如 客服管理员"
+          />
+        </FormItem>
+      </Form>
+    </Modal>
+
+    <!-- 编辑角色弹窗 -->
+    <Modal
+      v-model:open="editVisible"
+      title="编辑角色"
+      ok-text="保存"
+      @ok="submitEdit"
+    >
+      <Form
+        ref="editRef"
+        :model="editForm"
+        :label-col="{ span: 6 }"
+        class="mt-4"
+      >
+        <FormItem label="角色标识" name="roleKey">
+          <Input :value="editingRole?.roleKey" disabled />
+        </FormItem>
+        <FormItem
+          label="角色名称"
+          name="roleName"
+          :rules="[{ required: true, message: '请输入角色名称' }]"
+        >
+          <Input
+            v-model:value="editForm.roleName"
             placeholder="如 客服管理员"
           />
         </FormItem>

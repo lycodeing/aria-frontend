@@ -27,6 +27,7 @@ interface UserVO {
   phone: string;
   status: string;
   provider: string;
+  lastLoginAt: string;
 }
 
 const users = ref<UserVO[]>([]);
@@ -43,10 +44,10 @@ async function loadUsers() {
       params: {
         keyword: keyword.value || undefined,
         page: currentPage.value - 1,
-        pageSize: PAGE_SIZE,
+        size: PAGE_SIZE,
       },
     });
-    users.value = res.list ?? res.items ?? [];
+    users.value = res.items ?? [];
     total.value = res.total ?? 0;
   } catch {
     // 后端未启动时展示演示数据
@@ -59,6 +60,7 @@ async function loadUsers() {
         phone: '',
         status: 'active',
         provider: 'LOCAL',
+        lastLoginAt: '',
       },
       {
         id: 1002,
@@ -68,6 +70,7 @@ async function loadUsers() {
         phone: '',
         status: 'active',
         provider: 'LOCAL',
+        lastLoginAt: '',
       },
       {
         id: 1003,
@@ -77,6 +80,7 @@ async function loadUsers() {
         phone: '',
         status: 'active',
         provider: 'LOCAL',
+        lastLoginAt: '',
       },
     ];
     total.value = users.value.length;
@@ -89,16 +93,19 @@ onMounted(loadUsers);
 
 const columns = [
   { title: 'ID', dataIndex: 'id', width: 80 },
-  { title: '用户名', dataIndex: 'username', width: 140 },
-  { title: '姓名', dataIndex: 'displayName', width: 120 },
+  { title: '用户名', dataIndex: 'username', width: 120 },
+  { title: '姓名', dataIndex: 'displayName', width: 100 },
   { title: '邮箱', dataIndex: 'email', ellipsis: true },
-  { title: '状态', dataIndex: 'status', key: 'status', width: 100 },
-  { title: '操作', key: 'action', width: 200 },
+  { title: '手机号', dataIndex: 'phone', width: 130 },
+  { title: '最后登录', dataIndex: 'lastLoginAt', width: 170 },
+  { title: '状态', dataIndex: 'status', key: 'status', width: 80 },
+  { title: '操作', key: 'action', width: 240 },
 ];
 
 // ===== 新建/编辑用户 =====
 const modalVisible = ref(false);
 const isEdit = ref(false);
+const editingId = ref<null | number>(null);
 const formRef = ref();
 const form = ref({
   username: '',
@@ -110,6 +117,7 @@ const form = ref({
 
 function openCreate() {
   isEdit.value = false;
+  editingId.value = null;
   form.value = {
     username: '',
     displayName: '',
@@ -120,19 +128,34 @@ function openCreate() {
   modalVisible.value = true;
 }
 
+function openEdit(user: UserVO) {
+  isEdit.value = true;
+  editingId.value = user.id;
+  form.value = {
+    username: user.username,
+    displayName: user.displayName,
+    email: user.email,
+    phone: user.phone ?? '',
+    password: '',
+  };
+  modalVisible.value = true;
+}
+
 async function submitForm() {
   try {
     await formRef.value?.validate();
-    if (isEdit.value) {
+    if (isEdit.value && editingId.value) {
+      const { password: _pwd, ...updatePayload } = form.value;
+      await requestClient.put(`/users/${editingId.value}`, updatePayload);
       message.success('用户信息已更新');
     } else {
-      await requestClient.post('/users', form.value).catch(() => null);
+      await requestClient.post('/users', form.value);
       message.success(`用户 ${form.value.username} 创建成功`);
     }
     modalVisible.value = false;
     loadUsers();
   } catch {
-    /* 表单校验失败 */
+    /* 表单校验或接口失败 */
   }
 }
 
@@ -221,6 +244,13 @@ function deleteUser(user: UserVO) {
         </template>
         <template v-if="column.key === 'action'">
           <Space>
+            <Button
+              size="small"
+              type="link"
+              @click="openEdit(record as UserVO)"
+            >
+              编辑
+            </Button>
             <Button
               size="small"
               type="link"
