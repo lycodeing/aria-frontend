@@ -31,6 +31,7 @@ import {
 } from 'ant-design-vue';
 
 import {
+  acceptSessionApi,
   closeSessionApi,
   getActiveSessionsApi,
   getClosedSessionsApi,
@@ -40,10 +41,8 @@ import {
 } from '#/api/session';
 import { useAgentWebSocket } from '#/composables/useAgentWebSocket';
 import { useReplySuggestions } from '#/composables/useReplySuggestions';
-import {
-  resolveTagColor,
-  useSessionQueue,
-} from '#/composables/useSessionQueue';
+import { resolveTagColor } from '#/composables/useSessionQueue';
+import { useSessionQueueChannel } from '#/composables/useSessionQueueChannel';
 import { useVisitorHistory } from '#/composables/useVisitorHistory';
 
 import AgentChatArea from './AgentChatArea.vue';
@@ -341,7 +340,7 @@ async function handleQueueTransfer(event: SessionSseEvent) {
   }
 }
 function reconnectQueue() {
-  subscribeQueue(undefined, handleQueueClosed, handleQueueTransfer);
+  queueChannel.reconnect();
 }
 function reconnectActiveSession() {
   const sid = activeSession.value?.id;
@@ -443,17 +442,40 @@ const filteredMsgs = computed(() => {
   return msgs;
 });
 
-// ===== Composable：等待队列 + SSE =====
-const {
-  queue,
-  queuePage,
-  queueTotalPages,
-  pagedQueue,
-  sseConnected,
-  loadQueue,
-  subscribeQueue,
-  acceptItem,
-} = useSessionQueue();
+// ===== 全局 SSE Queue Channel（由 layouts/basic.vue 持有连接） =====
+const queueChannel = useSessionQueueChannel();
+const { queue, sseConnected } = queueChannel;
+
+// 分页（局部，保持原有逻辑）
+const queuePage = ref(1);
+const queueTotalPages = computed(() =>
+  Math.max(1, Math.ceil(queue.value.length / 5)),
+);
+const pagedQueue = computed(() => {
+  const start = (queuePage.value - 1) * 5;
+  return queue.value.slice(start, start + 5);
+});
+// 仅在新会话入队时（长度增大）才重置分页
+watch(
+  () => queue.value.length,
+  (newLen, oldLen) => {
+    if (newLen > oldLen) queuePage.value = 1;
+  },
+);
+
+async function acceptItem(item: QueueItem): Promise<ApiSessionItem> {
+  await acceptSessionApi(item.id);
+  const filtered = queue.value.filter((q) => q.id !== item.id);
+  queue.value.splice(0, queue.value.length, ...filtered);
+  return {
+    sessionId: item.id,
+    userName: item.name,
+    transferReason: item.reason,
+    tag: item.tag,
+    waitSince: item.waitSince,
+    status: 'ACTIVE',
+  };
+}
 
 // ===== Composable：访客历史工单 =====
 const {
@@ -699,10 +721,14 @@ function quickReply(q: string) {
 
 // ===== 生命周期 =====
 onMounted(async () => {
-  const [, activeSessions] = await Promise.all([
-    loadQueue(),
-    getActiveSessionsApi().catch(() => [] as ApiSessionItem[]),
-  ]);
+  // queue 初始数据由 layouts/basic.vue 在登录时已通过 queueChannel.loadQueue() 加载
+  // 此处只需注册页面级事件回调
+  queueChannel.onClosed(handleQueueClosed);
+  queueChannel.onTransfer(handleQueueTransfer);
+
+  const activeSessions = await getActiveSessionsApi().catch(
+    () => [] as ApiSessionItem[],
+  );
 
   if (activeSessions.length > 0) {
     const histories = await Promise.all(
@@ -743,14 +769,15 @@ onMounted(async () => {
     if (sessions.value[0]) sessions.value[0].active = true;
     activeSessions.forEach((item) => connectAgentSession(item.sessionId));
   }
-
-  subscribeQueue(undefined, handleQueueClosed, handleQueueTransfer);
 });
 
 // ===== 生命周期：unmount 时清理 typingTimers 防止定时器回调写已卸载组件 =====
 onUnmounted(() => {
   typingTimers.forEach((timer) => clearTimeout(timer));
   typingTimers.clear();
+  // 离开页面时注销，防止多次进入页面导致回调重复执行
+  queueChannel.offClosed(handleQueueClosed);
+  queueChannel.offTransfer(handleQueueTransfer);
 });
 </script>
 
