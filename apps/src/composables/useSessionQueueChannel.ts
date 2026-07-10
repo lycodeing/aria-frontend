@@ -20,7 +20,8 @@ export type TransferHandler = (event: SessionSseEvent) => void;
 export interface SessionQueueChannel {
   readonly queue: Readonly<Ref<QueueItem[]>>;
   readonly sseConnected: Readonly<Ref<boolean>>;
-  init(token: string): void;
+  readonly sseStatus: Readonly<Ref<'closed' | 'connecting' | 'error' | 'open'>>;
+  init(): void;
   dispose(): void;
   reconnect(): void;
   loadQueue(): Promise<void>;
@@ -36,16 +37,19 @@ export interface SessionQueueChannel {
 
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
+const MAX_RETRIES = 10;
 
 // ---- 模块级单例状态 ----
 
 const queue = ref<QueueItem[]>([]);
 const sseConnected = ref(false);
+const sseStatus = ref<'closed' | 'connecting' | 'error' | 'open'>('closed');
 
 let eventSource: EventSource | null = null;
 let sseRetryCount = 0;
 let sseRetryTimer: null | ReturnType<typeof setTimeout> = null;
 let waitTimer: null | ReturnType<typeof setInterval> = null;
+let _loadGen = 0;
 
 // 多播监听器
 const enqueueHandlers = new Set<EnqueueHandler>();
@@ -83,7 +87,7 @@ function _stopSse(): void {
 function _connect(): void {
   _stopSse();
 
-  eventSource = subscribeSessionEvents(
+  const es = subscribeSessionEvents(
     (event) => {
       sseRetryCount = 0;
       const sid = event.item?.sessionId;
@@ -108,29 +112,43 @@ function _connect(): void {
       }
     },
     () => {
+      // Stale guard: if this error belongs to an old ES, ignore it (I-1)
+      if (eventSource !== es) return;
       // 断线：指数退避重连
       sseConnected.value = false;
-      eventSource?.close();
       eventSource = null;
+      if (sseRetryCount >= MAX_RETRIES) {
+        sseStatus.value = 'error';
+        return; // stop retrying (I-3)
+      }
       const delay = Math.min(BASE_DELAY_MS * 2 ** sseRetryCount, MAX_DELAY_MS);
       sseRetryCount++;
+      sseStatus.value = 'connecting';
       sseRetryTimer = setTimeout(_connect, delay);
     },
     () => {
       sseRetryCount = 0;
       sseConnected.value = true;
+      sseStatus.value = 'open';
     },
   );
 
+  eventSource = es;
   _startWaitTimer();
 }
 
 // ---- loadQueue ----
 
 async function loadQueue(): Promise<void> {
+  const gen = ++_loadGen;
   try {
     const items = await getSessionQueueApi();
-    queue.value = items.map((item) => toQueueItem(item));
+    if (gen !== _loadGen) return; // dispose() was called mid-flight (I-2)
+    queue.value.splice(
+      0,
+      queue.value.length,
+      ...items.map((item) => toQueueItem(item)),
+    );
   } catch (error) {
     console.error('[useSessionQueueChannel] loadQueue 失败:', error);
   }
@@ -142,18 +160,24 @@ export function useSessionQueueChannel(): SessionQueueChannel {
   return {
     queue,
     sseConnected,
+    sseStatus,
 
-    init(_token: string) {
+    // token は subscribeSessionEvents 内部で useAccessStore から取得するため、
+    // パラメータは不要。(M-1)
+    init() {
       if (eventSource) return; // 幂等：已连接则不重复建连
       sseRetryCount = 0;
+      sseStatus.value = 'connecting';
       _connect();
     },
 
     dispose() {
       _stopSse();
       _stopWaitTimer();
-      queue.value = [];
+      _loadGen++; // invalidate any in-flight loadQueue() (I-2)
+      queue.value.splice(0);
       sseRetryCount = 0;
+      sseStatus.value = 'closed';
       // 清空所有事件监听器，防止 logout → re-login 场景下回调残留
       enqueueHandlers.clear();
       closedHandlers.clear();

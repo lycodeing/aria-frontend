@@ -180,7 +180,7 @@ watch(
   async (newToken, oldToken) => {
     if (newToken && !oldToken) {
       // 首次登录：建立 SSE 连接 + 加载初始队列
-      queueChannel.init(newToken);
+      queueChannel.init();
       await queueChannel.loadQueue();
     } else if (!newToken) {
       // 登出：销毁 SSE channel

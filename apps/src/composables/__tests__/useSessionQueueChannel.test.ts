@@ -120,19 +120,19 @@ describe('useSessionQueueChannel', () => {
   // ---- init ----
 
   it('init() 建立 SSE 连接', () => {
-    channel.init('token');
+    channel.init();
     expect(lastEventSource).not.toBeNull();
   });
 
   it('init() 幂等：已连接时不重复建连', () => {
-    channel.init('token');
+    channel.init();
     const first = lastEventSource;
-    channel.init('token');
+    channel.init();
     expect(lastEventSource).toBe(first);
   });
 
   it('open 回调设置 sseConnected=true', () => {
-    channel.init('token');
+    channel.init();
     getEs().emit('open');
     expect(channel.sseConnected.value).toBe(true);
   });
@@ -140,7 +140,7 @@ describe('useSessionQueueChannel', () => {
   // ---- ENQUEUE ----
 
   it('eNQUEUE 事件加入 queue', async () => {
-    channel.init('token');
+    channel.init();
     getEs().emit('open');
     getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s1', '张三') });
     await nextTick();
@@ -150,7 +150,7 @@ describe('useSessionQueueChannel', () => {
 
   it('eNQUEUE 事件触发 onEnqueue 回调', async () => {
     const handler = vi.fn();
-    channel.init('token');
+    channel.init();
     channel.onEnqueue(handler);
     getEs().emit('open');
     getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s2', '李四') });
@@ -160,7 +160,7 @@ describe('useSessionQueueChannel', () => {
   });
 
   it('eNQUEUE 去重：同 sessionId 不重复添加', async () => {
-    channel.init('token');
+    channel.init();
     getEs().emit('open');
     const payload = { type: 'ENQUEUE', item: makeItem('s3', '王五') };
     getEs().emit('message', payload);
@@ -173,7 +173,7 @@ describe('useSessionQueueChannel', () => {
 
   it('aCCEPTED 事件从 queue 移除，不触发 onClosed', async () => {
     const closedHandler = vi.fn();
-    channel.init('token');
+    channel.init();
     channel.onClosed(closedHandler);
     getEs().emit('open');
     getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s4', '赵六') });
@@ -187,7 +187,7 @@ describe('useSessionQueueChannel', () => {
 
   it('cLOSED 事件从 queue 移除并触发 onClosed', async () => {
     const closedHandler = vi.fn();
-    channel.init('token');
+    channel.init();
     channel.onClosed(closedHandler);
     getEs().emit('open');
     getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s5', '陈七') });
@@ -201,7 +201,7 @@ describe('useSessionQueueChannel', () => {
 
   it('tRANSFER 事件从 queue 移除并触发 onTransfer', async () => {
     const transferHandler = vi.fn();
-    channel.init('token');
+    channel.init();
     channel.onTransfer(transferHandler);
     getEs().emit('open');
     getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s6', '周八') });
@@ -222,7 +222,7 @@ describe('useSessionQueueChannel', () => {
 
   it('sSE error 触发重连，sseConnected=false', async () => {
     vi.useFakeTimers();
-    channel.init('token');
+    channel.init();
     getEs().emit('open');
     expect(channel.sseConnected.value).toBe(true);
 
@@ -240,7 +240,7 @@ describe('useSessionQueueChannel', () => {
   });
 
   it('reconnect() 立即重置并重建连接', async () => {
-    channel.init('token');
+    channel.init();
     const first = lastEventSource;
     channel.reconnect();
     await nextTick();
@@ -251,7 +251,7 @@ describe('useSessionQueueChannel', () => {
   // ---- dispose ----
 
   it('dispose() 关闭 SSE 连接、清空 queue、sseConnected=false', async () => {
-    channel.init('token');
+    channel.init();
     getEs().emit('open');
     getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s7', '吴九') });
     await nextTick();
@@ -268,7 +268,7 @@ describe('useSessionQueueChannel', () => {
 
   it('offEnqueue 后不再触发回调', async () => {
     const handler = vi.fn();
-    channel.init('token');
+    channel.init();
     channel.onEnqueue(handler);
     channel.offEnqueue(handler);
     getEs().emit('open');
@@ -279,7 +279,7 @@ describe('useSessionQueueChannel', () => {
 
   it('offClosed 后不再触发回调', async () => {
     const handler = vi.fn();
-    channel.init('token');
+    channel.init();
     channel.onClosed(handler);
     channel.offClosed(handler);
     getEs().emit('open');
@@ -291,7 +291,7 @@ describe('useSessionQueueChannel', () => {
 
   it('offTransfer 后不再触发回调', async () => {
     const handler = vi.fn();
-    channel.init('token');
+    channel.init();
     channel.onTransfer(handler);
     channel.offTransfer(handler);
     getEs().emit('open');
