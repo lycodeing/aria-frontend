@@ -248,7 +248,7 @@ describe('useSessionQueueChannel', () => {
     expect(lastEventSource).not.toBeNull();
   });
 
-  it('mAX_RETRIES 耗尽后停止重连，sseStatus=error', async () => {
+  it('max_retries 耗尽后停止重连，sseStatus=error', async () => {
     vi.useFakeTimers();
     channel.init();
     const MAX = 10;
