@@ -1,10 +1,7 @@
 // apps/src/composables/useSessionQueueChannel.ts
 import type { Ref } from 'vue';
 
-import type {
-  SessionQueueItem as ApiSessionItem,
-  SessionSseEvent,
-} from '#/api/session';
+import type { SessionSseEvent } from '#/api/session';
 import type { QueueItem } from '#/composables/useSessionQueue';
 
 import { ref } from 'vue';
@@ -12,7 +9,7 @@ import { ref } from 'vue';
 import { message as antMessage } from 'ant-design-vue';
 
 import { getSessionQueueApi, subscribeSessionEvents } from '#/api/session';
-import { formatWaitTime, resolveTagColor } from '#/composables/useSessionQueue';
+import { formatWaitTime, toQueueItem } from '#/composables/useSessionQueue';
 
 // ---- 类型 ----
 
@@ -39,23 +36,6 @@ export interface SessionQueueChannel {
 
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
-
-// ---- 内部工具（toQueueItem 未从 useSessionQueue 导出，此处内联） ----
-
-const QUEUE_AVATAR_COLOR = '#f87171';
-
-function toQueueItem(item: ApiSessionItem): QueueItem {
-  return {
-    id: item.sessionId,
-    name: item.userName,
-    color: QUEUE_AVATAR_COLOR,
-    waitMin: formatWaitTime(item.waitSince),
-    waitSince: item.waitSince,
-    reason: item.transferReason,
-    tag: item.tag,
-    tagColor: resolveTagColor(item.tag),
-  };
-}
 
 // ---- 模块级单例状态 ----
 
