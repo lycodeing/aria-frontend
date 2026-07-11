@@ -41,6 +41,8 @@ interface MenuVO {
   sortOrder: number;
   isVisible: boolean;
   isCache: boolean;
+  isExternal: boolean;
+  redirect?: string;
   permissionKey?: string;
   status: string;
   remark?: string;
@@ -84,6 +86,8 @@ const emptyForm = () => ({
   sortOrder: 0,
   isVisible: true,
   isCache: true,
+  isExternal: false,
+  redirect: '',
   permissionKey: '',
   status: 'active',
   remark: '',
@@ -187,6 +191,8 @@ const columns = [
     width: 60,
     align: 'center' as const,
   },
+  { title: '可见', key: 'visible', width: 50, align: 'center' as const },
+  { title: '缓存', key: 'cache', width: 50, align: 'center' as const },
   { title: '状态', key: 'status', width: 70, align: 'center' as const },
   { title: '操作', key: 'action', width: 120, align: 'center' as const },
 ];
@@ -265,6 +271,32 @@ onMounted(loadList);
               </span>
             </Tooltip>
           </template>
+        </template>
+
+        <!-- 可见性 -->
+        <template v-else-if="column.key === 'visible'">
+          <Icon
+            v-if="record.menuType !== 'BUTTON'"
+            :icon="record.isVisible ? 'lucide:eye' : 'lucide:eye-off'"
+            :class="[
+              record.isVisible
+                ? 'text-emerald-500'
+                : 'text-gray-400 opacity-50',
+            ]"
+            style="font-size: 14px"
+          />
+        </template>
+
+        <!-- 缓存 -->
+        <template v-else-if="column.key === 'cache'">
+          <Icon
+            v-if="record.menuType === 'MENU'"
+            :icon="record.isCache ? 'lucide:database' : 'lucide:database'"
+            :class="[
+              record.isCache ? 'text-blue-500' : 'text-gray-400 opacity-30',
+            ]"
+            style="font-size: 14px"
+          />
         </template>
 
         <!-- 状态 -->
@@ -404,7 +436,20 @@ onMounted(loadList);
                 un-checked-children="不缓存"
               />
             </FormItem>
+            <FormItem label="外链跳转">
+              <Switch
+                v-model:checked="form.isExternal"
+                checked-children="外链"
+                un-checked-children="内部"
+              />
+            </FormItem>
           </div>
+          <FormItem v-if="form.isExternal" label="重定向路径">
+            <Input
+              v-model:value="form.redirect"
+              placeholder="外链地址，如 https://example.com"
+            />
+          </FormItem>
         </template>
         <template v-else>
           <FormItem label="权限标识">

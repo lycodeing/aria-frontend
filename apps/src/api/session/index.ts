@@ -68,7 +68,7 @@ export interface ChatToolCall {
   id?: null | string;
   name?: null | string;
   /** 入参对象或已序列化字符串，后端返回结构不定，前端渲染前 typeof 判定即可 */
-  args?: unknown;
+  arguments?: unknown;
 }
 
 /** 历史消息项（含 seq 字段，支持增量同步） */

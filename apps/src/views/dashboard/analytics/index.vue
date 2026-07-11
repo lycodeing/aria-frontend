@@ -116,37 +116,37 @@ const efficiencyCards = computed(() => [
 let latestRequestId = 0;
 
 function updateOverviewItems(data: DashboardOverviewData) {
-  // ?? 0 防止 undefined/null 传入 VbenCountToAnimator，
-  // useTransition 要求 endVal 必须是 number，否则抛 "Unknown transition type"
-  // markRaw 防止 Vue 深度代理 Component 对象，避免 "reactive Component" 警告
+  // Number() 强制转换，防止 API 返回字符串数字（如 "64"）传入 VbenCountToAnimator；
+  // ?? 0 兜底 undefined/null，useTransition 要求 endVal 必须是 number。
+  // markRaw 防止 Vue 深度代理 Component 对象，避免 "reactive Component" 警告。
   overviewItems.value = [
     {
       icon: markRaw(SvgCardIcon),
       title: '今日会话量',
       totalTitle: '总会话量',
-      totalValue: data.totalConversationCount ?? 0,
-      value: data.todayConversationCount ?? 0,
+      totalValue: Number(data.totalConversationCount ?? 0),
+      value: Number(data.todayConversationCount ?? 0),
     },
     {
       icon: markRaw(SvgCakeIcon),
       title: '活跃会话',
       totalTitle: '等待接入',
-      totalValue: data.waitingConversationCount ?? 0,
-      value: data.activeConversationCount ?? 0,
+      totalValue: Number(data.waitingConversationCount ?? 0),
+      value: Number(data.activeConversationCount ?? 0),
     },
     {
       icon: markRaw(SvgDownloadIcon),
       title: '总消息数',
       totalTitle: 'AI 回复',
-      totalValue: data.aiMessageCount ?? 0,
-      value: data.totalMessageCount ?? 0,
+      totalValue: Number(data.aiMessageCount ?? 0),
+      value: Number(data.totalMessageCount ?? 0),
     },
     {
       icon: markRaw(SvgBellIcon),
       title: '总用户数',
       totalTitle: '人工回复',
-      totalValue: data.agentMessageCount ?? 0,
-      value: data.totalUserCount ?? 0,
+      totalValue: Number(data.agentMessageCount ?? 0),
+      value: Number(data.totalUserCount ?? 0),
     },
   ];
 }

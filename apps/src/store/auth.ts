@@ -13,6 +13,21 @@ import { defineStore } from 'pinia';
 import { getAccessCodesApi, getUserInfoApi, loginApi, logoutApi } from '#/api';
 import { $t } from '#/locales';
 
+/**
+ * 根据角色列表推断首页路径。
+ * kf_staff（普通客服）应进入座席工作台，其他角色进入管理后台首页。
+ */
+function resolveHomePath(roles: string[]): string {
+  if (
+    roles.includes('kf_staff') &&
+    !roles.includes('super_admin') &&
+    !roles.includes('kf_manager')
+  ) {
+    return '/customerservice/chat';
+  }
+  return preferences.app.defaultHomePath;
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const accessStore = useAccessStore();
   const userStore = useUserStore();
@@ -29,17 +44,18 @@ export const useAuthStore = defineStore('auth', () => {
     params: Recordable<any>,
     onSuccess?: () => Promise<void> | void,
   ) {
-    // 异步处理用户登录操作并获取 accessToken
     let userInfo: null | UserInfo = null;
     try {
       loginLoading.value = true;
-      const { accessToken } = await loginApi(params);
 
-      // 如果成功获取到 accessToken
+      // 获取完整登录结果（含 roles、mustChangePassword 等字段）
+      const loginResult = await loginApi(params);
+      const { accessToken } = loginResult;
+
       if (accessToken) {
         accessStore.setAccessToken(accessToken);
 
-        // 获取用户信息并存储到 accessStore 中
+        // 并行获取用户信息和权限码
         const [fetchUserInfoResult, accessCodes] = await Promise.all([
           fetchUserInfo(),
           getAccessCodesApi(),
@@ -47,8 +63,29 @@ export const useAuthStore = defineStore('auth', () => {
 
         userInfo = fetchUserInfoResult;
 
+        // UserVO 不含 roles，从登录结果合并；若 /user/info 已返回 roles 则优先使用
+        const rolesFromLogin: string[] = (loginResult as any).roles ?? [];
+        if (!userInfo.roles || userInfo.roles.length === 0) {
+          userInfo = { ...userInfo, roles: rolesFromLogin };
+        }
+
+        // 根据角色推断首页，覆盖 userInfo.homePath（后端暂未返回 homePath）
+        if (!userInfo.homePath) {
+          userInfo = {
+            ...userInfo,
+            homePath: resolveHomePath(userInfo.roles ?? []),
+          };
+        }
+
         userStore.setUserInfo(userInfo);
         accessStore.setAccessCodes(accessCodes);
+
+        // BUG-009: 首次登录强制改密检测
+        const mustChangePassword = (loginResult as any).mustChangePassword;
+        if (mustChangePassword) {
+          await router.push('/profile/change-password');
+          return { userInfo };
+        }
 
         if (accessStore.loginExpired) {
           accessStore.setLoginExpired(false);
