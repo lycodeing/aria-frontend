@@ -6,6 +6,37 @@
  */
 import { rawRequestClient } from '#/api/request';
 
+// ─── 时间范围 ────────────────────────────────────────────────────────────────
+
+/** 前端时间范围枚举 */
+export type TimeRange = 'days7' | 'days30' | 'month' | 'week';
+
+/** 后端时间范围请求参数 */
+export interface TimeRangeParams {
+  rangeType: 'custom' | 'month' | 'week';
+  days?: number;
+}
+
+/** 将前端 TimeRange 枚举转换为后端 API 参数 */
+export function toTimeRangeParams(range: TimeRange): TimeRangeParams {
+  switch (range) {
+    case 'days7': {
+      return { rangeType: 'custom', days: 7 };
+    }
+    case 'days30': {
+      return { rangeType: 'custom', days: 30 };
+    }
+    case 'month': {
+      return { rangeType: 'month' };
+    }
+    case 'week': {
+      return { rangeType: 'week' };
+    }
+  }
+}
+
+// ─── 数据类型 ────────────────────────────────────────────────────────────────
+
 /** 概览指标 */
 export interface DashboardOverviewData {
   /** 今日会话量 */
@@ -24,16 +55,34 @@ export interface DashboardOverviewData {
   aiMessageCount: number;
   /** 人工座席回复消息数 */
   agentMessageCount: number;
+  /** 平均等待时长（秒），accepted_at - started_at */
+  avgWaitSeconds: number;
+  /** 平均处理时长（秒），ended_at - accepted_at */
+  avgHandleSeconds: number;
+  /** 平均首次回复时长（秒），first_reply_at - accepted_at */
+  avgFirstReplySeconds: number;
 }
 
-/** 会话趋势数据项 */
+/** 会话趋势数据项（month 字段值为 YYYY-MM-DD 日期标签） */
 export interface ConversationTrendItem {
-  /** 月份标签，如 "2026-07" */
+  /** 时间标签，如 "2026-07-01" */
   month: string;
   /** 人工会话数 */
   humanCount: number;
   /** AI 会话数 */
   aiCount: number;
+}
+
+/** 效率趋势数据项（按天聚合） */
+export interface EfficiencyTrendItem {
+  /** 日期标签，YYYY-MM-DD */
+  date: string;
+  /** 平均等待时长（秒） */
+  avgWaitSeconds: number;
+  /** 平均处理时长（秒） */
+  avgHandleSeconds: number;
+  /** 平均首次回复时长（秒） */
+  avgFirstReplySeconds: number;
 }
 
 /** 状态分布数据项 */
@@ -68,19 +117,38 @@ export interface AgentWorkloadItem {
   activeSessions: number;
 }
 
+// ─── API 函数 ─────────────────────────────────────────────────────────────────
+
 /** 获取概览指标 */
 export function getDashboardOverviewApi(): Promise<DashboardOverviewData> {
   return rawRequestClient.get('/api/v1/dashboard/overview');
 }
 
-/** 获取会话趋势（按月，区分人工/AI） */
-export function getConversationTrendsApi(): Promise<ConversationTrendItem[]> {
-  return rawRequestClient.get('/api/v1/dashboard/conversation-trends');
+/** 获取会话趋势（按天，支持时间范围） */
+export function getConversationTrendsApi(
+  range: TimeRange = 'month',
+): Promise<ConversationTrendItem[]> {
+  return rawRequestClient.get('/api/v1/dashboard/conversation-trends', {
+    params: toTimeRangeParams(range),
+  });
 }
 
-/** 获取消息量趋势（按月） */
-export function getMessageTrendsApi(): Promise<ConversationTrendItem[]> {
-  return rawRequestClient.get('/api/v1/dashboard/message-trends');
+/** 获取消息量趋势（按天，支持时间范围） */
+export function getMessageTrendsApi(
+  range: TimeRange = 'month',
+): Promise<ConversationTrendItem[]> {
+  return rawRequestClient.get('/api/v1/dashboard/message-trends', {
+    params: toTimeRangeParams(range),
+  });
+}
+
+/** 获取效率趋势（按天，支持时间范围） */
+export function getEfficiencyTrendsApi(
+  range: TimeRange = 'month',
+): Promise<EfficiencyTrendItem[]> {
+  return rawRequestClient.get('/api/v1/dashboard/efficiency-trends', {
+    params: toTimeRangeParams(range),
+  });
 }
 
 /** 获取会话状态分布 */
