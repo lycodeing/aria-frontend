@@ -115,34 +115,36 @@ const efficiencyCards = computed(() => [
 let latestRequestId = 0;
 
 function updateOverviewItems(data: DashboardOverviewData) {
+  // ?? 0 防止 undefined/null 传入 VbenCountToAnimator，
+  // useTransition 要求 endVal 必须是 number，否则抛 "Unknown transition type"
   overviewItems.value = [
     {
       icon: SvgCardIcon,
       title: '今日会话量',
       totalTitle: '总会话量',
-      totalValue: data.totalConversationCount,
-      value: data.todayConversationCount,
+      totalValue: data.totalConversationCount ?? 0,
+      value: data.todayConversationCount ?? 0,
     },
     {
       icon: SvgCakeIcon,
       title: '活跃会话',
       totalTitle: '等待接入',
-      totalValue: data.waitingConversationCount,
-      value: data.activeConversationCount,
+      totalValue: data.waitingConversationCount ?? 0,
+      value: data.activeConversationCount ?? 0,
     },
     {
       icon: SvgDownloadIcon,
       title: '总消息数',
       totalTitle: 'AI 回复',
-      totalValue: data.aiMessageCount,
-      value: data.totalMessageCount,
+      totalValue: data.aiMessageCount ?? 0,
+      value: data.totalMessageCount ?? 0,
     },
     {
       icon: SvgBellIcon,
       title: '总用户数',
       totalTitle: '人工回复',
-      totalValue: data.agentMessageCount,
-      value: data.totalUserCount,
+      totalValue: data.agentMessageCount ?? 0,
+      value: data.totalUserCount ?? 0,
     },
   ];
 }
