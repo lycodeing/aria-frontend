@@ -11,7 +11,7 @@ import type {
   TimeRange,
 } from '#/api/dashboard';
 
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, markRaw, onMounted, ref, watch } from 'vue';
 
 import {
   AnalysisChartCard,
@@ -50,30 +50,31 @@ import { formatSeconds } from './format-seconds';
 const selectedRange = ref<TimeRange>('month');
 
 // ─── 概览卡片（响应式，初始空数据，API 返回后更新） ────────────────────────────
+// icon 用 markRaw 避免 Vue 深度代理 Component 对象，防止 "reactive Component" 警告
 const overviewItems = ref<AnalysisOverviewItem[]>([
   {
-    icon: SvgCardIcon,
+    icon: markRaw(SvgCardIcon),
     title: '今日会话量',
     totalTitle: '总会话量',
     totalValue: 0,
     value: 0,
   },
   {
-    icon: SvgCakeIcon,
+    icon: markRaw(SvgCakeIcon),
     title: '活跃会话',
     totalTitle: '等待接入',
     totalValue: 0,
     value: 0,
   },
   {
-    icon: SvgDownloadIcon,
+    icon: markRaw(SvgDownloadIcon),
     title: '总消息数',
     totalTitle: 'AI 回复',
     totalValue: 0,
     value: 0,
   },
   {
-    icon: SvgBellIcon,
+    icon: markRaw(SvgBellIcon),
     title: '总用户数',
     totalTitle: '人工回复',
     totalValue: 0,
@@ -117,30 +118,31 @@ let latestRequestId = 0;
 function updateOverviewItems(data: DashboardOverviewData) {
   // ?? 0 防止 undefined/null 传入 VbenCountToAnimator，
   // useTransition 要求 endVal 必须是 number，否则抛 "Unknown transition type"
+  // markRaw 防止 Vue 深度代理 Component 对象，避免 "reactive Component" 警告
   overviewItems.value = [
     {
-      icon: SvgCardIcon,
+      icon: markRaw(SvgCardIcon),
       title: '今日会话量',
       totalTitle: '总会话量',
       totalValue: data.totalConversationCount ?? 0,
       value: data.todayConversationCount ?? 0,
     },
     {
-      icon: SvgCakeIcon,
+      icon: markRaw(SvgCakeIcon),
       title: '活跃会话',
       totalTitle: '等待接入',
       totalValue: data.waitingConversationCount ?? 0,
       value: data.activeConversationCount ?? 0,
     },
     {
-      icon: SvgDownloadIcon,
+      icon: markRaw(SvgDownloadIcon),
       title: '总消息数',
       totalTitle: 'AI 回复',
       totalValue: data.aiMessageCount ?? 0,
       value: data.totalMessageCount ?? 0,
     },
     {
-      icon: SvgBellIcon,
+      icon: markRaw(SvgBellIcon),
       title: '总用户数',
       totalTitle: '人工回复',
       totalValue: data.agentMessageCount ?? 0,
