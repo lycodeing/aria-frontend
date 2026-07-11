@@ -79,6 +79,7 @@ export const useAuthStore = defineStore('auth', () => {
 
         userStore.setUserInfo(userInfo);
         // 非阻塞预加载系统配置，失败不影响登录流程
+        // Dynamic import avoids a circular dependency: auth store → system-config store → api
         const { useSystemConfigStore } = await import('#/store/system-config');
         useSystemConfigStore()
           .loadAll()

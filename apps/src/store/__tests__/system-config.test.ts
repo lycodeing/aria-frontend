@@ -68,4 +68,17 @@ describe('useSystemConfigStore', () => {
     await expect(store.loadAll()).resolves.not.toThrow();
     expect(store.configMap).toEqual({});
   });
+
+  it('loadAll 保留成功的分类，忽略失败的分类', async () => {
+    vi.mocked(getSystemConfigMapApi)
+      .mockResolvedValueOnce({ 'agent.maxConcurrent': 5 })
+      .mockRejectedValueOnce(new Error('403 Forbidden'));
+
+    const store = useSystemConfigStore();
+    await store.loadAll();
+
+    // CUSTOMER_SERVICE data preserved even though SYSTEM failed
+    expect(store.configMap['agent.maxConcurrent']).toBe(5);
+    expect(store.getConfig('agent.maxConcurrent', 3)).toBe(5);
+  });
 });

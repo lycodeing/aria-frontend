@@ -9,16 +9,14 @@ export const useSystemConfigStore = defineStore('systemConfig', () => {
   const configMap = ref<Record<string, unknown>>({});
 
   async function loadAll(): Promise<void> {
-    try {
-      const [csMap, sysMap] = await Promise.all([
-        getSystemConfigMapApi('CUSTOMER_SERVICE'),
-        getSystemConfigMapApi('SYSTEM'),
-      ]);
-      configMap.value = { ...csMap, ...sysMap };
-    } catch (error) {
-      console.error('[useSystemConfigStore] loadAll 失败:', error);
-      // 失败时保留空 map；消费方通过 getConfig fallback 保证行为不变
-    }
+    const [csResult, sysResult] = await Promise.allSettled([
+      getSystemConfigMapApi('CUSTOMER_SERVICE'),
+      getSystemConfigMapApi('SYSTEM'),
+    ]);
+    configMap.value = {
+      ...(csResult.status === 'fulfilled' ? csResult.value : {}),
+      ...(sysResult.status === 'fulfilled' ? sysResult.value : {}),
+    };
   }
 
   function getConfig<T>(key: string, fallback: T): T {
