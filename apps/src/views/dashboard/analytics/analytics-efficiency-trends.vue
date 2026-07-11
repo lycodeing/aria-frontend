@@ -7,6 +7,7 @@ import { ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
+import { CHART_COLORS } from './chart-theme';
 import { formatSeconds } from './format-seconds';
 
 const props = defineProps<{
@@ -35,7 +36,7 @@ function render(data: EfficiencyTrendItem[] = []) {
 
   renderEcharts({
     grid: {
-      bottom: 0,
+      bottom: 30,
       containLabel: true,
       left: '1%',
       right: '1%',
@@ -50,7 +51,7 @@ function render(data: EfficiencyTrendItem[] = []) {
         areaStyle: { opacity: 0.1 },
         connectNulls: false,
         data: waitData,
-        itemStyle: { color: '#5ab1ef' },
+        itemStyle: { color: CHART_COLORS.primary },
         name: '平均等待',
         smooth: true,
         type: 'line',
@@ -59,7 +60,7 @@ function render(data: EfficiencyTrendItem[] = []) {
         areaStyle: { opacity: 0.1 },
         connectNulls: false,
         data: handleData,
-        itemStyle: { color: '#019680' },
+        itemStyle: { color: CHART_COLORS.success },
         name: '平均处理',
         smooth: true,
         type: 'line',
@@ -68,7 +69,7 @@ function render(data: EfficiencyTrendItem[] = []) {
         areaStyle: { opacity: 0.1 },
         connectNulls: false,
         data: replyData,
-        itemStyle: { color: '#b6a2de' },
+        itemStyle: { color: CHART_COLORS.purple },
         name: '首次回复',
         smooth: true,
         type: 'line',
@@ -76,7 +77,7 @@ function render(data: EfficiencyTrendItem[] = []) {
     ],
     tooltip: {
       axisPointer: {
-        lineStyle: { color: '#019680', width: 1 },
+        lineStyle: { color: CHART_COLORS.success, width: 1 },
       },
       formatter(params: any) {
         const items = Array.isArray(params) ? params : [params];

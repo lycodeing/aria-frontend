@@ -7,6 +7,8 @@ import { ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
+import { CHART_COLORS } from './chart-theme';
+
 const props = defineProps<{
   /** 概览指标数据 */
   data?: DashboardOverviewData;
@@ -56,7 +58,7 @@ function render(data: DashboardOverviewData | undefined) {
         data: [
           {
             itemStyle: {
-              color: '#5ab1ef',
+              color: CHART_COLORS.primary,
             },
             name: '占比',
             value: [todayConv, activeConv, waitingConv, aiMsg, agentMsg, 100],

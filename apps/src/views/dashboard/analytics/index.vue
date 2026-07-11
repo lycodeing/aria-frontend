@@ -3,9 +3,13 @@ import type { AnalysisOverviewItem } from '@vben/common-ui';
 import type { TabOption } from '@vben/types';
 
 import type {
+  ComplexityDistributionItem,
+  ComplexityItem,
+  ComplexityLevel,
   ConversationTrendItem,
   DashboardOverviewData,
   EfficiencyTrendItem,
+  RecentSessionItem,
   StatusDistributionItem,
   TagDistributionItem,
   TimeRange,
@@ -28,10 +32,12 @@ import {
 import { message } from 'ant-design-vue';
 
 import {
+  getComplexityDistributionApi,
   getConversationTrendsApi,
   getDashboardOverviewApi,
   getEfficiencyTrendsApi,
   getMessageTrendsApi,
+  getRecentSessionsApi,
   getStatusDistributionApi,
   getTagDistributionApi,
 } from '#/api/dashboard';
@@ -42,9 +48,10 @@ import AnalyticsVisitsData from './analytics-visits-data.vue';
 import AnalyticsVisitsSales from './analytics-visits-sales.vue';
 import AnalyticsVisitsSource from './analytics-visits-source.vue';
 import AnalyticsVisits from './analytics-visits.vue';
+import AvgHandleTimeCard from './avg-handle-time-card.vue';
+import ComplexityTrendCard from './complexity-trend-card.vue';
 import DashboardTimeRangeSelector from './dashboard-time-range-selector.vue';
-import EfficiencyStatCard from './efficiency-stat-card.vue';
-import { formatSeconds } from './format-seconds';
+import PendingTicketsCard from './pending-tickets-card.vue';
 
 // ─── 时间范围 ─────────────────────────────────────────────────────────────────
 const selectedRange = ref<TimeRange>('month');
@@ -95,22 +102,29 @@ const messageTrends = ref<ConversationTrendItem[]>([]);
 const efficiencyTrends = ref<EfficiencyTrendItem[]>([]);
 const statusDistribution = ref<StatusDistributionItem[]>([]);
 const tagDistribution = ref<TagDistributionItem[]>([]);
+const recentSessions = ref<RecentSessionItem[]>([]);
 
-// ─── 效率均值卡片（computed，随 overviewData 变化） ────────────────────────────
-const efficiencyCards = computed(() => [
-  {
-    title: '平均等待时长',
-    value: formatSeconds(overviewData.value?.avgWaitSeconds ?? 0),
-  },
-  {
-    title: '平均处理时长',
-    value: formatSeconds(overviewData.value?.avgHandleSeconds ?? 0),
-  },
-  {
-    title: '首次回复时长',
-    value: formatSeconds(overviewData.value?.avgFirstReplySeconds ?? 0),
-  },
-]);
+// ─── 复杂度分布（快照数据，独立加载） ──────────────────────────────────────────
+const complexityData = ref<ComplexityDistributionItem[]>([]);
+
+// 复杂度等级 → 中文标签 + 语义色（与设计稿一致）
+const COMPLEXITY_META: Record<
+  ComplexityLevel,
+  { color: string; label: string; }
+> = {
+  SIMPLE: { label: '简单问题', color: 'bg-[#10B981]' },
+  MEDIUM: { label: '中等问题', color: 'bg-[#F59E0B]' },
+  COMPLEX: { label: '复杂问题', color: 'bg-[#EF4444]' },
+};
+
+// 后端 level 映射为卡片需要的 { label, color, percent }
+const complexityRows = computed<ComplexityItem[]>(() =>
+  complexityData.value.map((item) => ({
+    label: COMPLEXITY_META[item.level].label,
+    color: COMPLEXITY_META[item.level].color,
+    percent: item.percent,
+  })),
+);
 
 // ─── 请求竞态保护 ──────────────────────────────────────────────────────────────
 let latestRequestId = 0;
@@ -182,12 +196,21 @@ watch(selectedRange, (range) => {
 
 onMounted(async () => {
   // 快照数据只加载一次（不受时间范围影响）
-  const [statusDist, tagDist] = await Promise.all([
+  const [statusDist, tagDist, recent] = await Promise.all([
     getStatusDistributionApi(),
     getTagDistributionApi(),
+    getRecentSessionsApi(),
   ]);
   statusDistribution.value = statusDist;
   tagDistribution.value = tagDist;
+  recentSessions.value = recent;
+
+  // 复杂度分布：独立加载，失败不影响其他快照（卡片回退占位数据）
+  try {
+    complexityData.value = await getComplexityDistributionApi();
+  } catch {
+    complexityData.value = [];
+  }
 
   // 趋势数据按默认时间范围加载
   await fetchTrendData('month');
@@ -195,7 +218,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="p-5">
+  <div class="p-6">
     <!-- 顶部：标题 + 时间范围选择器 -->
     <div class="mb-4 flex items-center justify-between">
       <span class="text-lg font-semibold">分析概览</span>
@@ -205,18 +228,17 @@ onMounted(async () => {
     <!-- 概览指标卡片 -->
     <AnalysisOverview :items="overviewItems" />
 
-    <!-- 效率均值卡片行 -->
+    <!-- 中间行：待处理列表 + 平均处理时长 + 复杂度趋势（设计稿版） -->
     <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-      <EfficiencyStatCard
-        v-for="card in efficiencyCards"
-        :key="card.title"
-        :title="card.title"
-        :value="card.value"
+      <PendingTicketsCard :items="recentSessions" />
+      <AvgHandleTimeCard
+        :seconds="Number(overviewData?.avgHandleSeconds ?? 0)"
       />
+      <ComplexityTrendCard :distribution="complexityRows" />
     </div>
 
     <!-- 趋势图 Tab -->
-    <AnalysisChartsTabs :tabs="chartTabs" class="mt-5">
+    <AnalysisChartsTabs :tabs="chartTabs" class="mt-5 shadow-sm">
       <template #trends>
         <AnalyticsTrends :data="conversationTrends" />
       </template>
@@ -232,14 +254,14 @@ onMounted(async () => {
     </AnalysisChartsTabs>
 
     <!-- 底部三图卡片（不受时间范围影响） -->
-    <div class="mt-5 w-full md:flex">
-      <AnalysisChartCard class="mt-5 md:mr-4 md:mt-0 md:w-1/3" title="指标雷达">
+    <div class="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+      <AnalysisChartCard class="shadow-sm" title="指标雷达">
         <AnalyticsVisitsData :data="overviewData" />
       </AnalysisChartCard>
-      <AnalysisChartCard class="mt-5 md:mr-4 md:mt-0 md:w-1/3" title="会话状态">
+      <AnalysisChartCard class="shadow-sm" title="会话状态">
         <AnalyticsVisitsSource :data="statusDistribution" />
       </AnalysisChartCard>
-      <AnalysisChartCard class="mt-5 md:mt-0 md:w-1/3" title="问题标签">
+      <AnalysisChartCard class="shadow-sm" title="问题标签">
         <AnalyticsVisitsSales :data="tagDistribution" />
       </AnalysisChartCard>
     </div>

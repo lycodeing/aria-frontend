@@ -7,6 +7,8 @@ import { ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
+import { CHART_COLORS } from './chart-theme';
+
 const props = defineProps<{
   /** 问题标签分布数据 */
   data?: TagDistributionItem[];
@@ -29,7 +31,13 @@ function render(data: TagDistributionItem[] = []) {
         animationEasing: 'exponentialInOut',
         animationType: 'scale',
         center: ['50%', '50%'],
-        color: ['#5ab1ef', '#b6a2de', '#67e0e3', '#2ec7c9', '#e18525'],
+        color: [
+          CHART_COLORS.primary,
+          CHART_COLORS.purple,
+          CHART_COLORS.cyan,
+          CHART_COLORS.teal,
+          CHART_COLORS.amber,
+        ],
         data: roseData,
         label: {
           formatter: '{b}: {d}%',

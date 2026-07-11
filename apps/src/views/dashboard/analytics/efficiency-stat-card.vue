@@ -8,7 +8,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="rounded-lg border bg-card p-4 text-card-foreground shadow-sm">
+  <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-sm">
     <p class="text-muted-foreground text-sm">{{ title }}</p>
     <p class="mt-1 text-2xl font-semibold tabular-nums">{{ value }}</p>
   </div>

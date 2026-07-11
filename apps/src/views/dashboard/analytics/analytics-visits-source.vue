@@ -7,6 +7,8 @@ import { ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
+import { CHART_COLORS } from './chart-theme';
+
 const props = defineProps<{
   /** 会话状态分布数据 */
   data?: StatusDistributionItem[];
@@ -41,7 +43,12 @@ function render(data: StatusDistributionItem[] = []) {
         animationEasing: 'exponentialInOut',
         animationType: 'scale',
         avoidLabelOverlap: false,
-        color: ['#5ab1ef', '#b6a2de', '#67e0e3', '#2ec7c9'],
+        color: [
+          CHART_COLORS.primary,
+          CHART_COLORS.purple,
+          CHART_COLORS.cyan,
+          CHART_COLORS.teal,
+        ],
         data: pieData,
         emphasis: {
           label: {

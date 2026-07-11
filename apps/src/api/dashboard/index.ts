@@ -97,6 +97,30 @@ export interface TagDistributionItem {
   count: number;
 }
 
+// ─── 复杂度分布 ──────────────────────────────────────────────────────────────
+
+/** 复杂度等级（对应后端 cs_conversation.complexity 字段取值） */
+export type ComplexityLevel = 'COMPLEX' | 'MEDIUM' | 'SIMPLE';
+
+/** 复杂度分布数据项（后端按等级聚合后的占比） */
+export interface ComplexityDistributionItem {
+  /** 等级：SIMPLE / MEDIUM / COMPLEX */
+  level: ComplexityLevel;
+  /** 该等级占比（0-100，后端已计算，保留一位小数） */
+  percent: number;
+}
+
+/**
+ * 复杂度卡片展示项（前端映射后的形态，含中文标签与语义色）。
+ * 与 complexity-trend-card.vue 共享，避免在卡片内重复定义。
+ */
+export interface ComplexityItem {
+  label: string;
+  percent: number;
+  /** 进度条背景色（Tailwind 类，与设计稿语义色一致） */
+  color: string;
+}
+
 /** 最近会话项 */
 export interface RecentSessionItem {
   sessionId: string;
@@ -166,6 +190,16 @@ export function getRecentSessionsApi(limit = 10): Promise<RecentSessionItem[]> {
   return rawRequestClient.get('/api/v1/dashboard/recent-sessions', {
     params: { limit },
   });
+}
+
+/**
+ * 获取会话复杂度分布（简单/中等/复杂 三项占比）。
+ * 快照数据，不受时间范围筛选影响。
+ */
+export function getComplexityDistributionApi(): Promise<
+  ComplexityDistributionItem[]
+> {
+  return rawRequestClient.get('/api/v1/dashboard/complexity-distribution');
 }
 
 /** 获取座席工作量统计 */

@@ -5,6 +5,8 @@ import { ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
+import { CHART_COLORS } from './chart-theme';
+
 const props = defineProps<{
   /** 每月消息量 */
   counts?: number[];
@@ -30,6 +32,10 @@ function render(months: string[] = [], counts: number[] = []) {
       {
         barMaxWidth: 80,
         data: counts,
+        itemStyle: {
+          color: CHART_COLORS.primary,
+          borderRadius: [4, 4, 0, 0],
+        },
         type: 'bar',
       },
     ],

@@ -7,6 +7,8 @@ import { ref, watch } from 'vue';
 
 import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
 
+import { CHART_COLORS } from './chart-theme';
+
 const props = defineProps<{
   /** 会话趋势数据（按月，区分人工/AI） */
   data?: ConversationTrendItem[];
@@ -23,11 +25,11 @@ function render(data: ConversationTrendItem[] = []) {
 
   renderEcharts({
     grid: {
-      bottom: 0,
+      bottom: 30,
       containLabel: true,
       left: '1%',
       right: '1%',
-      top: '2 %',
+      top: '2%',
     },
     legend: {
       bottom: 0,
@@ -38,7 +40,7 @@ function render(data: ConversationTrendItem[] = []) {
         areaStyle: {},
         data: humanCounts,
         itemStyle: {
-          color: '#5ab1ef',
+          color: CHART_COLORS.primary,
         },
         name: '人工会话',
         smooth: true,
@@ -48,7 +50,7 @@ function render(data: ConversationTrendItem[] = []) {
         areaStyle: {},
         data: aiCounts,
         itemStyle: {
-          color: '#019680',
+          color: CHART_COLORS.success,
         },
         name: 'AI 会话',
         smooth: true,
@@ -58,7 +60,7 @@ function render(data: ConversationTrendItem[] = []) {
     tooltip: {
       axisPointer: {
         lineStyle: {
-          color: '#019680',
+          color: CHART_COLORS.success,
           width: 1,
         },
       },
