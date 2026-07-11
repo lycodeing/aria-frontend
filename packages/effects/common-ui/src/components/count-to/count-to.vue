@@ -28,7 +28,8 @@ onMounted(() => {
 watch(
   () => props.endVal,
   (val) => {
-    lastValue.value = val;
+    // useTransition 要求 source ref 必须是 number，undefined 会抛 "Unknown transition type"
+    lastValue.value = val ?? 0;
   },
 );
 
