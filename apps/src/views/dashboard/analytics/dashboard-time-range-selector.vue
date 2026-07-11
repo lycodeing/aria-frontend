@@ -1,6 +1,8 @@
 <script lang="ts" setup>
 import type { TimeRange } from '#/api/dashboard';
 
+import { RadioButton, RadioGroup } from 'ant-design-vue';
+
 defineProps<{ modelValue: TimeRange }>();
 defineEmits<{ 'update:modelValue': [val: TimeRange] }>();
 
@@ -13,7 +15,7 @@ const options = [
 </script>
 
 <template>
-  <a-radio-group
+  <RadioGroup
     :value="modelValue"
     button-style="solid"
     size="small"
@@ -24,8 +26,8 @@ const options = [
       )
     "
   >
-    <a-radio-button v-for="opt in options" :key="opt.value" :value="opt.value">
+    <RadioButton v-for="opt in options" :key="opt.value" :value="opt.value">
       {{ opt.label }}
-    </a-radio-button>
-  </a-radio-group>
+    </RadioButton>
+  </RadioGroup>
 </template>
