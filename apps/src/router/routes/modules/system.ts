@@ -56,6 +56,17 @@ const routes: RouteRecordRaw[] = [
           title: 'AI 模型配置',
         },
       },
+      {
+        name: 'SystemConfig',
+        path: '/system/config',
+        component: () => import('#/views/system/config/index.vue'),
+        meta: {
+          authority: ['super_admin'],
+          configType: 'SYSTEM',
+          icon: 'lucide:settings',
+          title: '系统配置',
+        },
+      },
     ],
   },
 ];

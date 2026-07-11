@@ -50,6 +50,17 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        name: 'CustomerServiceConfig',
+        path: '/customerservice/config',
+        component: () => import('#/views/system/config/index.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_manager'],
+          configType: 'CUSTOMER_SERVICE',
+          icon: 'lucide:settings-2',
+          title: '客服配置',
+        },
+      },
+      {
         name: 'CustomerServiceDIT',
         path: '/customerservice/dit',
         meta: {

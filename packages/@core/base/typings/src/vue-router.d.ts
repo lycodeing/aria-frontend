@@ -44,6 +44,11 @@ interface RouteMeta {
     | 'warning'
     | string;
   /**
+   * 系统配置页面的配置类型，用于区分系统配置与客服配置
+   * 取值：'SYSTEM' | 'CUSTOMER_SERVICE'
+   */
+  configType?: string;
+  /**
    * 路由对应dom是否缓存起来
    */
   domCached?: boolean;
