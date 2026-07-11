@@ -78,6 +78,11 @@ export const useAuthStore = defineStore('auth', () => {
         }
 
         userStore.setUserInfo(userInfo);
+        // 非阻塞预加载系统配置，失败不影响登录流程
+        const { useSystemConfigStore } = await import('#/store/system-config');
+        useSystemConfigStore()
+          .loadAll()
+          .catch(() => {});
         accessStore.setAccessCodes(accessCodes);
 
         // BUG-009: 首次登录强制改密检测
