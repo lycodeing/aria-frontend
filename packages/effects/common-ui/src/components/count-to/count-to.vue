@@ -19,17 +19,18 @@ const props = withDefaults(defineProps<CountToProps>(), {
 
 const emit = defineEmits(['started', 'finished']);
 
-const lastValue = ref(props.startVal);
+const lastValue = ref(Number(props.startVal) || 0);
 
 onMounted(() => {
-  lastValue.value = props.endVal;
+  lastValue.value = Number(props.endVal) || 0;
 });
 
 watch(
   () => props.endVal,
   (val) => {
-    // useTransition 要求 source ref 必须是 number，undefined 会抛 "Unknown transition type"
-    lastValue.value = val ?? 0;
+    // Number() 强制转换防止字符串传入（如 "1"），|| 0 处理 NaN/undefined
+    // useTransition 要求 source ref 必须是 number
+    lastValue.value = Number(val) || 0;
   },
 );
 
