@@ -28,7 +28,7 @@ const defaultPreferences: Preferences = {
     layout: 'sidebar-nav',
     locale: 'zh-CN',
     loginExpiredMode: 'page',
-    name: 'Vben Admin',
+    name: 'ARIA 智能客服',
     preferencesButtonPosition: 'auto',
     timezone: 'Asia/Shanghai',
     watermark: false,
@@ -43,13 +43,13 @@ const defaultPreferences: Preferences = {
     styleType: 'normal',
   },
   copyright: {
-    companyName: 'Vben',
-    companySiteLink: 'https://www.vben.pro',
+    companyName: 'ARIA',
+    companySiteLink: '',
     date: '2024',
-    enable: true,
-    icp: '闽ICP备19024351号',
-    icpLink: 'https://beian.miit.gov.cn/',
-    settingShow: true,
+    enable: false,
+    icp: '',
+    icpLink: '',
+    settingShow: false,
   },
   footer: {
     enable: false,
@@ -67,7 +67,7 @@ const defaultPreferences: Preferences = {
   logo: {
     enable: true,
     fit: 'contain',
-    source: 'https://unpkg.com/@vbenjs/static-source@0.1.7/source/logo-v1.webp',
+    source: '',
   },
   navigation: {
     accordion: true,

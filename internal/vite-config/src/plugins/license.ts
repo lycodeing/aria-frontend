@@ -11,11 +11,7 @@ import { dateUtil, readPackageJSON } from '@vben/node-utils';
 async function viteLicensePlugin(
   root = process.cwd(),
 ): Promise<PluginOption | undefined> {
-  const {
-    description = '',
-    homepage = '',
-    version = '',
-  } = await readPackageJSON(root);
+  const { description = '', version = '' } = await readPackageJSON(root);
 
   return {
     apply: 'build',
@@ -24,15 +20,13 @@ async function viteLicensePlugin(
       handler(_options, bundle) {
         const date = dateUtil().format('YYYY-MM-DD ');
         const copyrightText = `/*!
-  * Vben Admin
+  * ARIA 智能客服管理平台
   * Version: ${version}
-  * Author: vben
-  * Copyright (C) 2024 Vben
+  * Author: lycodeing
+  * Copyright (C) 2024 ARIA
   * License: MIT License
   * Description: ${description}
   * Date Created: ${date}
-  * Homepage: ${homepage}
-  * Contact: ann.vben@gmail.com
 */
               `.trim();
 
