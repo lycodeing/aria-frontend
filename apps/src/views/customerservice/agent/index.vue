@@ -33,8 +33,6 @@ import {
 import {
   acceptSessionApi,
   closeSessionApi,
-  getActiveSessionsApi,
-  getClosedSessionsApi,
   getOnlineAgentsApi,
   getSessionHistoryApi,
   transferSessionApi,
@@ -265,8 +263,8 @@ function matchKeyword(
   if (!k) return true;
   return fields.some((f) => (f ?? '').toLowerCase().includes(k));
 }
-const visiblePagedQueue = computed(() =>
-  pagedQueue.value.filter((q) =>
+const visiblePagedWaitingQueue = computed(() =>
+  pagedWaitingQueue.value.filter((q) =>
     matchKeyword(queueSearch.value, q.name, q.tag, q.id),
   ),
 );
@@ -382,37 +380,26 @@ const concurrent = computed(() => sessions.value.length);
 const queueStateTab = ref<'active' | 'ai' | 'closed' | 'waiting'>('waiting');
 
 // ===== 已结束会话 =====
-const closedSessions = ref<ClosedSessionItem[]>([]);
-const closedLoading = ref(false);
+const closedSessions = computed<ClosedSessionItem[]>(() =>
+  queueChannel.closedQueue.value.map((item) => ({
+    id: item.id,
+    name: item.name,
+    nameChar: item.name.at(0) ?? '?',
+    endedAt:
+      item.waitSince > 0
+        ? new Date(item.waitSince * 1000).toLocaleString('zh-CN', {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : '',
+    transferReason: item.reason,
+    tag: item.tag,
+  })),
+);
 const closedView = ref<ClosedView | null>(null);
 const closedViewLoading = ref(false);
-
-async function loadClosedSessions() {
-  closedLoading.value = true;
-  try {
-    const list = await getClosedSessionsApi();
-    closedSessions.value = list.map((item) => ({
-      id: item.sessionId,
-      name: item.userName,
-      nameChar: item.userName.at(0) ?? '?',
-      endedAt:
-        item.waitSince > 0
-          ? new Date(item.waitSince * 1000).toLocaleString('zh-CN', {
-              month: '2-digit',
-              day: '2-digit',
-              hour: '2-digit',
-              minute: '2-digit',
-            })
-          : '',
-      transferReason: item.transferReason,
-      tag: item.tag,
-    }));
-  } catch {
-    message.error('加载历史会话失败');
-  } finally {
-    closedLoading.value = false;
-  }
-}
 
 async function viewClosedSession(item: ClosedSessionItem) {
   closedViewLoading.value = true;
@@ -444,20 +431,20 @@ const filteredMsgs = computed(() => {
 
 // ===== 全局 SSE Queue Channel（由 layouts/basic.vue 持有连接） =====
 const queueChannel = useSessionQueueChannel();
-const { queue, sseConnected } = queueChannel;
+const { aiQueue, waitingQueue, sseConnected } = queueChannel;
 
 // 分页（局部，保持原有逻辑）
 const queuePage = ref(1);
 const queueTotalPages = computed(() =>
-  Math.max(1, Math.ceil(queue.value.length / 5)),
+  Math.max(1, Math.ceil(waitingQueue.value.length / 5)),
 );
-const pagedQueue = computed(() => {
+const pagedWaitingQueue = computed(() => {
   const start = (queuePage.value - 1) * 5;
-  return queue.value.slice(start, start + 5);
+  return waitingQueue.value.slice(start, start + 5);
 });
 // 仅在新会话入队时（长度增大）才重置分页
 watch(
-  () => queue.value.length,
+  () => waitingQueue.value.length,
   (newLen, oldLen) => {
     if (newLen > oldLen) queuePage.value = 1;
   },
@@ -465,7 +452,9 @@ watch(
 
 async function acceptItem(item: QueueItem): Promise<ApiSessionItem> {
   await acceptSessionApi(item.id);
-  queueChannel.removeFromQueue(item.id);
+  // Channel 会通过 SSE ACCEPTED 事件自动将 status 改为 ACTIVE
+  // 乐观更新：手动触发一次 removeFromSessions 防止 SSE 延迟时用户看到重复条目
+  queueChannel.removeFromSessions(item.id);
   return {
     sessionId: item.id,
     userName: item.name,
@@ -529,8 +518,6 @@ const availableAgents = ref<OnlineAgentItem[]>([]);
 const loadingAgents = ref(false);
 
 watch(queueStateTab, (tab) => {
-  if (tab === 'closed' && closedSessions.value.length === 0)
-    void loadClosedSessions();
   if (tab !== 'closed') closedView.value = null;
 });
 
@@ -720,19 +707,18 @@ function quickReply(q: string) {
 
 // ===== 生命周期 =====
 onMounted(async () => {
-  // queue 初始数据由 layouts/basic.vue 在登录时已通过 queueChannel.loadQueue() 加载
+  // channel.loadSessions() 由 layouts/basic.vue 在登录时已调用
   // 此处只需注册页面级事件回调
   queueChannel.onClosed(handleQueueClosed);
   queueChannel.onTransfer(handleQueueTransfer);
 
-  const activeSessions = await getActiveSessionsApi().catch(
-    () => [] as ApiSessionItem[],
-  );
+  // 直接从 activeQueue 切片取已接入的会话
+  const activeSessions = queueChannel.activeQueue.value;
 
   if (activeSessions.length > 0) {
     const histories = await Promise.all(
       activeSessions.map((item) =>
-        getSessionHistoryApi(item.sessionId).catch(() => []),
+        getSessionHistoryApi(item.id).catch(() => []),
       ),
     );
     activeSessions.forEach((item, idx) => {
@@ -746,16 +732,16 @@ onMounted(async () => {
           if (Number.isFinite(seqNum) && seqNum > maxSeq) maxSeq = seqNum;
           return historyItemToMsg(h);
         });
-      if (maxSeq > 0) writeLastSeq(item.sessionId, maxSeq);
+      if (maxSeq > 0) writeLastSeq(item.id, maxSeq);
       sessions.value.push({
-        id: item.sessionId,
-        name: item.userName,
-        nameChar: item.userName.at(0) ?? '',
+        id: item.id,
+        name: item.name,
+        nameChar: item.name.at(0) ?? '',
         color: '#8b5cf6',
         min: '接待中',
         active: false,
-        sessionCode: `#${item.sessionId}`,
-        transferReason: item.transferReason,
+        sessionCode: `#${item.id}`,
+        transferReason: item.reason,
         tag: item.tag,
         waitSince: item.waitSince,
         unread: 0,
@@ -766,7 +752,7 @@ onMounted(async () => {
       });
     });
     if (sessions.value[0]) sessions.value[0].active = true;
-    activeSessions.forEach((item) => connectAgentSession(item.sessionId));
+    activeSessions.forEach((item) => connectAgentSession(item.id));
   }
 });
 
@@ -810,16 +796,16 @@ onUnmounted(() => {
           :max-concurrent="MAX_CONCURRENT"
           :sse-connected="sseConnected"
           :queue-state-tab="queueStateTab"
-          :queue="queue"
-          :paged-queue="pagedQueue"
+          :ai-queue="aiQueue"
+          :waiting-queue="waitingQueue"
+          :paged-waiting-queue="pagedWaitingQueue"
           :queue-page="queuePage"
           :queue-total-pages="queueTotalPages"
           :queue-search="queueSearch"
-          :visible-paged-queue="visiblePagedQueue"
+          :visible-paged-waiting-queue="visiblePagedWaitingQueue"
           :visible-sessions="visibleSessions"
           :sessions="sessions"
           :closed-sessions="closedSessions"
-          :closed-loading="closedLoading"
           :closed-view="closedView"
           @toggle-online="agentOnline = $event"
           @update:queue-state-tab="queueStateTab = $event"
@@ -844,7 +830,7 @@ onUnmounted(() => {
           :ws-status-meta="wsStatusMeta"
           :tool-expanded="toolExpanded"
           :quick-replies="QUICK_REPLY"
-          :queue="queue"
+          :queue="waitingQueue"
           :max-concurrent="MAX_CONCURRENT"
           :concurrent="concurrent"
           :visitor-typing="
