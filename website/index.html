@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>语擎 Yuqing · 会思考的智能客服引擎</title>
+<meta name="description" content="语擎 Yuqing 是为企业打造的智能客服引擎，融合大模型语义理解、多轮对话编排与知识库自学习，让每一次客户对话都更懂人心。" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0A0B0D;
+    --bg-elev: #0E1014;
+    --panel: #111317;
+    --panel-2: #16191E;
+    --panel-3: #1B1F25;
+    --border: rgba(255, 255, 255, 0.07);
+    --border-strong: rgba(255, 255, 255, 0.12);
+    --text: #F4F4F5;
+    --text-dim: #A1A1AA;
+    --text-faint: #6B7280;
+    --accent: #34D399;
+    --accent-deep: #10B981;
+    --accent-soft: rgba(52, 211, 153, 0.12);
+    --accent-border: rgba(52, 211, 153, 0.32);
+    --radius: 18px;
+    --radius-sm: 12px;
+    --maxw: 1200px;
+    --shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.7);
+    --font: "Outfit", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  a { color: inherit; text-decoration: none; }
+
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 28px; }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.06em;
+    color: var(--accent); text-transform: uppercase;
+    padding: 6px 14px; border: 1px solid var(--accent-border);
+    border-radius: 999px; background: var(--accent-soft);
+  }
+
+  .section-head { max-width: 720px; margin-bottom: 56px; }
+  .section-head h2 {
+    font-size: clamp(28px, 4vw, 44px); font-weight: 700;
+    letter-spacing: -0.02em; margin: 18px 0 14px; line-height: 1.15;
+  }
+  .section-head p { color: var(--text-dim); font-size: 17px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    font-weight: 600; font-size: 15px; padding: 12px 22px;
+    border-radius: 999px; border: 1px solid transparent; cursor: pointer;
+    transition: transform .2s ease, background .2s ease, border-color .2s ease;
+  }
+  .btn-primary { background: var(--accent); color: #04130D; }
+  .btn-primary:hover { background: #4BE3A8; transform: translateY(-2px); }
+  .btn-ghost { background: transparent; color: var(--text); border-color: var(--border-strong); }
+  .btn-ghost:hover { border-color: var(--accent-border); color: var(--accent); }
+
+  /* ============ HEADER ============ */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px);
+    background: rgba(10, 11, 13, 0.72);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav { display: flex; align-items: center; justify-content: space-between; height: 72px; }
+  .brand { display: flex; align-items: center; gap: 11px; font-weight: 700; font-size: 19px; letter-spacing: -0.01em; }
+  .brand .mark {
+    width: 34px; height: 34px; border-radius: 10px;
+    background: linear-gradient(140deg, var(--accent), var(--accent-deep));
+    display: grid; place-items: center; color: #04130D; font-weight: 800; font-size: 17px;
+    box-shadow: 0 0 24px rgba(52, 211, 153, 0.35);
+  }
+  .brand small { color: var(--text-faint); font-weight: 500; font-size: 13px; letter-spacing: 0.12em; }
+  .nav-links { display: flex; align-items: center; gap: 34px; }
+  .nav-links a { color: var(--text-dim); font-size: 15px; font-weight: 500; transition: color .2s; }
+  .nav-links a:hover { color: var(--text); }
+  .nav-cta { display: flex; align-items: center; gap: 14px; }
+  .nav-cta .login { color: var(--text-dim); font-size: 15px; font-weight: 500; }
+  .nav-cta .login:hover { color: var(--text); }
+
+  /* ============ HERO ============ */
+  .hero { position: relative; padding: 96px 0 80px; overflow: hidden; }
+  .hero::before {
+    content: ""; position: absolute; top: -180px; left: 50%; transform: translateX(-50%);
+    width: 900px; height: 600px; pointer-events: none;
+    background: radial-gradient(closest-side, rgba(52, 211, 153, 0.16), transparent 70%);
+    filter: blur(20px);
+  }
+  .hero-grid { position: relative; display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 56px; align-items: center; }
+  .hero h1 {
+    font-size: clamp(38px, 5.6vw, 66px); font-weight: 800; line-height: 1.05;
+    letter-spacing: -0.035em; margin: 22px 0 22px;
+  }
+  .hero h1 .grad {
+    background: linear-gradient(120deg, var(--accent), #9BE8C8);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero p.lead { font-size: 18px; color: var(--text-dim); max-width: 520px; margin-bottom: 32px; }
+  .hero-actions { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 36px; }
+  .trust { display: flex; align-items: center; gap: 22px; color: var(--text-faint); font-size: 13.5px; }
+  .trust .dots { display: flex; }
+  .trust .dots span {
+    width: 30px; height: 30px; border-radius: 50%; margin-left: -10px;
+    border: 2px solid var(--bg); background: var(--panel-3);
+    display: grid; place-items: center; font-size: 11px; color: var(--text-dim); font-weight: 600;
+  }
+  .trust .dots span:first-child { margin-left: 0; }
+
+  /* Chat mockup */
+  .mock {
+    background: linear-gradient(180deg, var(--panel), var(--bg-elev));
+    border: 1px solid var(--border-strong); border-radius: 22px;
+    padding: 18px; box-shadow: var(--shadow); position: relative;
+  }
+  .mock::after {
+    content: ""; position: absolute; inset: 0; border-radius: 22px; pointer-events: none;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+  .mock-bar { display: flex; gap: 7px; padding: 4px 6px 14px; }
+  .mock-bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--panel-3); display: inline-block; }
+  .mock-bar i:nth-child(1){ background:#3A3F47; } .mock-bar i:nth-child(2){ background:#3A3F47; } .mock-bar i:nth-child(3){ background:#3A3F47; }
+  .bubble { border-radius: 16px; padding: 13px 15px; font-size: 14.5px; max-width: 86%; margin-bottom: 12px; line-height: 1.5; }
+  .bubble.user { background: var(--panel-3); margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.bot { background: var(--accent-soft); border: 1px solid var(--accent-border); color: #D9FBE9; margin-right: auto; border-bottom-left-radius: 5px; }
+  .bubble.bot .tag { font-size: 11px; color: var(--accent); font-weight: 600; display: block; margin-bottom: 3px; letter-spacing: .04em; }
+  .typing { display: flex; gap: 5px; padding: 4px 2px; }
+  .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); opacity: .5; animation: blink 1.2s infinite; }
+  .typing span:nth-child(2){ animation-delay: .2s; } .typing span:nth-child(3){ animation-delay: .4s; }
+  @keyframes blink { 0%,100%{opacity:.3;} 50%{opacity:1;} }
+
+  /* ============ LOGO STRIP ============ */
+  .logos { padding: 40px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .logos p { text-align: center; color: var(--text-faint); font-size: 13px; letter-spacing: .08em; margin-bottom: 22px; }
+  .logo-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 46px; align-items: center; }
+  .logo-row span { color: var(--text-faint); font-weight: 700; font-size: 19px; letter-spacing: .02em; opacity: .7; transition: opacity .2s, color .2s; }
+  .logo-row span:hover { opacity: 1; color: var(--text-dim); }
+
+  /* ============ FLOW / HOW IT WORKS ============ */
+  .flow { padding: 110px 0; }
+  .pain {
+    background: linear-gradient(135deg, var(--panel), var(--bg-elev));
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 38px 40px; margin-bottom: 70px; position: relative; overflow: hidden;
+  }
+  .pain h3 { font-size: 22px; font-weight: 700; margin-bottom: 20px; }
+  .pain-tags { display: flex; flex-wrap: wrap; gap: 12px; }
+  .pain-tags span {
+    font-size: 14px; color: var(--text-dim); padding: 9px 16px; border-radius: 999px;
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+  }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .step { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 30px 28px; transition: border-color .25s, transform .25s; }
+  .step:hover { border-color: var(--accent-border); transform: translateY(-4px); }
+  .step .num {
+    width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
+    background: var(--accent-soft); border: 1px solid var(--accent-border); color: var(--accent);
+    font-weight: 700; font-size: 18px; margin-bottom: 20px;
+  }
+  .step h4 { font-size: 18px; font-weight: 600; margin-bottom: 9px; }
+  .step p { color: var(--text-dim); font-size: 14.5px; }
+
+  /* ============ FEATURES (zig-zag) ============ */
+  .features { padding: 30px 0 110px; }
+  .feat { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; margin-bottom: 96px; }
+  .feat:nth-child(even) .feat-text { order: 2; }
+  .feat-text h3 { font-size: clamp(24px, 3vw, 34px); font-weight: 700; letter-spacing: -0.02em; margin: 16px 0 16px; line-height: 1.2; }
+  .feat-text p { color: var(--text-dim); font-size: 16.5px; margin-bottom: 22px; }
+  .feat-list { list-style: none; }
+  .feat-list li { display: flex; gap: 11px; align-items: flex-start; margin-bottom: 12px; color: var(--text-dim); font-size: 15px; }
+  .feat-list li svg { flex: none; margin-top: 3px; }
+  .feat-visual {
+    background: linear-gradient(160deg, var(--panel-2), var(--bg-elev));
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 30px; min-height: 280px; display: flex; flex-direction: column; justify-content: center; gap: 14px;
+    box-shadow: var(--shadow); position: relative; overflow: hidden;
+  }
+  .feat-visual::before {
+    content: ""; position: absolute; width: 240px; height: 240px; right: -60px; top: -60px;
+    background: radial-gradient(closest-side, var(--accent-soft), transparent 70%);
+  }
+  .vis-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px 18px; position: relative; }
+  .vis-card .lbl { font-size: 12px; color: var(--text-faint); letter-spacing: .05em; margin-bottom: 8px; }
+  .vis-card .bar { height: 8px; border-radius: 6px; background: var(--panel-3); overflow: hidden; margin-bottom: 8px; }
+  .vis-card .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent-deep), var(--accent)); border-radius: 6px; }
+  .vis-card .row { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-dim); }
+  .vis-pill { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border); padding: 6px 12px; border-radius: 999px; align-self: flex-start; }
+
+  /* ============ BENTO GRID ============ */
+  .bento { padding: 30px 0 110px; }
+  .bento-grid { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 1fr; gap: 18px; }
+  .cell {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 26px; transition: border-color .25s, background .25s;
+  }
+  .cell:hover { border-color: var(--accent-border); background: var(--panel-2); }
+  .cell .ic { width: 42px; height: 42px; border-radius: 11px; background: var(--accent-soft); border: 1px solid var(--accent-border); display: grid; place-items: center; margin-bottom: 18px; }
+  .cell h4 { font-size: 16.5px; font-weight: 600; margin-bottom: 8px; }
+  .cell p { color: var(--text-dim); font-size: 14px; }
+  .cell.span2 { grid-column: span 2; }
+  .cell.span2 .big { font-size: 40px; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; margin: 6px 0; }
+  .cell.span2 .sub { color: var(--text-dim); font-size: 14px; }
+
+  /* ============ SOCIAL PROOF ============ */
+  .proof { padding: 30px 0 110px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-bottom: 70px; }
+  .stat { text-align: center; padding: 30px 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+  .stat .n { font-size: 42px; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; }
+  .stat .t { color: var(--text-dim); font-size: 14.5px; margin-top: 6px; }
+  .quotes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .quote { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; }
+  .quote .stars { color: var(--accent); font-size: 15px; margin-bottom: 14px; letter-spacing: 2px; }
+  .quote p { font-size: 15px; color: var(--text); line-height: 1.65; margin-bottom: 20px; }
+  .quote .who { display: flex; align-items: center; gap: 12px; }
+  .quote .who .av { width: 40px; height: 40px; border-radius: 50%; background: var(--panel-3); display: grid; place-items: center; font-weight: 700; color: var(--text-dim); font-size: 14px; }
+  .quote .who .nm { font-size: 14.5px; font-weight: 600; }
+  .quote .who .rl { font-size: 12.5px; color: var(--text-faint); }
+
+  /* ============ PRICING ============ */
+  .pricing { padding: 30px 0 110px; }
+  .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; align-items: stretch; }
+  .plan { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 34px 30px; display: flex; flex-direction: column; position: relative; }
+  .plan.featured { border-color: var(--accent-border); background: linear-gradient(180deg, var(--panel-2), var(--panel)); box-shadow: 0 0 0 1px var(--accent-border), var(--shadow); }
+  .plan .badge { position: absolute; top: -13px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #04130D; font-size: 12px; font-weight: 700; padding: 5px 14px; border-radius: 999px; letter-spacing: .04em; }
+  .plan .name { font-size: 18px; font-weight: 700; }
+  .plan .desc { color: var(--text-faint); font-size: 13.5px; margin-top: 4px; min-height: 38px; }
+  .plan .price { font-size: 44px; font-weight: 800; letter-spacing: -0.02em; margin: 20px 0 4px; }
+  .plan .price small { font-size: 15px; font-weight: 500; color: var(--text-faint); }
+  .plan .per { color: var(--text-faint); font-size: 13.5px; margin-bottom: 24px; }
+  .plan ul { list-style: none; flex: 1; margin-bottom: 26px; }
+  .plan ul li { display: flex; gap: 10px; align-items: flex-start; font-size: 14.5px; color: var(--text-dim); margin-bottom: 13px; }
+  .plan ul li svg { flex: none; margin-top: 3px; }
+  .plan .btn { width: 100%; }
+
+  /* ============ FAQ ============ */
+  .faq { padding: 30px 0 110px; }
+  .faq-list { max-width: 840px; margin: 0 auto; }
+  .faq-item { border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 14px; background: var(--panel); overflow: hidden; }
+  .faq-q { width: 100%; text-align: left; background: none; border: none; color: var(--text); font-family: var(--font); font-size: 16.5px; font-weight: 600; padding: 22px 24px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .faq-q .pm { flex: none; width: 22px; height: 22px; position: relative; transition: transform .25s; }
+  .faq-q .pm::before, .faq-q .pm::after { content: ""; position: absolute; background: var(--accent); border-radius: 2px; }
+  .faq-q .pm::before { width: 14px; height: 2px; top: 10px; left: 4px; }
+  .faq-q .pm::after { width: 2px; height: 14px; top: 4px; left: 10px; transition: opacity .25s; }
+  .faq-item.open .pm { transform: rotate(180deg); }
+  .faq-item.open .pm::after { opacity: 0; }
+  .faq-a { max-height: 0; overflow: hidden; transition: max-height .3s ease; }
+  .faq-a p { padding: 0 24px 22px; color: var(--text-dim); font-size: 15px; line-height: 1.7; }
+
+  /* ============ FINAL CTA ============ */
+  .final { padding: 30px 0 110px; }
+  .final-box {
+    background: linear-gradient(135deg, var(--panel-2), var(--bg-elev));
+    border: 1px solid var(--accent-border); border-radius: 26px;
+    padding: 64px 40px; text-align: center; position: relative; overflow: hidden;
+  }
+  .final-box::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(600px 300px at 50% -20%, var(--accent-soft), transparent 70%);
+  }
+  .final-box h2 { font-size: clamp(30px, 4vw, 46px); font-weight: 800; letter-spacing: -0.03em; margin-bottom: 16px; position: relative; }
+  .final-box p { color: var(--text-dim); font-size: 17px; margin-bottom: 32px; position: relative; }
+  .final-box .hero-actions { justify-content: center; position: relative; margin-bottom: 0; }
+
+  /* ============ FOOTER ============ */
+  footer { border-top: 1px solid var(--border); padding: 64px 0 36px; }
+  .foot-grid { display: grid; grid-template-columns: 1.6fr repeat(3, 1fr); gap: 40px; margin-bottom: 48px; }
+  .foot-brand p { color: var(--text-dim); font-size: 14.5px; max-width: 280px; margin: 16px 0 0; }
+  .foot-col h5 { font-size: 14px; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+  .foot-col a { display: block; color: var(--text-dim); font-size: 14px; margin-bottom: 11px; transition: color .2s; }
+  .foot-col a:hover { color: var(--accent); }
+  .foot-bottom { display: flex; justify-content: space-between; align-items: center; padding-top: 28px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 13.5px; flex-wrap: wrap; gap: 12px; }
+
+  /* ============ RESPONSIVE ============ */
+  @media (max-width: 980px) {
+    .hero-grid, .feat, .steps, .stats, .quotes, .plans, .bento-grid, .foot-grid { grid-template-columns: 1fr; }
+    .bento-grid { grid-template-columns: repeat(2, 1fr); }
+    .cell.span2 { grid-column: span 2; }
+    .feat:nth-child(even) .feat-text { order: 0; }
+    .nav-links { display: none; }
+    .stats, .bento-grid .cell.span2 { }
+    .stat { padding: 24px 12px; }
+  }
+  @media (max-width: 560px) {
+    .bento-grid { grid-template-columns: 1fr; }
+    .cell.span2 { grid-column: span 1; }
+    .hero { padding: 64px 0 50px; }
+    .wrap { padding: 0 20px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ HEADER ============ -->
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#top">
+      <span class="mark">语</span>
+      <span>语擎 <small>YUQING</small></span>
+    </a>
+    <nav class="nav-links">
+      <a href="#flow">解决方案</a>
+      <a href="#features">核心能力</a>
+      <a href="#proof">客户案例</a>
+      <a href="#pricing">定价</a>
+      <a href="#faq">常见问题</a>
+    </nav>
+    <div class="nav-cta">
+      <a class="login" href="#">登录</a>
+      <a class="btn btn-primary" href="#pricing">免费试用</a>
+    </div>
+  </div>
+</header>
+
+<!-- ============ HERO ============ -->
+<section class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">● 大模型驱动的智能客服引擎</span>
+      <h1>让每一次对话<br /><span class="grad">都更懂人心</span></h1>
+      <p class="lead">语擎 Yuqing 融合大模型语义理解、多轮对话编排与知识库自学习，把僵硬的"机器人话术"变成有温度、能办事的真客服。</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#pricing">免费试用 14 天 →</a>
+        <a class="btn btn-ghost" href="#flow">看它怎么工作</a>
+      </div>
+      <div class="trust">
+        <div class="dots"><span>京</span><span>东</span><span>米</span><span>3+</span></div>
+        <span>已服务 2,400+ 家企业，日均处理 8,600 万次对话</span>
+      </div>
+    </div>
+    <div class="mock" aria-hidden="true">
+      <div class="mock-bar"><i></i><i></i><i></i></div>
+      <div class="bubble user">我的订单到现在还没发货，怎么回事？</div>
+      <div class="bubble bot"><span class="tag">语擎 · 已识别意图</span>您好，已为您定位到订单 #88291。该商品正在仓库出库，预计明天 18:00 前发出。需要我帮您加急吗？</div>
+      <div class="bubble user">好的，帮我加急，顺便开发票</div>
+      <div class="bubble bot"><span class="tag">语擎 · 已自动执行</span>已提交加急并生成电子发票，稍后发送至您的邮箱。还有别的需要吗？😊</div>
+      <div class="bubble user"><div class="typing"><span></span><span></span><span></span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LOGO STRIP ============ -->
+<section class="logos">
+  <div class="wrap">
+    <p>这些团队正在用语擎接待他们的客户</p>
+    <div class="logo-row">
+      <span>云栖科技</span><span>HOMI 家居</span><span>快享出行</span><span>麦谷金融</span><span>鲜丰生活</span><span>知学在线</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FLOW ============ -->
+<section class="flow" id="flow">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">痛点 → 解法</span>
+      <h2>传统客服的三道坎，语擎一次性跨过</h2>
+      <p>重复问题淹没人工、话术僵硬惹人烦、数据散落难沉淀——这正是大多数客服团队的日常。</p>
+    </div>
+    <div class="pain">
+      <h3>我们替你解决的真实困境</h3>
+      <div class="pain-tags">
+        <span>70% 咨询是重复问题，人力被大量消耗</span>
+        <span>关键词机器人答非所问，客户体验差</span>
+        <span>知识库更新滞后，新人培训周期长</span>
+        <span>对话数据沉睡，无法反哺业务</span>
+      </div>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="num">1</div>
+        <h4>接入即连接</h4>
+        <p>官网、App、微信、企微、电话多渠道一键接入，统一会话池，无需改造现有系统。</p>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <h4>理解并办事</h4>
+        <p>大模型读懂真实意图，自动调用业务接口完成查单、改派、退款等动作，而非只给话术。</p>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <h4>自学习沉淀</h4>
+        <p>每轮对话自动回流知识库，热点问题主动聚类，让机器人越用越聪明。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FEATURES (zig-zag) ============ -->
+<section class="features" id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">核心能力</span>
+      <h2>不是"能聊天"，而是"能办事"</h2>
+      <p>语擎把大模型能力落到每一个真实业务场景，让 AI 成为真正的一线生产力。</p>
+    </div>
+
+    <!-- Feature 1 -->
+    <div class="feat">
+      <div class="feat-text">
+        <span class="eyebrow">意图引擎</span>
+        <h3>听得懂人话的语义理解</h3>
+        <p>基于大模型的深层语义解析，告别"关键词过敏"。口语、错别字、长句、方言都能准确归到正确意图，首解率行业领先。</p>
+        <ul class="feat-list">
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>多轮上下文记忆，连续追问不跑偏</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>情绪识别，遇投诉自动升级人工</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>意图聚类，自动发现新的咨询热点</li>
+        </ul>
+      </div>
+      <div class="feat-visual">
+        <div class="vis-pill">● 实时意图识别</div>
+        <div class="vis-card">
+          <div class="lbl">"帮我看看上周买的那个还没到"</div>
+          <div class="row"><span>意图</span><span style="color:var(--accent);font-weight:600">查询物流</span></div>
+          <div class="bar"><i style="width:96%"></i></div>
+          <div class="row"><span>置信度</span><span>96%</span></div>
+        </div>
+        <div class="vis-card">
+          <div class="lbl">"你们这服务太差了我要投诉"</div>
+          <div class="row"><span>意图</span><span style="color:#F87171;font-weight:600">投诉预警</span></div>
+          <div class="bar"><i style="width:91%;background:linear-gradient(90deg,#DC2626,#F87171)"></i></div>
+          <div class="row"><span>动作</span><span>转接主管</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 2 -->
+    <div class="feat">
+      <div class="feat-text">
+        <span class="eyebrow">业务编排</span>
+        <h3>会调用系统的智能体</h3>
+        <p>语擎不止"回答"，更能"执行"。通过可视化流程编排，把查单、改地址、发起退款等能力连成自动化链路，AI 直接帮你把事办了。</p>
+        <ul class="feat-list">
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>拖拽式流程编排，无需写代码</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>对接 ERP / 订单 / 工单等内部系统</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>异常自动兜底，平滑转人工</li>
+        </ul>
+      </div>
+      <div class="feat-visual">
+        <div class="vis-pill">⚡ 自动化链路</div>
+        <div class="vis-card">
+          <div class="lbl">对话触发 → 动作执行</div>
+          <div class="row"><span>① 识别意图</span><span style="color:var(--accent)">✓</span></div>
+          <div class="row"><span>② 调用订单 API</span><span style="color:var(--accent)">✓</span></div>
+          <div class="row"><span>③ 发起退款</span><span style="color:var(--accent)">✓</span></div>
+          <div class="row"><span>④ 回执客户</span><span style="color:var(--accent)">✓</span></div>
+        </div>
+        <div class="vis-card">
+          <div class="lbl">本月自动化处理</div>
+          <div class="row"><span>自动办结率</span><span style="color:var(--accent);font-weight:600">82%</span></div>
+          <div class="bar"><i style="width:82%"></i></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 3 -->
+    <div class="feat">
+      <div class="feat-text">
+        <span class="eyebrow">知识自学习</span>
+        <h3>越用越聪明的知识库</h3>
+        <p>语擎把每一轮对话变成养分。高频未答问题自动聚成待补清单，人工确认后一键入库，知识更新从"月级"缩短到"分钟级"。</p>
+        <ul class="feat-list">
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>对话自动回流，零手工录入</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>知识缺口主动预警，避免"答不上"</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>多版本管理，回答可溯源</li>
+        </ul>
+      </div>
+      <div class="feat-visual">
+        <div class="vis-pill">📈 知识增长曲线</div>
+        <div class="vis-card">
+          <div class="lbl">知识条目</div>
+          <div class="row"><span>本月新增</span><span style="color:var(--accent);font-weight:600">+1,284</span></div>
+          <div class="bar"><i style="width:74%"></i></div>
+          <div class="row"><span>未覆盖问题</span><span style="color:#F87171">↓ 63%</span></div>
+        </div>
+        <div class="vis-card">
+          <div class="lbl">待审核补录（AI 已起草）</div>
+          <div class="row"><span>23 条建议</span><span style="color:var(--accent)">一键采纳</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ BENTO GRID ============ -->
+<section class="bento">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">全栈能力</span>
+      <h2>一个平台，覆盖客服全场景</h2>
+    </div>
+    <div class="bento-grid">
+      <div class="cell span2">
+        <div class="big">99.95%</div>
+        <div class="sub">服务可用性 SLA，多活架构自动容灾，大促峰值稳如磐石。</div>
+      </div>
+      <div class="cell">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2l8 4v6c0 5-3.5 8-8 10-4.5-2-8-5-8-10V6l8-4z" stroke="#34D399" stroke-width="1.8" stroke-linejoin="round"/></svg></div>
+        <h4>私有化部署</h4>
+        <p>支持公有云、私有云与混合部署，数据不出域。</p>
+      </div>
+      <div class="cell">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h10" stroke="#34D399" stroke-width="1.8" stroke-linecap="round"/></svg></div>
+        <h4>多语言支持</h4>
+        <p>中英日韩等 30+ 语种，出海业务无缝衔接。</p>
+      </div>
+      <div class="cell">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 12h4l3 8 4-16 3 8h4" stroke="#34D399" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h4>实时质检</h4>
+        <p>对话全程合规监测，风险话术即时拦截。</p>
+      </div>
+      <div class="cell">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="14" rx="2" stroke="#34D399" stroke-width="1.8"/><path d="M8 21h8" stroke="#34D399" stroke-width="1.8" stroke-linecap="round"/></svg></div>
+        <h4>全渠道接入</h4>
+        <p>网站、App、微信、企微、电话统一会话池。</p>
+      </div>
+      <div class="cell">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="#34D399" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="4" stroke="#34D399" stroke-width="1.8"/></svg></div>
+        <h4>智能辅助</h4>
+        <p>人工坐席实时话术推荐，新人秒变老手。</p>
+      </div>
+      <div class="cell span2">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 3v18h18" stroke="#34D399" stroke-width="1.8" stroke-linecap="round"/><path d="M7 14l4-4 3 3 5-6" stroke="#34D399" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h4>数据看板与洞察</h4>
+        <p>对话量、首解率、满意度、热点问题一目了然，对话数据反哺产品与运营决策。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SOCIAL PROOF ============ -->
+<section class="proof" id="proof">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">客户实证</span>
+      <h2>数字会说话</h2>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="n">82%</div><div class="t">咨询自动化办结率</div></div>
+      <div class="stat"><div class="n">3.2×</div><div class="t">客服团队人效提升</div></div>
+      <div class="stat"><div class="n">94%</div><div class="t">用户满意度（CSAT）</div></div>
+      <div class="stat"><div class="n">-58%</div><div class="t">平均响应时长下降</div></div>
+    </div>
+    <div class="quotes">
+      <div class="quote">
+        <div class="stars">★★★★★</div>
+        <p>"接入语擎后，重复咨询几乎全被自动消化，我们的坐席终于能专注处理真正复杂的问题，团队规模没扩却扛住了三倍订单量。"</p>
+        <div class="who"><div class="av">林</div><div><div class="nm">林思远</div><div class="rl">云栖科技 · 客户体验负责人</div></div></div>
+      </div>
+      <div class="quote">
+        <div class="stars">★★★★★</div>
+        <p>"最打动我的是它会'办事'。之前用的机器人只能背话术，语擎能直接查单、退款，客户明显感觉'这次真的有人管了'。"</p>
+        <div class="who"><div class="av">陈</div><div><div class="nm">陈薇</div><div class="rl">HOMI 家居 · 运营总监</div></div></div>
+      </div>
+      <div class="quote">
+        <div class="stars">★★★★★</div>
+        <p>"知识库自学习是隐形功臣。新活动上线当天的咨询高峰，语擎自己就把高频问题学会了，没让我们熬夜补词条。"</p>
+        <div class="who"><div class="av">赵</div><div><div class="nm">赵明</div><div class="rl">快享出行 · 客服中心经理</div></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRICING ============ -->
+<section class="pricing" id="pricing">
+  <div class="wrap">
+    <div class="section-head" style="margin-left:auto;margin-right:auto;text-align:center;">
+      <span class="eyebrow">定价方案</span>
+      <h2>按需选择，随时升级</h2>
+      <p>所有方案均含核心引擎与全渠道接入，无隐藏费用。</p>
+    </div>
+    <div class="plans">
+      <div class="plan">
+        <div class="name">成长版</div>
+        <div class="desc">适合初创团队与中小商家快速上手</div>
+        <div class="price">¥0<small> / 起</small></div>
+        <div class="per">免费额度，含 1,000 对话/月</div>
+        <ul>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>基础意图识别与问答</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>2 个接入渠道</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>基础知识库</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>邮件工单支持</li>
+        </ul>
+        <a class="btn btn-ghost" href="#">开始免费使用</a>
+      </div>
+      <div class="plan featured">
+        <div class="badge">最受欢迎</div>
+        <div class="name">专业版</div>
+        <div class="desc">成长型企业的全功能首选</div>
+        <div class="price">¥1,980<small> / 月</small></div>
+        <div class="per">含 50,000 对话/月，超额按量计费</div>
+        <ul>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>全部核心能力 + 业务编排</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>无限接入渠道</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>知识库自学习 + 实时质检</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>数据看板与智能辅助</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>专属客户成功经理</li>
+        </ul>
+        <a class="btn btn-primary" href="#">免费试用 14 天</a>
+      </div>
+      <div class="plan">
+        <div class="name">企业版</div>
+        <div class="desc">大型组织与强合规场景</div>
+        <div class="price">定制</div>
+        <div class="per">私有化部署 · 定制 SLA</div>
+        <ul>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>专业版全部能力</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>私有化 / 混合部署</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>SSO 与细粒度权限</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>专属模型微调</li>
+          <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#34D399" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>7×24 专属支持</li>
+        </ul>
+        <a class="btn btn-ghost" href="#">联系销售</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section class="faq" id="faq">
+  <div class="wrap">
+    <div class="section-head" style="margin-left:auto;margin-right:auto;text-align:center;">
+      <span class="eyebrow">常见问题</span>
+      <h2>你可能想先了解</h2>
+    </div>
+    <div class="faq-list" id="faqList">
+      <div class="faq-item">
+        <button class="faq-q">语擎和普通的规则机器人有什么区别？<span class="pm"></span></button>
+        <div class="faq-a"><p>规则机器人依赖关键词和固定话术，答非所问是常态。语擎基于大模型理解真实意图，并能调用业务接口直接办事（查单、退款等），同时具备多轮记忆与情绪识别，体验更接近真人。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">接入需要多久？会不会很复杂？<span class="pm"></span></button>
+        <div class="faq-a"><p>标准渠道（网站挂件、微信、企微）通常 1 天内即可上线。我们提供可视化编排与丰富接口，无需改造你现有系统；复杂私有化项目会有专属客户成功经理全程陪跑。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">我们的数据安全和隐私如何保障？<span class="pm"></span></button>
+        <div class="faq-a"><p>语擎支持公有云、私有云与混合部署，企业版可实现数据完全不出域。全链路传输加密，并提供 SSO、细粒度权限与操作审计，满足金融、医疗等强合规要求。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">知识库需要人工一条条录入吗？<span class="pm"></span></button>
+        <div class="faq-a"><p>不需要。语擎会把每轮对话自动回流，高频未答问题聚成待补清单，AI 还能起草答案，你只需"确认采纳"即可。知识更新周期从月级压缩到分钟级。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">机器人处理不了时怎么办？<span class="pm"></span></button>
+        <div class="faq-a"><p>当置信度过低、涉及投诉或复杂业务时，语擎会平滑转接人工坐席，并附带完整的对话上下文与意图摘要，让人工接手即懂，无需客户重复描述。</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FINAL CTA ============ -->
+<section class="final">
+  <div class="wrap">
+    <div class="final-box">
+      <h2>让语擎，替你接住每一次对话</h2>
+      <p>14 天免费试用，无需信用卡。今天接入，明天就能少加一班班。</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#pricing">立即免费试用 →</a>
+        <a class="btn btn-ghost" href="#">预约产品演示</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <a class="brand" href="#top">
+          <span class="mark">语</span>
+          <span>语擎 <small>YUQING</small></span>
+        </a>
+        <p>会思考的智能客服引擎，让每一次客户对话都更懂人心。</p>
+      </div>
+      <div class="foot-col">
+        <h5>产品</h5>
+        <a href="#features">核心能力</a>
+        <a href="#flow">解决方案</a>
+        <a href="#pricing">定价</a>
+        <a href="#">更新日志</a>
+      </div>
+      <div class="foot-col">
+        <h5>资源</h5>
+        <a href="#">开发文档</a>
+        <a href="#">API 参考</a>
+        <a href="#faq">常见问题</a>
+        <a href="#">客户案例</a>
+      </div>
+      <div class="foot-col">
+        <h5>公司</h5>
+        <a href="#">关于我们</a>
+        <a href="#">联系销售</a>
+        <a href="#">招贤纳士</a>
+        <a href="#">服务条款</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 语擎 Yuqing. 保留所有权利。</span>
+      <span>沪ICP备 2026000000 号 · 隐私政策 · 安全合规</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // FAQ accordion
+  document.querySelectorAll('#faqList .faq-q').forEach(function (q) {
+    q.addEventListener('click', function () {
+      var item = q.parentElement;
+      var ans = item.querySelector('.faq-a');
+      var isOpen = item.classList.contains('open');
+      document.querySelectorAll('#faqList .faq-item').forEach(function (i) {
+        i.classList.remove('open');
+        i.querySelector('.faq-a').style.maxHeight = null;
+      });
+      if (!isOpen) {
+        item.classList.add('open');
+        ans.style.maxHeight = ans.scrollHeight + 'px';
+      }
+    });
+  });
+</script>
+</body>
+</html>
