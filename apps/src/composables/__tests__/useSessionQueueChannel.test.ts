@@ -6,25 +6,27 @@ import { nextTick } from 'vue';
  * 覆盖範囲：
  *   - init() 建立 SSE 连接（幂等，已连接时不重复建连）
  *   - open 回调设置 sseConnected=true
- *   - ENQUEUE 事件：加入 queue，触发 onEnqueue 回调，去重
- *   - ACCEPTED 事件：从 queue 移除，不触发 onClosed
- *   - CLOSED 事件：从 queue 移除，触发 onClosed 回调
- *   - TRANSFER 事件：从 queue 移除，触发 onTransfer 回调
+ *   - ENQUEUE 事件：加入 sessions，触发 onEnqueue 回调，去重
+ *   - ACCEPTED 事件：status 改为 ACTIVE，不触发 onClosed
+ *   - CLOSED 事件：status 改为 CLOSED，触发 onClosed 回调
+ *   - TRANSFER 事件：从 sessions 移除，触发 onTransfer 回调
  *   - SSE error：sseConnected=false，触发指数退避重连
  *   - reconnect()：重置 retryCount，重新建连
- *   - dispose()：关闭连接，清空 queue，清空 sseConnected
+ *   - dispose()：关闭连接，清空 sessions，清空 sseConnected
  *   - offEnqueue / offClosed / offTransfer 后不再触发回调
+ *   - 切片：sessions / aiQueue / waitingQueue / activeQueue / closedQueue
+ *   - loadSessions() 使用 getAllSessionsApi 填充 sessions
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getSessionQueueApi, subscribeSessionEvents } from '#/api/session';
+import { getAllSessionsApi, subscribeSessionEvents } from '#/api/session';
 
 import { useSessionQueueChannel } from '../useSessionQueueChannel';
 
 // vi.mock calls are hoisted by Vitest transform, so placing them after imports is safe.
 vi.mock('#/api/session', () => ({
   subscribeSessionEvents: vi.fn(),
-  getSessionQueueApi: vi.fn(),
+  getAllSessionsApi: vi.fn(),
 }));
 
 vi.mock('ant-design-vue', () => ({
@@ -74,14 +76,18 @@ function getEs(): MockEsImpl {
 
 // ---- Test helpers ----
 
-function makeItem(sessionId: string, userName = 'Test User') {
+function makeItem(
+  sessionId: string,
+  userName = 'Test User',
+  status: 'ACTIVE' | 'AI_CHAT' | 'CLOSED' | 'WAITING' = 'WAITING',
+) {
   return {
     sessionId,
     userName,
     waitSince: 0,
     transferReason: '',
     tag: '',
-    status: 'WAITING' as const,
+    status,
   };
 }
 
@@ -109,7 +115,7 @@ describe('useSessionQueueChannel', () => {
         return es as unknown as EventSource;
       },
     );
-    vi.mocked(getSessionQueueApi).mockResolvedValue([]);
+    vi.mocked(getAllSessionsApi).mockResolvedValue([]);
 
     channel = useSessionQueueChannel();
     channel.dispose();
@@ -139,13 +145,16 @@ describe('useSessionQueueChannel', () => {
 
   // ---- ENQUEUE ----
 
-  it('enqueue 事件加入 queue', async () => {
+  it('enqueue 事件加入 sessions 并出现在 waitingQueue 切片', async () => {
     channel.init();
     getEs().emit('open');
-    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s1', '张三') });
+    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s1', '张三', 'WAITING') });
     await nextTick();
-    expect(channel.queue.value).toHaveLength(1);
-    expect(channel.queue.value[0]?.id).toBe('s1');
+    expect(channel.sessions.value).toHaveLength(1);
+    expect(channel.sessions.value[0]?.id).toBe('s1');
+    expect(channel.sessions.value[0]?.status).toBe('WAITING');
+    expect(channel.waitingQueue.value).toHaveLength(1);
+    expect(channel.aiQueue.value).toHaveLength(0);
   });
 
   it('enqueue 事件触发 onEnqueue 回调', async () => {
@@ -153,7 +162,7 @@ describe('useSessionQueueChannel', () => {
     channel.init();
     channel.onEnqueue(handler);
     getEs().emit('open');
-    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s2', '李四') });
+    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s2', '李四', 'WAITING') });
     await nextTick();
     expect(handler).toHaveBeenCalledOnce();
     expect(handler.mock.calls[0]?.[0]?.id).toBe('s2');
@@ -162,49 +171,57 @@ describe('useSessionQueueChannel', () => {
   it('enqueue 去重：同 sessionId 不重复添加', async () => {
     channel.init();
     getEs().emit('open');
-    const payload = { type: 'ENQUEUE', item: makeItem('s3', '王五') };
+    const payload = { type: 'ENQUEUE', item: makeItem('s3', '王五', 'WAITING') };
     getEs().emit('message', payload);
     getEs().emit('message', payload);
     await nextTick();
-    expect(channel.queue.value).toHaveLength(1);
+    expect(channel.sessions.value).toHaveLength(1);
   });
 
   // ---- ACCEPTED ----
 
-  it('accepted 事件从 queue 移除，不触发 onClosed', async () => {
+  it('accepted 事件将 status 改为 ACTIVE，不触发 onClosed', async () => {
     const closedHandler = vi.fn();
     channel.init();
     channel.onClosed(closedHandler);
     getEs().emit('open');
-    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s4', '赵六') });
+    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s4', '赵六', 'WAITING') });
     getEs().emit('message', { type: 'ACCEPTED', item: makeItem('s4') });
     await nextTick();
-    expect(channel.queue.value).toHaveLength(0);
+    // 条目仍在 sessions，status 变为 ACTIVE
+    expect(channel.sessions.value).toHaveLength(1);
+    expect(channel.sessions.value[0]?.status).toBe('ACTIVE');
+    expect(channel.waitingQueue.value).toHaveLength(0);
+    expect(channel.activeQueue.value).toHaveLength(1);
     expect(closedHandler).not.toHaveBeenCalled();
   });
 
   // ---- CLOSED ----
 
-  it('closed 事件从 queue 移除并触发 onClosed', async () => {
+  it('closed 事件将 status 改为 CLOSED 并触发 onClosed', async () => {
     const closedHandler = vi.fn();
     channel.init();
     channel.onClosed(closedHandler);
     getEs().emit('open');
-    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s5', '陈七') });
+    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s5', '陈七', 'WAITING') });
     getEs().emit('message', { type: 'CLOSED', item: makeItem('s5') });
     await nextTick();
-    expect(channel.queue.value).toHaveLength(0);
+    // 条目保留在 sessions，status 改为 CLOSED
+    expect(channel.sessions.value).toHaveLength(1);
+    expect(channel.sessions.value[0]?.status).toBe('CLOSED');
+    expect(channel.closedQueue.value).toHaveLength(1);
+    expect(channel.waitingQueue.value).toHaveLength(0);
     expect(closedHandler).toHaveBeenCalledWith('s5');
   });
 
   // ---- TRANSFER ----
 
-  it('transfer 事件从 queue 移除并触发 onTransfer', async () => {
+  it('transfer 事件从 sessions 移除并触发 onTransfer', async () => {
     const transferHandler = vi.fn();
     channel.init();
     channel.onTransfer(transferHandler);
     getEs().emit('open');
-    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s6', '周八') });
+    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s6', '周八', 'WAITING') });
     getEs().emit('message', {
       type: 'TRANSFER',
       item: makeItem('s6'),
@@ -212,7 +229,7 @@ describe('useSessionQueueChannel', () => {
       toAgentId: 'a2',
     });
     await nextTick();
-    expect(channel.queue.value).toHaveLength(0);
+    expect(channel.sessions.value).toHaveLength(0);
     expect(transferHandler).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'TRANSFER' }),
     );
@@ -269,16 +286,20 @@ describe('useSessionQueueChannel', () => {
 
   // ---- dispose ----
 
-  it('dispose() 关闭 SSE 连接、清空 queue、sseConnected=false', async () => {
+  it('dispose() 关闭 SSE 连接、清空 sessions、sseConnected=false', async () => {
     channel.init();
     getEs().emit('open');
-    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s7', '吴九') });
+    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s7', '吴九', 'WAITING') });
     await nextTick();
-    expect(channel.queue.value).toHaveLength(1);
+    expect(channel.sessions.value).toHaveLength(1);
 
     const es = getEs();
     channel.dispose();
-    expect(channel.queue.value).toHaveLength(0);
+    expect(channel.sessions.value).toHaveLength(0);
+    expect(channel.waitingQueue.value).toHaveLength(0);
+    expect(channel.aiQueue.value).toHaveLength(0);
+    expect(channel.activeQueue.value).toHaveLength(0);
+    expect(channel.closedQueue.value).toHaveLength(0);
     expect(channel.sseConnected.value).toBe(false);
     expect(es.closed).toBe(true);
   });
@@ -291,7 +312,7 @@ describe('useSessionQueueChannel', () => {
     channel.onEnqueue(handler);
     channel.offEnqueue(handler);
     getEs().emit('open');
-    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s8', '郑十') });
+    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s8', '郑十', 'WAITING') });
     await nextTick();
     expect(handler).not.toHaveBeenCalled();
   });
@@ -302,7 +323,7 @@ describe('useSessionQueueChannel', () => {
     channel.onClosed(handler);
     channel.offClosed(handler);
     getEs().emit('open');
-    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s9', '刘一') });
+    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s9', '刘一', 'WAITING') });
     getEs().emit('message', { type: 'CLOSED', item: makeItem('s9') });
     await nextTick();
     expect(handler).not.toHaveBeenCalled();
@@ -314,7 +335,7 @@ describe('useSessionQueueChannel', () => {
     channel.onTransfer(handler);
     channel.offTransfer(handler);
     getEs().emit('open');
-    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s10', '陈二') });
+    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s10', '陈二', 'WAITING') });
     getEs().emit('message', {
       type: 'TRANSFER',
       item: makeItem('s10'),
@@ -323,5 +344,50 @@ describe('useSessionQueueChannel', () => {
     });
     await nextTick();
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  // ---- 新增：AI_CHAT 切片 ----
+
+  it('AI_CHAT 状态的 enqueue 进入 aiQueue 切片', async () => {
+    channel.init();
+    getEs().emit('open');
+    getEs().emit('message', {
+      type: 'ENQUEUE',
+      item: makeItem('s-ai', 'AI用户', 'AI_CHAT'),
+    });
+    await nextTick();
+    expect(channel.aiQueue.value).toHaveLength(1);
+    expect(channel.waitingQueue.value).toHaveLength(0);
+  });
+
+  // ---- 新增：WAITING → ACTIVE 状态迁移 ----
+
+  it('ACCEPTED 事件完成 WAITING→ACTIVE 迁移，条目不被删除', async () => {
+    channel.init();
+    getEs().emit('open');
+    getEs().emit('message', { type: 'ENQUEUE', item: makeItem('s-w', '等待用户', 'WAITING') });
+    await nextTick();
+    expect(channel.waitingQueue.value).toHaveLength(1);
+
+    getEs().emit('message', { type: 'ACCEPTED', item: makeItem('s-w') });
+    await nextTick();
+    expect(channel.waitingQueue.value).toHaveLength(0);
+    expect(channel.activeQueue.value).toHaveLength(1);
+    expect(channel.sessions.value).toHaveLength(1);
+  });
+
+  // ---- 新增：loadSessions 使用 getAllSessionsApi ----
+
+  it('loadSessions() 从 getAllSessionsApi 填充 sessions', async () => {
+    vi.mocked(getAllSessionsApi).mockResolvedValue([
+      makeItem('ls1', '加载用户', 'WAITING'),
+      makeItem('ls2', 'AI用户', 'AI_CHAT'),
+    ]);
+    channel.init();
+    await channel.loadSessions();
+    await nextTick();
+    expect(channel.sessions.value).toHaveLength(2);
+    expect(channel.waitingQueue.value).toHaveLength(1);
+    expect(channel.aiQueue.value).toHaveLength(1);
   });
 });
