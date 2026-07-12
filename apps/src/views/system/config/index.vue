@@ -63,8 +63,8 @@ const form = reactive<any>(emptyForm());
 // ===== 表格列定义 =====
 const columns: TableColumnsType = [
   { title: '配置键', dataIndex: 'configKey', width: 220, ellipsis: true },
-  { title: '说明', dataIndex: 'description', width: 280, ellipsis: true },
   { title: '配置值', dataIndex: 'configValue', width: 220, ellipsis: true },
+  { title: '说明', dataIndex: 'description', width: 280, ellipsis: true },
   { title: '启用', dataIndex: 'isEnabled', width: 70 },
   { title: '操作', key: 'action', width: 120, fixed: 'right' },
 ];
