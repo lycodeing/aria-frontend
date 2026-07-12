@@ -1,14 +1,14 @@
 // apps/src/composables/useSessionQueueChannel.ts
-import type { Ref } from 'vue';
+import type { ComputedRef, Ref } from 'vue';
 
 import type { SessionSseEvent } from '#/api/session';
 import type { QueueItem } from '#/composables/useSessionQueue';
 
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
 import { message as antMessage } from 'ant-design-vue';
 
-import { getSessionQueueApi, subscribeSessionEvents } from '#/api/session';
+import { getAllSessionsApi, subscribeSessionEvents } from '#/api/session';
 import { formatWaitTime, toQueueItem } from '#/composables/useSessionQueue';
 
 // ---- 类型 ----
@@ -18,20 +18,32 @@ export type ClosedHandler = (sessionId: string) => void;
 export type TransferHandler = (event: SessionSseEvent) => void;
 
 export interface SessionQueueChannel {
-  readonly queue: Readonly<Ref<QueueItem[]>>;
+  /** 底层 flat list（外部只读，四个切片的数据源） */
+  readonly sessions: Readonly<Ref<QueueItem[]>>;
+
+  /** 四个 Tab 直接绑定的 computed 切片 */
+  readonly aiQueue:      ComputedRef<QueueItem[]>;
+  readonly waitingQueue: ComputedRef<QueueItem[]>;
+  readonly activeQueue:  ComputedRef<QueueItem[]>;
+  readonly closedQueue:  ComputedRef<QueueItem[]>;
+
   readonly sseConnected: Readonly<Ref<boolean>>;
   readonly sseStatus: Readonly<Ref<'closed' | 'connecting' | 'error' | 'open'>>;
+
   init(): void;
   dispose(): void;
   reconnect(): void;
-  loadQueue(): Promise<void>;
+  /** 从统一接口加载全量会话，替代原 loadQueue() */
+  loadSessions(): Promise<void>;
+  /** 从 sessions 中移除指定会话（用于 TRANSFER 乐观更新） */
+  removeFromSessions(id: string): void;
+
   onEnqueue(handler: EnqueueHandler): void;
   offEnqueue(handler: EnqueueHandler): void;
   onClosed(handler: ClosedHandler): void;
   offClosed(handler: ClosedHandler): void;
   onTransfer(handler: TransferHandler): void;
   offTransfer(handler: TransferHandler): void;
-  removeFromQueue(id: string): void;
 }
 
 // ---- 重连常量 ----
@@ -42,9 +54,15 @@ const MAX_RETRIES = 10;
 
 // ---- 模块级单例状态 ----
 
-const queue = ref<QueueItem[]>([]);
+const sessions = ref<QueueItem[]>([]);
 const sseConnected = ref(false);
 const sseStatus = ref<'closed' | 'connecting' | 'error' | 'open'>('closed');
+
+// 四个 computed 切片（惰性求值）
+const aiQueue      = computed(() => sessions.value.filter(s => s.status === 'AI_CHAT'));
+const waitingQueue = computed(() => sessions.value.filter(s => s.status === 'WAITING'));
+const activeQueue  = computed(() => sessions.value.filter(s => s.status === 'ACTIVE'));
+const closedQueue  = computed(() => sessions.value.filter(s => s.status === 'CLOSED'));
 
 let eventSource: EventSource | null = null;
 let sseRetryCount = 0;
@@ -69,8 +87,11 @@ function _stopWaitTimer(): void {
 function _startWaitTimer(): void {
   _stopWaitTimer();
   waitTimer = setInterval(() => {
-    queue.value.forEach((item) => {
-      item.waitMin = formatWaitTime(item.waitSince);
+    sessions.value.forEach((item) => {
+      // CLOSED 条目的等待时间不需要实时刷新
+      if (item.status !== 'CLOSED') {
+        item.waitMin = formatWaitTime(item.waitSince);
+      }
     });
   }, 1000);
 }
@@ -96,32 +117,39 @@ function _connect(): void {
 
       if (event.type === 'ENQUEUE') {
         const item = event.item;
-        if (!queue.value.some((q) => q.id === item.sessionId)) {
+        const existing = sessions.value.find((s) => s.id === item.sessionId);
+        if (existing) {
+          // 幂等：已存在则更新 status（防止重放）
+          existing.status = item.status;
+        } else {
           const qi = toQueueItem(item);
-          queue.value.push(qi);
+          sessions.value.push(qi);
           antMessage.info(`新会话请求：${item.userName}`);
           enqueueHandlers.forEach((h) => h(qi));
         }
-      } else if (event.type === 'ACCEPTED' || event.type === 'CLOSED') {
-        queue.value = queue.value.filter((q) => q.id !== sid);
-        if (event.type === 'CLOSED') {
-          closedHandlers.forEach((h) => h(sid));
-        }
+      } else if (event.type === 'ACCEPTED') {
+        // 原地更新 status → ACTIVE，条目保留在 flat list
+        const found = sessions.value.find((s) => s.id === sid);
+        if (found) found.status = 'ACTIVE';
+      } else if (event.type === 'CLOSED') {
+        // 原地更新 status → CLOSED，条目保留以便 CLOSED Tab 展示
+        const found = sessions.value.find((s) => s.id === sid);
+        if (found) found.status = 'CLOSED';
+        closedHandlers.forEach((h) => h(sid));
       } else if (event.type === 'TRANSFER') {
-        queue.value = queue.value.filter((q) => q.id !== sid);
+        // 转交给其他座席，本座席不再持有该会话，直接移除
+        sessions.value = sessions.value.filter((s) => s.id !== sid);
         transferHandlers.forEach((h) => h(event));
       }
     },
     () => {
-      // Stale guard: if this error belongs to an old ES, ignore it (I-1)
       if (eventSource !== es) return;
-      // 断线：指数退避重连
       sseConnected.value = false;
-      es.close(); // 阻止原生 EventSource 自动重连，避免与 setTimeout 重连并存（双重连接）
+      es.close();
       eventSource = null;
       if (sseRetryCount >= MAX_RETRIES) {
         sseStatus.value = 'error';
-        return; // stop retrying (I-3)
+        return;
       }
       const delay = Math.min(BASE_DELAY_MS * 2 ** sseRetryCount, MAX_DELAY_MS);
       sseRetryCount++;
@@ -139,20 +167,20 @@ function _connect(): void {
   _startWaitTimer();
 }
 
-// ---- loadQueue ----
+// ---- loadSessions ----
 
-async function loadQueue(): Promise<void> {
+async function loadSessions(): Promise<void> {
   const gen = ++_loadGen;
   try {
-    const items = await getSessionQueueApi();
-    if (gen !== _loadGen) return; // dispose() was called mid-flight (I-2)
-    queue.value.splice(
+    const items = await getAllSessionsApi();
+    if (gen !== _loadGen) return;
+    sessions.value.splice(
       0,
-      queue.value.length,
+      sessions.value.length,
       ...items.map((item) => toQueueItem(item)),
     );
   } catch (error) {
-    console.error('[useSessionQueueChannel] loadQueue 失败:', error);
+    console.error('[useSessionQueueChannel] loadSessions 失败:', error);
   }
 }
 
@@ -160,13 +188,16 @@ async function loadQueue(): Promise<void> {
 
 export function useSessionQueueChannel(): SessionQueueChannel {
   return {
-    queue,
+    sessions,
+    aiQueue,
+    waitingQueue,
+    activeQueue,
+    closedQueue,
     sseConnected,
     sseStatus,
 
-    // token 由 subscribeSessionEvents 内部通过 useAccessStore 读取，无需外部传入。
     init() {
-      if (eventSource) return; // 幂等：已连接则不重复建连
+      if (eventSource) return;
       sseRetryCount = 0;
       sseStatus.value = 'connecting';
       _connect();
@@ -175,12 +206,10 @@ export function useSessionQueueChannel(): SessionQueueChannel {
     dispose() {
       _stopSse();
       _stopWaitTimer();
-      _loadGen++; // invalidate any in-flight loadQueue() (I-2)
-      queue.value.splice(0);
+      _loadGen++;
+      sessions.value.splice(0);
       sseRetryCount = 0;
       sseStatus.value = 'closed';
-      // handler Sets are not cleared here: page components are responsible for
-      // calling offClosed/offTransfer in their own onUnmounted hooks.
     },
 
     reconnect() {
@@ -189,29 +218,18 @@ export function useSessionQueueChannel(): SessionQueueChannel {
       _connect();
     },
 
-    loadQueue,
+    loadSessions,
 
-    onEnqueue(handler) {
-      enqueueHandlers.add(handler);
+    removeFromSessions(id: string) {
+      const idx = sessions.value.findIndex((s) => s.id === id);
+      if (idx !== -1) sessions.value.splice(idx, 1);
     },
-    offEnqueue(handler) {
-      enqueueHandlers.delete(handler);
-    },
-    onClosed(handler) {
-      closedHandlers.add(handler);
-    },
-    offClosed(handler) {
-      closedHandlers.delete(handler);
-    },
-    onTransfer(handler) {
-      transferHandlers.add(handler);
-    },
-    offTransfer(handler) {
-      transferHandlers.delete(handler);
-    },
-    removeFromQueue(id: string) {
-      const idx = queue.value.findIndex((q) => q.id === id);
-      if (idx !== -1) queue.value.splice(idx, 1);
-    },
+
+    onEnqueue(handler) { enqueueHandlers.add(handler); },
+    offEnqueue(handler) { enqueueHandlers.delete(handler); },
+    onClosed(handler) { closedHandlers.add(handler); },
+    offClosed(handler) { closedHandlers.delete(handler); },
+    onTransfer(handler) { transferHandlers.add(handler); },
+    offTransfer(handler) { transferHandlers.delete(handler); },
   };
 }
