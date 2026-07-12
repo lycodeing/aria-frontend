@@ -260,11 +260,13 @@ watch(configType, () => {
     >
       <div v-if="viewingRow" class="space-y-3 py-2">
         <div class="text-xs text-gray-400">{{ viewingRow.description }}</div>
+        <!-- eslint-disable vue/no-v-html -->
         <!-- eslint-disable-next-line vue/no-v-html -->
         <div
           class="prose prose-sm max-w-none rounded border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800"
           v-html="renderMarkdown(viewingRow.configValue)"
         ></div>
+        <!-- eslint-enable vue/no-v-html -->
       </div>
     </Modal>
 
