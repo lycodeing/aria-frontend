@@ -2,26 +2,21 @@
 import { requestClient } from '#/api/request';
 
 export interface SystemConfigVO {
-  id: number;
+  id: number | string; // 后端以 bigint 字符串返回
   configKey: string;
   configValue: string;
   configType: string; // CUSTOMER_SERVICE | SYSTEM
-  valueType: string; // NUMBER | STRING | BOOLEAN | JSON
-  configName: string;
-  configGroup: string;
-  remark: null | string;
+  description: string; // 配置说明（后端字段名）
   isEnabled: boolean;
-  isSystem: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SystemConfigRequest {
   configKey: string;
   configValue: string;
   configType: string;
-  valueType: string;
-  configName: string;
-  configGroup: string;
-  remark?: string;
+  description?: string;
 }
 
 export interface SystemConfigListParams {
@@ -32,7 +27,7 @@ export interface SystemConfigListParams {
 }
 
 export interface PageResult<T> {
-  total: number;
+  total: number | string; // 后端返回字符串，消费方用 Number() 转换
   page: number;
   size: number;
   items: T[];
@@ -51,18 +46,15 @@ export async function createSystemConfigApi(
 }
 
 export async function updateSystemConfigApi(
-  id: number,
-  data: Partial<
-    Pick<
-      SystemConfigRequest,
-      'configGroup' | 'configName' | 'configValue' | 'remark'
-    >
-  >,
+  id: number | string,
+  data: Pick<SystemConfigRequest, 'configValue'> & { description?: string },
 ): Promise<void> {
   return requestClient.put(`/admin/system-config/${id}`, data);
 }
 
-export async function deleteSystemConfigApi(id: number): Promise<void> {
+export async function deleteSystemConfigApi(
+  id: number | string,
+): Promise<void> {
   return requestClient.delete(`/admin/system-config/${id}`);
 }
 

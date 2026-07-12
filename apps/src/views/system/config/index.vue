@@ -3,7 +3,7 @@ import type { TableColumnsType } from 'ant-design-vue';
 
 import type { SystemConfigVO } from '#/api/system-config';
 
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
@@ -15,8 +15,6 @@ import {
   Input,
   message,
   Modal,
-  Select,
-  SelectOption,
   Table,
   Tag,
   Textarea,
@@ -29,10 +27,14 @@ import {
   updateSystemConfigApi,
 } from '#/api/system-config';
 
-// ===== Route meta: configType 由路由注入 =====
+// ===== Route meta: configType 由路由注入，用 computed 保证跨路由复用时响应式更新 =====
 const route = useRoute();
-const configType = (route.meta.configType as string) ?? 'CUSTOMER_SERVICE';
-const pageTitle = configType === 'CUSTOMER_SERVICE' ? '客服配置' : '系统配置';
+const configType = computed(
+  () => (route.meta.configType as string) ?? 'CUSTOMER_SERVICE',
+);
+const pageTitle = computed(() =>
+  configType.value === 'CUSTOMER_SERVICE' ? '客服配置' : '系统配置',
+);
 
 // ===== 列表状态 =====
 const list = ref<SystemConfigVO[]>([]);
@@ -44,32 +46,24 @@ const pageSize = ref(20);
 
 // ===== 弹窗状态 =====
 const modalOpen = ref(false);
-const editingId = ref<null | number>(null);
+const editingId = ref<null | number | string>(null);
 const submitting = ref(false);
 
 // ===== 表单状态 =====
-const VALUE_TYPES = ['NUMBER', 'STRING', 'BOOLEAN', 'JSON'] as const;
-
 const emptyForm = () => ({
   configKey: '',
   configValue: '',
-  configType,
-  valueType: 'STRING' as string,
-  configName: '',
-  configGroup: '',
-  remark: '',
+  configType: configType.value,
+  description: '',
 });
 const form = reactive<any>(emptyForm());
 
 // ===== 表格列定义 =====
 const columns: TableColumnsType = [
-  { title: '配置键', dataIndex: 'configKey', width: 220, ellipsis: true },
-  { title: '配置名称', dataIndex: 'configName', width: 160, ellipsis: true },
-  { title: '分组', dataIndex: 'configGroup', width: 100 },
-  { title: '值类型', dataIndex: 'valueType', width: 90 },
-  { title: '配置值', dataIndex: 'configValue', ellipsis: true },
+  { title: '配置键', dataIndex: 'configKey', width: 240, ellipsis: true },
+  { title: '说明', dataIndex: 'description', ellipsis: true },
+  { title: '配置值', dataIndex: 'configValue', width: 200, ellipsis: true },
   { title: '启用', dataIndex: 'isEnabled', width: 70 },
-  { title: '内置', dataIndex: 'isSystem', width: 70 },
   { title: '操作', key: 'action', width: 120, fixed: 'right' },
 ];
 
@@ -78,13 +72,13 @@ async function loadList() {
   loading.value = true;
   try {
     const result = await listSystemConfigsApi({
-      configType,
+      configType: configType.value,
       keyword: keyword.value || undefined,
       page: currentPage.value - 1, // 0-based
       size: pageSize.value,
     });
     list.value = result.items;
-    total.value = result.total;
+    total.value = Number(result.total); // 后端返回字符串，转 number
   } catch (error: any) {
     message.error(error?.response?.data?.msg ?? '加载失败');
   } finally {
@@ -111,10 +105,7 @@ function openEdit(row: SystemConfigVO) {
     configKey: row.configKey,
     configValue: row.configValue ?? '',
     configType: row.configType,
-    valueType: row.valueType,
-    configName: row.configName ?? '',
-    configGroup: row.configGroup ?? '',
-    remark: row.remark ?? '',
+    description: row.description ?? '',
   });
   modalOpen.value = true;
 }
@@ -133,9 +124,7 @@ async function submit() {
     } else {
       await updateSystemConfigApi(editingId.value, {
         configValue: form.configValue,
-        configName: form.configName,
-        configGroup: form.configGroup,
-        remark: form.remark,
+        description: form.description,
       });
       message.success('编辑成功');
     }
@@ -151,7 +140,7 @@ async function submit() {
 // ===== 删除 =====
 function confirmDelete(row: SystemConfigVO) {
   Modal.confirm({
-    title: `确认删除「${row.configName || row.configKey}」？`,
+    title: `确认删除「${row.description || row.configKey}」？`,
     okText: '删除',
     okType: 'danger',
     cancelText: '取消',
@@ -168,6 +157,13 @@ function confirmDelete(row: SystemConfigVO) {
 }
 
 onMounted(loadList);
+
+// 路由在两个配置页间切换时（组件复用），重置并重载
+watch(configType, () => {
+  currentPage.value = 1;
+  keyword.value = '';
+  loadList();
+});
 </script>
 
 <template>
@@ -177,7 +173,7 @@ onMounted(loadList);
       <Input
         v-model:value="keyword"
         allow-clear
-        placeholder="搜索配置键或名称"
+        placeholder="搜索配置键"
         style="width: 240px"
         @press-enter="onSearch"
       />
@@ -202,7 +198,7 @@ onMounted(loadList);
           loadList();
         },
       }"
-      :scroll="{ x: 900 }"
+      :scroll="{ x: 800 }"
       row-key="id"
       size="small"
     >
@@ -212,10 +208,6 @@ onMounted(loadList);
             {{ record.isEnabled ? '启用' : '停用' }}
           </Tag>
         </template>
-        <template v-else-if="column.dataIndex === 'isSystem'">
-          <Tag v-if="record.isSystem" color="blue">内置</Tag>
-          <span v-else class="text-gray-400">—</span>
-        </template>
         <template v-else-if="column.key === 'action'">
           <Button
             size="small"
@@ -224,7 +216,6 @@ onMounted(loadList);
             >编辑</Button
           >
           <Button
-            :disabled="record.isSystem"
             danger
             size="small"
             type="link"
@@ -245,7 +236,7 @@ onMounted(loadList);
       @ok="submit"
     >
       <Form class="mt-4 space-y-1" layout="vertical">
-        <!-- 新增时可编辑 configKey / valueType / configGroup -->
+        <!-- 新增时可编辑 configKey -->
         <template v-if="!editingId">
           <FormItem label="配置键" required>
             <Input
@@ -253,43 +244,27 @@ onMounted(loadList);
               placeholder="如 agent.xxx（创建后不可改）"
             />
           </FormItem>
-          <FormItem label="值类型" required>
-            <Select v-model:value="form.valueType" style="width: 100%">
-              <SelectOption v-for="vt in VALUE_TYPES" :key="vt" :value="vt">{{
-                vt
-              }}</SelectOption>
-            </Select>
-          </FormItem>
-          <FormItem label="分组">
-            <Input
-              v-model:value="form.configGroup"
-              placeholder="如 座席 / 知识库 / 提示词"
-            />
-          </FormItem>
         </template>
 
-        <!-- 编辑时只读展示 configKey / valueType -->
+        <!-- 编辑时只读展示 configKey -->
         <template v-else>
           <FormItem label="配置键">
             <Input :value="form.configKey" disabled />
           </FormItem>
-          <FormItem label="值类型">
-            <Input :value="form.valueType" disabled />
-          </FormItem>
         </template>
 
-        <FormItem label="配置名称">
-          <Input v-model:value="form.configName" placeholder="可选，便于识别" />
-        </FormItem>
         <FormItem label="配置值">
           <Textarea
             v-model:value="form.configValue"
             :auto-size="{ minRows: 2, maxRows: 8 }"
-            placeholder="NUMBER/STRING/BOOLEAN 填原始值；JSON 填合法 JSON 字符串"
+            placeholder="填入配置值"
           />
         </FormItem>
-        <FormItem label="备注">
-          <Input v-model:value="form.remark" />
+        <FormItem label="说明">
+          <Input
+            v-model:value="form.description"
+            placeholder="可选，配置说明"
+          />
         </FormItem>
       </Form>
     </Modal>
