@@ -30,7 +30,6 @@ import {
 } from '#/api/system-config';
 
 // ===== Route meta: configType 优先取 meta，降级从 path 判断
-// 动态菜单路由不携带 meta.configType，因此用 path 做兜底
 const route = useRoute();
 const configType = computed(() => {
   if (route.meta.configType) return route.meta.configType as string;
@@ -53,19 +52,6 @@ const modalOpen = ref(false);
 const editingId = ref<null | number | string>(null);
 const submitting = ref(false);
 
-// ===== 详情弹窗 =====
-const viewModalOpen = ref(false);
-const viewingRow = ref<null | SystemConfigVO>(null);
-
-function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(String(marked.parse(text ?? '')));
-}
-
-function openView(row: SystemConfigVO) {
-  viewingRow.value = row;
-  viewModalOpen.value = true;
-}
-
 // ===== 表单状态 =====
 const emptyForm = () => ({
   configKey: '',
@@ -75,13 +61,18 @@ const emptyForm = () => ({
 });
 const form = reactive<any>(emptyForm());
 
+// 实时 Markdown 预览
+const previewHtml = computed(() =>
+  DOMPurify.sanitize(String(marked.parse(form.configValue ?? ''))),
+);
+
 // ===== 表格列定义 =====
 const columns: TableColumnsType = [
   { title: '配置键', dataIndex: 'configKey', width: 200, ellipsis: true },
   { title: '配置值', dataIndex: 'configValue', width: 200, ellipsis: true },
   { title: '说明', dataIndex: 'description', ellipsis: true },
   { title: '启用', dataIndex: 'isEnabled', width: 70 },
-  { title: '操作', key: 'action', width: 160, fixed: 'right' },
+  { title: '操作', key: 'action', width: 120, fixed: 'right' },
 ];
 
 // ===== 加载列表 =====
@@ -91,11 +82,11 @@ async function loadList() {
     const result = await listSystemConfigsApi({
       configType: configType.value,
       keyword: keyword.value || undefined,
-      page: currentPage.value - 1, // 0-based
+      page: currentPage.value - 1,
       size: pageSize.value,
     });
     list.value = result.items;
-    total.value = Number(result.total); // 后端返回字符串，转 number
+    total.value = Number(result.total);
   } catch (error: any) {
     message.error(error?.response?.data?.msg ?? '加载失败');
   } finally {
@@ -127,7 +118,7 @@ function openEdit(row: SystemConfigVO) {
   modalOpen.value = true;
 }
 
-// ===== 提交（新增 / 编辑） =====
+// ===== 提交 =====
 async function submit() {
   if (!form.configKey.trim() && editingId.value === null) {
     message.warning('配置键不能为空');
@@ -176,7 +167,6 @@ function confirmDelete(row: SystemConfigVO) {
 
 onMounted(loadList);
 
-// 路由在两个配置页间切换时（组件复用），重置并重载
 watch(configType, () => {
   currentPage.value = 1;
   keyword.value = '';
@@ -230,12 +220,6 @@ watch(configType, () => {
           <Button
             size="small"
             type="link"
-            @click="openView(record as SystemConfigVO)"
-            >查看</Button
-          >
-          <Button
-            size="small"
-            type="link"
             @click="openEdit(record as SystemConfigVO)"
             >编辑</Button
           >
@@ -251,35 +235,16 @@ watch(configType, () => {
       </template>
     </Table>
 
-    <!-- 详情弹窗（Markdown 渲染） -->
-    <Modal
-      v-model:open="viewModalOpen"
-      :footer="null"
-      :title="viewingRow?.configKey"
-      width="640px"
-    >
-      <div v-if="viewingRow" class="space-y-3 py-2">
-        <div class="text-xs text-gray-400">{{ viewingRow.description }}</div>
-        <!-- eslint-disable vue/no-v-html -->
-        <!-- eslint-disable-next-line vue/no-v-html -->
-        <div
-          class="prose prose-sm max-w-none rounded border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800"
-          v-html="renderMarkdown(viewingRow.configValue)"
-        ></div>
-        <!-- eslint-enable vue/no-v-html -->
-      </div>
-    </Modal>
-
-    <!-- 新增 / 编辑弹窗 -->
+    <!-- 新增 / 编辑弹窗（左编辑 右预览） -->
     <Modal
       v-model:open="modalOpen"
       :confirm-loading="submitting"
-      :title="editingId ? '编辑配置' : '新增配置'"
-      width="520px"
+      :title="editingId ? `编辑配置 — ${form.configKey}` : '新增配置'"
+      :width="editingId ? '900px' : '520px'"
       @ok="submit"
     >
-      <Form class="mt-4 space-y-1" layout="vertical">
-        <!-- 新增时可编辑 configKey -->
+      <Form class="mt-4" layout="vertical">
+        <!-- 新增时填写 configKey -->
         <template v-if="!editingId">
           <FormItem label="配置键" required>
             <Input
@@ -287,28 +252,57 @@ watch(configType, () => {
               placeholder="如 agent.xxx（创建后不可改）"
             />
           </FormItem>
-        </template>
-
-        <!-- 编辑时只读展示 configKey -->
-        <template v-else>
-          <FormItem label="配置键">
-            <Input :value="form.configKey" disabled />
+          <FormItem label="说明">
+            <Input
+              v-model:value="form.description"
+              placeholder="可选，配置说明"
+            />
+          </FormItem>
+          <FormItem label="配置值">
+            <Textarea
+              v-model:value="form.configValue"
+              :auto-size="{ minRows: 4, maxRows: 12 }"
+              placeholder="支持 Markdown 格式"
+            />
           </FormItem>
         </template>
 
-        <FormItem label="配置值">
-          <Textarea
-            v-model:value="form.configValue"
-            :auto-size="{ minRows: 3, maxRows: 10 }"
-            placeholder="支持 Markdown 格式"
-          />
-        </FormItem>
-        <FormItem label="说明">
-          <Input
-            v-model:value="form.description"
-            placeholder="可选，配置说明"
-          />
-        </FormItem>
+        <!-- 编辑时：configKey + 说明只读，左右分栏编辑预览 -->
+        <template v-else>
+          <div class="mb-3 flex gap-4">
+            <FormItem class="flex-1" label="说明" style="margin-bottom: 0">
+              <Input v-model:value="form.description" placeholder="可选" />
+            </FormItem>
+          </div>
+          <!-- 左右分栏 -->
+          <div class="flex gap-3" style="height: 420px">
+            <!-- 左：编辑 -->
+            <div class="flex flex-1 flex-col">
+              <div class="mb-1 text-xs font-medium text-gray-500">编辑</div>
+              <Textarea
+                v-model:value="form.configValue"
+                class="flex-1 resize-none font-mono text-sm"
+                placeholder="支持 Markdown 格式"
+                style="height: 100%; min-height: 0"
+              />
+            </div>
+            <!-- 右：预览 -->
+            <div class="flex flex-1 flex-col">
+              <div class="mb-1 text-xs font-medium text-gray-500">预览</div>
+              <div
+                class="flex-1 overflow-auto rounded border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800"
+              >
+                <!-- eslint-disable vue/no-v-html -->
+                <!-- eslint-disable-next-line vue/no-v-html -->
+                <div
+                  class="prose prose-sm max-w-none"
+                  v-html="previewHtml"
+                ></div>
+                <!-- eslint-enable vue/no-v-html -->
+              </div>
+            </div>
+          </div>
+        </template>
       </Form>
     </Modal>
   </Page>
