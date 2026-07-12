@@ -19,6 +19,8 @@ import {
   Tag,
   Textarea,
 } from 'ant-design-vue';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
 
 import {
   createSystemConfigApi,
@@ -51,6 +53,19 @@ const modalOpen = ref(false);
 const editingId = ref<null | number | string>(null);
 const submitting = ref(false);
 
+// ===== 详情弹窗 =====
+const viewModalOpen = ref(false);
+const viewingRow = ref<null | SystemConfigVO>(null);
+
+function renderMarkdown(text: string): string {
+  return DOMPurify.sanitize(String(marked.parse(text ?? '')));
+}
+
+function openView(row: SystemConfigVO) {
+  viewingRow.value = row;
+  viewModalOpen.value = true;
+}
+
 // ===== 表单状态 =====
 const emptyForm = () => ({
   configKey: '',
@@ -62,11 +77,11 @@ const form = reactive<any>(emptyForm());
 
 // ===== 表格列定义 =====
 const columns: TableColumnsType = [
-  { title: '配置键', dataIndex: 'configKey', width: 220, ellipsis: true },
-  { title: '配置值', dataIndex: 'configValue', width: 220, ellipsis: true },
-  { title: '说明', dataIndex: 'description', width: 280, ellipsis: true },
+  { title: '配置键', dataIndex: 'configKey', width: 200, ellipsis: true },
+  { title: '配置值', dataIndex: 'configValue', width: 200, ellipsis: true },
+  { title: '说明', dataIndex: 'description', ellipsis: true },
   { title: '启用', dataIndex: 'isEnabled', width: 70 },
-  { title: '操作', key: 'action', width: 120, fixed: 'right' },
+  { title: '操作', key: 'action', width: 160, fixed: 'right' },
 ];
 
 // ===== 加载列表 =====
@@ -141,6 +156,7 @@ async function submit() {
 
 // ===== 删除 =====
 function confirmDelete(row: SystemConfigVO) {
+  if (!row.id) return;
   Modal.confirm({
     title: `确认删除「${row.description || row.configKey}」？`,
     okText: '删除',
@@ -214,6 +230,12 @@ watch(configType, () => {
           <Button
             size="small"
             type="link"
+            @click="openView(record as SystemConfigVO)"
+            >查看</Button
+          >
+          <Button
+            size="small"
+            type="link"
             @click="openEdit(record as SystemConfigVO)"
             >编辑</Button
           >
@@ -228,6 +250,22 @@ watch(configType, () => {
         </template>
       </template>
     </Table>
+
+    <!-- 详情弹窗（Markdown 渲染） -->
+    <Modal
+      v-model:open="viewModalOpen"
+      :footer="null"
+      :title="viewingRow?.configKey"
+      width="640px"
+    >
+      <div v-if="viewingRow" class="space-y-3 py-2">
+        <div class="text-xs text-gray-400">{{ viewingRow.description }}</div>
+        <div
+          class="prose prose-sm max-w-none rounded border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800"
+          v-html="renderMarkdown(viewingRow.configValue)"
+        ></div>
+      </div>
+    </Modal>
 
     <!-- 新增 / 编辑弹窗 -->
     <Modal
@@ -258,8 +296,8 @@ watch(configType, () => {
         <FormItem label="配置值">
           <Textarea
             v-model:value="form.configValue"
-            :auto-size="{ minRows: 2, maxRows: 8 }"
-            placeholder="填入配置值"
+            :auto-size="{ minRows: 3, maxRows: 10 }"
+            placeholder="支持 Markdown 格式"
           />
         </FormItem>
         <FormItem label="说明">
