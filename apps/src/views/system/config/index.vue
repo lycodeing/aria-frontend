@@ -27,11 +27,13 @@ import {
   updateSystemConfigApi,
 } from '#/api/system-config';
 
-// ===== Route meta: configType 由路由注入，用 computed 保证跨路由复用时响应式更新 =====
+// ===== Route meta: configType 优先取 meta，降级从 path 判断
+// 动态菜单路由不携带 meta.configType，因此用 path 做兜底
 const route = useRoute();
-const configType = computed(
-  () => (route.meta.configType as string) ?? 'CUSTOMER_SERVICE',
-);
+const configType = computed(() => {
+  if (route.meta.configType) return route.meta.configType as string;
+  return route.path === '/system/config' ? 'SYSTEM' : 'CUSTOMER_SERVICE';
+});
 const pageTitle = computed(() =>
   configType.value === 'CUSTOMER_SERVICE' ? '客服配置' : '系统配置',
 );
