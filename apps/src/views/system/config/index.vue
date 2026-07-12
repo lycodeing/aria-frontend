@@ -62,9 +62,9 @@ const form = reactive<any>(emptyForm());
 
 // ===== 表格列定义 =====
 const columns: TableColumnsType = [
-  { title: '配置键', dataIndex: 'configKey', width: 240, ellipsis: true },
-  { title: '说明', dataIndex: 'description', ellipsis: true },
-  { title: '配置值', dataIndex: 'configValue', width: 200, ellipsis: true },
+  { title: '配置键', dataIndex: 'configKey', width: 220, ellipsis: true },
+  { title: '说明', dataIndex: 'description', width: 280, ellipsis: true },
+  { title: '配置值', dataIndex: 'configValue', width: 220, ellipsis: true },
   { title: '启用', dataIndex: 'isEnabled', width: 70 },
   { title: '操作', key: 'action', width: 120, fixed: 'right' },
 ];
@@ -200,7 +200,7 @@ watch(configType, () => {
           loadList();
         },
       }"
-      :scroll="{ x: 800 }"
+      :scroll="{ x: 910 }"
       row-key="id"
       size="small"
     >
