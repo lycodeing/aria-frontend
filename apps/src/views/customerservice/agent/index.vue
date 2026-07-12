@@ -11,10 +11,10 @@ import type {
 } from '#/api/session';
 import type { QueueItem } from '#/composables/useSessionQueue';
 
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
-import { useUserStore } from '@vben/stores';
+import { useAccessStore, useUserStore } from '@vben/stores';
 
 import { Icon } from '@iconify/vue';
 import {
@@ -38,6 +38,7 @@ import {
   transferSessionApi,
 } from '#/api/session';
 import { useAgentWebSocket } from '#/composables/useAgentWebSocket';
+import { useAgentWsChannel } from '#/composables/useAgentWsChannel';
 import { useReplySuggestions } from '#/composables/useReplySuggestions';
 import { resolveTagColor } from '#/composables/useSessionQueue';
 import { useSessionQueueChannel } from '#/composables/useSessionQueueChannel';
@@ -72,6 +73,8 @@ function writeLastSeq(sid: string, newSeq: number) {
 }
 
 const fetchInflight = new Set<string>();
+// 已补齐消息的 seq 集合，避免断线补偿与实时消息重复（去重）
+const seenSeqBySession = new Map<string, Set<number>>();
 async function fetchMissingForSession(sid: string) {
   if (fetchInflight.has(sid)) return;
   const sinceSeqSnapshot = readLastSeq(sid);
@@ -81,23 +84,22 @@ async function fetchMissingForSession(sid: string) {
     const missing = await getSessionHistoryApi(sid, sinceSeqSnapshot);
     const session = sessions.value.find((s) => s.id === sid);
     if (!session) return;
+    const seen = seenSeqBySession.get(sid) ?? new Set<number>();
     for (const item of missing) {
       const seqNum =
         item.seq === null || item.seq === undefined
           ? Number.NaN
           : Number(item.seq);
+      // 仅补齐断连期间缺失的消息；用 seq 去重，避免与已到达的实时消息重复
       if (!Number.isFinite(seqNum) || seqNum <= sinceSeqSnapshot) continue;
       if (!item.content) continue;
-      if (item.role === 'user') {
-        session.msgs.push({
-          id: ++msgId,
-          role: 'user',
-          text: item.content,
-          time: nowTime(),
-        });
-      }
+      if (seen.has(seqNum)) continue;
+      seen.add(seqNum);
+      // 回灌全部角色（user / ai / agent / system / tool），保持对话上下文完整
+      session.msgs.push(historyItemToMsg(item));
       writeLastSeq(sid, seqNum);
     }
+    seenSeqBySession.set(sid, seen);
   } catch (error) {
     console.warn('[WS:Agent] fetchMissingForSession failed', sid, error);
   } finally {
@@ -110,7 +112,6 @@ const visitorTypingMap = ref<Record<string, boolean>>({});
 const typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function setVisitorTyping(sessionId: string) {
-  const wasTyping = visitorTypingMap.value[sessionId];
   visitorTypingMap.value[sessionId] = true;
   const existing = typingTimers.get(sessionId);
   if (existing) clearTimeout(existing);
@@ -122,13 +123,7 @@ function setVisitorTyping(sessionId: string) {
       typingTimers.delete(sessionId);
     }, 3000),
   );
-  // 气泡首次出现时滚动到底部（避免座席看不到输入中提示）
-  if (!wasTyping && activeSession.value?.id === sessionId) {
-    nextTick(() => {
-      const el = document.querySelector('[data-msgs-end]');
-      (el as HTMLElement)?.scrollIntoView({ behavior: 'smooth' });
-    });
-  }
+  // 滚动控制已下沉到 AgentChatArea：仅在贴近底部时自动滚动，上翻历史时不强制拽回
 }
 
 // ===== Composable：WebSocket 连接管理 =====
@@ -157,12 +152,10 @@ const {
         role: 'user',
         text: msg.content ?? '',
         time: nowTime(),
+        ts: Date.now(),
       });
       if (session.active) {
-        nextTick(() => {
-          const el = document.querySelector('[data-msgs-end]');
-          (el as HTMLElement)?.scrollIntoView({ behavior: 'smooth' });
-        });
+        // 滚动控制已下沉到 AgentChatArea（贴近底部才自动滚）
         refreshSuggestions(sessionId, 800);
       } else {
         // 非当前会话：累计未读数
@@ -239,6 +232,7 @@ function historyItemToMsg(h: {
           minute: '2-digit',
         })
       : undefined,
+    ts: h.timestamp ? Number(h.timestamp) : undefined,
     toolName: h.toolName ?? undefined,
     toolRequestId: h.toolRequestId ?? undefined,
     toolCalls: h.toolCalls ?? undefined,
@@ -263,11 +257,7 @@ function matchKeyword(
   if (!k) return true;
   return fields.some((f) => (f ?? '').toLowerCase().includes(k));
 }
-const visiblePagedWaitingQueue = computed(() =>
-  pagedWaitingQueue.value.filter((q) =>
-    matchKeyword(queueSearch.value, q.name, q.tag, q.id),
-  ),
-);
+// 等待队列：先过滤再分页（定义见下方分页区块）
 const visibleSessions = computed(() =>
   sessions.value.filter((s) =>
     matchKeyword(queueSearch.value, s.name, s.tag, s.sessionCode, s.id),
@@ -340,9 +330,10 @@ async function handleQueueTransfer(event: SessionSseEvent) {
 function reconnectQueue() {
   queueChannel.reconnect();
 }
+// 真正重建 WS 通道（带 token），重连成功后 channel 会自动按 sinceSeq 补齐漏消息
+const agentWsChannel = useAgentWsChannel();
 function reconnectActiveSession() {
-  const sid = activeSession.value?.id;
-  if (sid) connectAgentSession(sid);
+  agentWsChannel.reconnect(useAccessStore().accessToken ?? '');
 }
 
 // ===== 座席状态 =====
@@ -403,7 +394,7 @@ const closedViewLoading = ref(false);
 
 async function viewClosedSession(item: ClosedSessionItem) {
   closedViewLoading.value = true;
-  closedView.value = { session: item, msgs: [] };
+  closedView.value = { kind: 'closed', session: item, msgs: [] };
   try {
     const history = await getSessionHistoryApi(item.id, 0);
     closedView.value.msgs = history
@@ -414,6 +405,47 @@ async function viewClosedSession(item: ClosedSessionItem) {
   } finally {
     closedViewLoading.value = false;
   }
+}
+
+// 旁观 AI 对话：点击「AI 对话」Tab 的会话项，中栏只读预览 AI↔访客对话（不可发消息）
+async function viewAiSession(item: QueueItem) {
+  closedViewLoading.value = true;
+  closedView.value = {
+    kind: 'ai',
+    session: {
+      id: item.id,
+      name: item.name,
+      nameChar: item.name.at(0) ?? '?',
+      endedAt: '',
+      transferReason: item.reason,
+      tag: item.tag,
+    },
+    msgs: [],
+  };
+  try {
+    const history = await getSessionHistoryApi(item.id, 0);
+    closedView.value.msgs = history
+      .filter((h) => !isTypingSignal(h.content))
+      .map((h) => historyItemToMsg(h));
+  } catch {
+    message.error('加载 AI 对话记录失败');
+  } finally {
+    closedViewLoading.value = false;
+  }
+}
+
+// 接管 AI 对话：从旁观预览切到人工接待，复用 acceptQueue 流程
+// 注意：依赖后端 acceptSessionApi 是否允许对 AI_CHAT 状态的会话接入
+function takeoverAiSession() {
+  const id = closedView.value?.session.id;
+  if (!id) return;
+  const item = aiQueue.value.find((q) => q.id === id);
+  if (!item) {
+    message.warning('该会话已不在 AI 对话队列，可能已升级或结束');
+    return;
+  }
+  closedView.value = null;
+  acceptQueue(item);
 }
 
 // ===== 对话区消息筛选 =====
@@ -433,22 +465,31 @@ const filteredMsgs = computed(() => {
 const queueChannel = useSessionQueueChannel();
 const { aiQueue, waitingQueue, sseConnected } = queueChannel;
 
-// 分页（局部，保持原有逻辑）
+// 分页：先按关键词过滤，再分页（修复搜索命中藏在第 2 页误报空结果）
 const queuePage = ref(1);
+const filteredWaitingQueue = computed(() =>
+  waitingQueue.value.filter((q) =>
+    matchKeyword(queueSearch.value, q.name, q.tag, q.id),
+  ),
+);
 const queueTotalPages = computed(() =>
-  Math.max(1, Math.ceil(waitingQueue.value.length / 5)),
+  Math.max(1, Math.ceil(filteredWaitingQueue.value.length / 5)),
 );
 const pagedWaitingQueue = computed(() => {
   const start = (queuePage.value - 1) * 5;
-  return waitingQueue.value.slice(start, start + 5);
+  return filteredWaitingQueue.value.slice(start, start + 5);
 });
-// 仅在新会话入队时（长度增大）才重置分页
+const visiblePagedWaitingQueue = computed(() => pagedWaitingQueue.value);
+// 新会话入队 或 关键词变化时，重置到第 1 页
 watch(
   () => waitingQueue.value.length,
   (newLen, oldLen) => {
     if (newLen > oldLen) queuePage.value = 1;
   },
 );
+watch(queueSearch, () => {
+  queuePage.value = 1;
+});
 
 async function acceptItem(item: QueueItem): Promise<ApiSessionItem> {
   await acceptSessionApi(item.id);
@@ -498,12 +539,31 @@ watch(activeSession, (session, prevSession) => {
   }
 });
 
+// 替换当前会话草稿（建议卡「替换」动作）
 function applySuggestion(content: string): void {
-  msgInput.value = content;
+  if (activeSession.value) drafts.value.set(activeSession.value.id, content);
+}
+// 追加到当前会话草稿，不覆盖正在输入的内容（建议卡「插入」动作）
+function insertSuggestion(content: string): void {
+  if (activeSession.value) {
+    const cur = drafts.value.get(activeSession.value.id) ?? '';
+    drafts.value.set(activeSession.value.id, cur + content);
+  }
 }
 
 let msgId = 100;
-const msgInput = ref('');
+// 每会话草稿隔离：切换会话自动按 sessionId 保存/恢复，避免草稿串台误发
+const drafts = ref<Map<string, string>>(new Map());
+const msgInput = computed({
+  get() {
+    return activeSession.value
+      ? (drafts.value.get(activeSession.value.id) ?? '')
+      : '';
+  },
+  set(v: string) {
+    if (activeSession.value) drafts.value.set(activeSession.value.id, v);
+  },
+});
 const QUICK_REPLY = [
   '已核实订单信息',
   '安排补发处理',
@@ -580,11 +640,8 @@ function switchSession(s: SessionData) {
   s.active = true;
   s.unread = 0;
   msgFilter.value = '全部';
-  // 切换后滚动到最新消息
-  nextTick(() => {
-    const el = document.querySelector('[data-msgs-end]');
-    (el as HTMLElement)?.scrollIntoView({ behavior: 'smooth' });
-  });
+  // 切回活跃会话时退出已结束只读视图（草稿由 drafts 按 id 自动保留/恢复）
+  closedView.value = null;
 }
 
 async function addSessionLocal(params: {
@@ -629,6 +686,7 @@ async function addSessionLocal(params: {
               role: 'ai',
               text: '您好！请问有什么可以帮您？',
               time: nowTime(),
+              ts: Date.now(),
             },
           ],
   });
@@ -672,12 +730,10 @@ function sendAgent() {
     role: 'agent',
     text,
     time: nowTime(),
+    ts: Date.now(),
   });
+  // 清空当前会话草稿（computed setter 会写入 drafts 当前 id）
   msgInput.value = '';
-  nextTick(() => {
-    const el = document.querySelector('[data-msgs-end]');
-    (el as HTMLElement)?.scrollIntoView({ behavior: 'smooth' });
-  });
 }
 
 async function doCloseSession() {
@@ -703,7 +759,8 @@ async function doCloseSession() {
 }
 
 function quickReply(q: string) {
-  msgInput.value = q;
+  // 快捷回复默认可追加，避免覆盖正在输入的内容
+  insertSuggestion(q);
 }
 
 // ===== 生命周期 =====
@@ -754,7 +811,14 @@ onMounted(async () => {
         msgs:
           loadedMsgs.length > 0
             ? loadedMsgs
-            : [{ id: ++msgId, role: 'ai', text: '您好！请问有什么可以帮您？' }],
+            : [
+                {
+                  id: ++msgId,
+                  role: 'ai',
+                  text: '您好！请问有什么可以帮您？',
+                  ts: Date.now(),
+                },
+              ],
       });
     });
     if (sessions.value[0]) sessions.value[0].active = true;
@@ -812,6 +876,7 @@ onUnmounted(() => {
           :sessions="sessions"
           :closed-sessions="closedSessions"
           :closed-view="closedView"
+          :visitor-typing-map="visitorTypingMap"
           @toggle-online="agentOnline = $event"
           @update:queue-state-tab="queueStateTab = $event"
           @update:queue-page="queuePage = $event"
@@ -819,6 +884,7 @@ onUnmounted(() => {
           @accept-queue="acceptQueue"
           @switch-session="switchSession"
           @view-closed="viewClosedSession"
+          @view-ai-session="viewAiSession"
           @reconnect-queue="reconnectQueue"
         />
 
@@ -851,6 +917,8 @@ onUnmounted(() => {
           @transfer="transferVisible = true"
           @close-session="requestCloseSession"
           @reconnect-session="reconnectActiveSession"
+          @exit-closed="closedView = null"
+          @takeover-ai="takeoverAiSession"
           @copy-msg="copyMsgText"
         />
 
@@ -871,6 +939,7 @@ onUnmounted(() => {
             openHistoryDrawer(activeSession.name, activeSession.id)
           "
           @apply-suggestion="applySuggestion"
+          @insert-suggestion="insertSuggestion"
           @refresh-suggestions="
             activeSession && refreshSuggestionsNow(activeSession.id)
           "

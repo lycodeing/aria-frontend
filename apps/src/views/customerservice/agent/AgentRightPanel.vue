@@ -24,6 +24,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   applySuggestion: [content: string];
+  insertSuggestion: [content: string];
   openHistoryDrawer: [];
   refreshSuggestions: [];
   refreshSuggestionsWithPrompt: [prompt: string];
@@ -206,17 +207,24 @@ function formatShortDate(isoString: string | undefined): string {
         :has-error="suggestionsError"
         class="min-h-0 flex-1"
         @apply="emit('applySuggestion', $event)"
+        @insert="emit('insertSuggestion', $event)"
         @refresh="emit('refreshSuggestions')"
         @refresh-with-prompt="emit('refreshSuggestionsWithPrompt', $event)"
       />
     </template>
 
-    <!-- ===== 已结束会话只读信息 ===== -->
+    <!-- ===== 已结束 / AI 旁观 只读信息 ===== -->
     <template v-else-if="closedView">
       <div class="rounded-xl bg-[#f7f8fc] p-3.5">
         <div class="flex items-center justify-between">
           <span class="text-[15px] font-medium text-[#0a0a0b]">会话信息</span>
           <span
+            v-if="closedView.kind === 'ai'"
+            class="rounded bg-[#e8f0ff] px-2 py-0.5 text-[12px] text-[#1a73e8]"
+            >AI 处理中</span
+          >
+          <span
+            v-else
             class="rounded bg-[#f0f2f5] px-2 py-0.5 text-[12px] text-[#9ca3af]"
             >已结束</span
           >
@@ -242,7 +250,10 @@ function formatShortDate(isoString: string | undefined): string {
               {{ closedView.session.tag || '未标记' }}
             </span>
           </div>
-          <div class="flex items-center justify-between">
+          <div
+            v-if="closedView.kind !== 'ai'"
+            class="flex items-center justify-between"
+          >
             <span class="text-[13px] text-[#52525b]">结束时间</span>
             <span class="text-[13px] font-medium text-[#0a0a0b]">{{
               closedView.session.endedAt

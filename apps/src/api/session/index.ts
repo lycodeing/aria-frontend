@@ -47,7 +47,13 @@ export interface SessionQueueItem {
 }
 
 export interface WsChatMessage {
-  type: 'AGENT_JOINED' | 'CONNECTED' | 'KICKED_OUT' | 'MESSAGE' | 'TYPING';
+  type:
+    | 'AGENT_JOINED'
+    | 'CONNECTED'
+    | 'KICKED_OUT'
+    | 'MESSAGE'
+    | 'PING'
+    | 'TYPING';
   /**
    * 会话 ID。MESSAGE / TYPING / AGENT_JOINED 必填；
    * CONNECTED / KICKED_OUT 为连接级信令，后端不带此字段。
@@ -307,6 +313,12 @@ export function sendWsMessage(ws: null | WebSocket, content: string): void {
 export function sendTypingSignal(ws: null | WebSocket): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: 'TYPING' }));
+}
+
+/** 通过 WebSocket 发送心跳 PING，防止代理/负载均衡因空闲超时断开连接 */
+export function sendPingSignal(ws: null | WebSocket): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'PING' }));
 }
 
 // -------------------------------------------------------

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ClosedView, Msg, SessionData } from './types';
 
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 
 import { Icon } from '@iconify/vue';
 import { Button, Spin } from 'ant-design-vue';
@@ -29,9 +29,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   closeSession: [];
   copyMsg: [text: string];
+  exitClosed: [];
   quickReply: [q: string];
   reconnectSession: [];
   send: [];
+  takeoverAi: [];
   toggleTool: [id: number];
   transfer: [];
   'update:msgFilter': [val: string];
@@ -101,13 +103,71 @@ const closedToolExpanded = ref<Record<number, boolean>>({});
 function toggleClosedTool(id: number) {
   closedToolExpanded.value[id] = !closedToolExpanded.value[id];
 }
+
+// ===== 滚动控制：贴近底部才自动滚，上翻历史时不强制拽回 =====
+const msgsScroll = ref<HTMLElement | null>(null);
+const atBottom = ref(true);
+const newMsgCount = ref(0);
+
+function isNearBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+}
+function scrollToBottom() {
+  const el = msgsScroll.value;
+  if (!el) return;
+  nextTick(() => {
+    el.scrollTop = el.scrollHeight;
+    atBottom.value = true;
+    newMsgCount.value = 0;
+  });
+}
+function onScroll() {
+  const el = msgsScroll.value;
+  if (el) atBottom.value = isNearBottom(el);
+}
+
+// 新消息到达：贴底则自动滚，否则累积未读计数由召回按钮处理
+watch(
+  () => props.filteredMsgs.length,
+  (now, prev) => {
+    const added = now - (prev ?? 0);
+    if (added > 0) {
+      if (atBottom.value) scrollToBottom();
+      else newMsgCount.value += added;
+    }
+  },
+);
+// 访客输入中：仅贴底时跟随
+watch(
+  () => props.visitorTyping,
+  (typing) => {
+    if (typing && atBottom.value) scrollToBottom();
+  },
+);
+// 切换会话 / 进出已结束视图：回到最新消息
+watch(
+  () => props.activeSession?.id,
+  () => {
+    newMsgCount.value = 0;
+    scrollToBottom();
+  },
+);
+watch(
+  () => props.closedView,
+  (cv) => {
+    if (!cv) {
+      newMsgCount.value = 0;
+      scrollToBottom();
+    }
+  },
+);
 </script>
 
 <template>
   <!-- Active session chat -->
   <main
-    v-if="activeSession"
-    class="flex min-w-0 flex-1 flex-col overflow-hidden bg-[#f7f8fc]"
+    v-if="activeSession && !closedView"
+    class="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[#f7f8fc]"
   >
     <!-- Header -->
     <header
@@ -235,8 +295,10 @@ function toggleClosedTool(id: number) {
 
     <!-- Message list -->
     <div
+      ref="msgsScroll"
       class="min-h-0 flex-1 space-y-3.5 overflow-y-auto p-4"
       style="scrollbar-color: #d4d8e3 transparent; scrollbar-width: thin"
+      @scroll="onScroll"
     >
       <!-- Round count -->
       <div class="flex justify-center">
@@ -449,6 +511,16 @@ function toggleClosedTool(id: number) {
       <div data-msgs-end></div>
     </div>
 
+    <!-- 新消息召回按钮：上翻历史时来新消息不强制滚动，点击回到底部 -->
+    <button
+      v-if="newMsgCount > 0"
+      class="absolute bottom-[112px] right-6 z-10 flex items-center gap-1.5 rounded-full bg-[#1a73e8] px-3.5 py-1.5 text-[12px] font-medium text-white shadow-lg transition-colors hover:bg-[#1763c4]"
+      @click="scrollToBottom"
+    >
+      <Icon icon="lucide:arrow-down" class="text-[14px]" />
+      {{ newMsgCount }} 条新消息
+    </button>
+
     <!-- Quick replies -->
     <div
       class="flex shrink-0 gap-1.5 overflow-x-auto border-t border-[#e4e7ed] bg-white px-4 py-2"
@@ -493,6 +565,13 @@ function toggleClosedTool(id: number) {
     class="flex min-w-0 flex-1 flex-col overflow-hidden bg-[#f7f8fc]"
   >
     <header class="flex h-16 shrink-0 items-center gap-3 bg-white px-5">
+      <button
+        class="flex items-center gap-1 rounded-md px-2 py-1 text-[13px] text-[#1a73e8] transition-colors hover:bg-[#f0f4ff]"
+        @click="emit('exitClosed')"
+      >
+        <Icon icon="lucide:chevron-left" class="text-[16px]" />
+        返回
+      </button>
       <div
         class="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-[#f0f2f5] text-[15px] font-medium text-[#9ca3af]"
       >
@@ -503,12 +582,22 @@ function toggleClosedTool(id: number) {
           {{ closedView.session.name }}
         </div>
         <div class="text-[12px] text-[#9ca3af]">
-          会话 #{{ closedView.session.id }} · 结束于
-          {{ closedView.session.endedAt }}
+          会话 #{{ closedView.session.id
+          }}<template
+            v-if="closedView.kind !== 'ai' && closedView.session.endedAt"
+          >
+            · 结束于 {{ closedView.session.endedAt }}</template
+          >
         </div>
       </div>
       <div class="ml-auto">
         <span
+          v-if="closedView.kind === 'ai'"
+          class="rounded bg-[#e8f0ff] px-2 py-0.5 text-[12px] text-[#1a73e8]"
+          >AI 处理中</span
+        >
+        <span
+          v-else
           class="rounded bg-[#f0f2f5] px-2 py-0.5 text-[12px] text-[#9ca3af]"
           >已结束</span
         >
@@ -645,6 +734,23 @@ function toggleClosedTool(id: number) {
           </div>
         </template> </template
       ><!-- end v-else (not loading) -->
+    </div>
+
+    <!-- AI 旁观：接管会话入口，接管后切到人工接待即可发送 -->
+    <div
+      v-if="closedView.kind === 'ai'"
+      class="flex shrink-0 items-center justify-between gap-3 border-t border-[#e4e7ed] bg-white px-5 py-3"
+    >
+      <span class="text-[12px] text-[#9ca3af]"
+        >接管后 AI 退出，由你继续接待该访客</span
+      >
+      <button
+        class="flex items-center gap-1.5 rounded-lg bg-[#1a73e8] px-4 py-2 text-[13px] font-medium text-white hover:opacity-90"
+        @click="emit('takeoverAi')"
+      >
+        <Icon icon="lucide:headphones" class="text-[14px]" />
+        接管会话
+      </button>
     </div>
   </main>
 

@@ -21,6 +21,7 @@ const props = defineProps<{
   sseConnected: boolean;
   visiblePagedWaitingQueue: QueueItem[];
   visibleSessions: SessionData[];
+  visitorTypingMap: Record<string, boolean>;
   waitingQueue: QueueItem[];
 }>();
 
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   'update:queuePage': [val: number];
   'update:queueSearch': [val: string];
   'update:queueStateTab': [val: 'active' | 'ai' | 'closed' | 'waiting'];
+  viewAiSession: [item: QueueItem];
   viewClosed: [item: ClosedSessionItem];
 }>();
 
@@ -41,6 +43,50 @@ const queueStateTabs = [
   { key: 'active', label: '人工', icon: 'lucide:headphones' },
   { key: 'closed', label: '结束', icon: 'lucide:archive' },
 ];
+
+/**
+ * 取会话最后一条可展示的消息预览（跳过 system/tool），用于左栏列表项副标题。
+ * 没有任何可展示消息时回退到 s.min（如"刚接入"）。
+ */
+function lastMsgPreview(s: SessionData): string {
+  for (let i = s.msgs.length - 1; i >= 0; i--) {
+    const m = s.msgs[i];
+    if (!m) continue;
+    if (!m.text || m.role === 'system' || m.role === 'tool') continue;
+    const prefix = m.role === 'agent' ? '我：' : m.role === 'ai' ? 'AI：' : '';
+    const text = m.text.length > 22 ? `${m.text.slice(0, 22)}…` : m.text;
+    return `${prefix}${text}`;
+  }
+  return s.min;
+}
+
+/** 智能格式化时间戳：今天 HH:MM / 昨天 / 更早 MM-DD */
+function formatChatTime(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) {
+    return d.toLocaleTimeString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return '昨天';
+  return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+}
+
+/** 取会话最后一条消息的时间，优先用 ts 智能格式化，旧消息兜底 time 字符串 */
+function lastMsgTime(s: SessionData): string {
+  for (let i = s.msgs.length - 1; i >= 0; i--) {
+    const m = s.msgs[i];
+    if (!m) continue;
+    if (m.ts) return formatChatTime(m.ts);
+    if (m.time) return m.time;
+  }
+  return '';
+}
 </script>
 
 <template>
@@ -179,7 +225,8 @@ const queueStateTabs = [
             <div
               v-for="item in aiQueue"
               :key="item.id"
-              class="flex items-center gap-2 rounded-xl bg-white p-2.5"
+              class="flex cursor-pointer items-center gap-2 rounded-xl bg-white p-2.5 transition-colors hover:bg-[#f5fafe]"
+              @click="emit('viewAiSession', item)"
             >
               <div
                 class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[13px] font-medium text-white"
@@ -331,14 +378,43 @@ const queueStateTabs = [
                 </span>
               </div>
               <div class="min-w-0 flex-1">
-                <p class="text-[13px] font-medium text-[#0a0a0b]">
-                  {{ s.name }}
+                <div class="flex items-center justify-between gap-2">
+                  <p class="truncate text-[13px] font-medium text-[#0a0a0b]">
+                    {{ s.name }}
+                  </p>
+                  <span
+                    v-if="lastMsgTime(s)"
+                    class="shrink-0 text-[11px] text-[#9ca3af]"
+                    >{{ lastMsgTime(s) }}</span
+                  >
+                </div>
+                <!-- 访客正在输入：蓝色跳动点 + 文案，盖过默认副标题 -->
+                <p
+                  v-if="visitorTypingMap[s.id]"
+                  class="flex items-center gap-1 text-[11px] text-[#1a73e8]"
+                >
+                  <span class="flex items-center gap-0.5">
+                    <span
+                      class="h-1 w-1 animate-bounce rounded-full bg-[#1a73e8]"
+                      style="animation-delay: 0ms"
+                    ></span>
+                    <span
+                      class="h-1 w-1 animate-bounce rounded-full bg-[#1a73e8]"
+                      style="animation-delay: 150ms"
+                    ></span>
+                    <span
+                      class="h-1 w-1 animate-bounce rounded-full bg-[#1a73e8]"
+                      style="animation-delay: 300ms"
+                    ></span>
+                  </span>
+                  正在输入中…
                 </p>
                 <p
-                  class="text-[11px]"
+                  v-else
+                  class="truncate text-[11px]"
                   :class="s.active ? 'text-[#1a73e8]' : 'text-[#9ca3af]'"
                 >
-                  {{ s.active ? '当前会话' : s.min }}
+                  {{ lastMsgPreview(s) }}
                 </p>
               </div>
               <span

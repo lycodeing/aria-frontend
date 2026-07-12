@@ -130,9 +130,10 @@ const ws = useVisitorWs(sessionId, readLastSeq, writeLastSeq, {
     sessionEnded.value = true;
   },
   onMaxRetryExceeded: () => {
-    // 重试耗尽：仅清除座席已接入标记，保留转接状态让用户可手动重连
-    // （wsStatus 变为 'disconnected'，banner 自动切换为红色「立即重连」按钮）
+    // 重试耗尽：清除转接状态和座席接入标记，避免 banner 永久停留
+    // 同时清除 localStorage 标志，下次加载不再尝试恢复已失效的 WS 连接
     agentJoined.value = false;
+    transfer.clearTransferred(sessionId.value);
   },
   onReconnecting: (_attempt, _delaySec) => {
     // wsStatus 已变为 'connecting'，banner 会自动显示旋转动画，无需额外处理

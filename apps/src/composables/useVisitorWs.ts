@@ -16,6 +16,7 @@ import { ref } from 'vue';
 import {
   connectVisitorWs,
   getVisitorHistoryApi,
+  sendPingSignal,
   sendTypingSignal,
   sendWsMessage,
 } from '#/api/session';
@@ -24,6 +25,12 @@ import {
 const WS_MAX_RETRY = 3;
 /** 指数退避延迟（ms）：第 1/2/3 次重连 */
 const WS_RETRY_DELAYS = [1000, 3000, 8000] as const;
+
+/**
+ * 心跳间隔（ms）。
+ * 大多数 Nginx/LB 默认 proxy_read_timeout = 60s，25s 发一次 PING 保持连接活跃。
+ */
+const HEARTBEAT_MS = 25_000;
 
 export interface VisitorWsCallbacks {
   /** 座席发来的文字消息 */
@@ -51,8 +58,25 @@ export function useVisitorWs(
   let visitorWs: null | WebSocket = null;
   let wsRetryCount = 0;
   let wsRetryTimer: null | ReturnType<typeof setTimeout> = null;
+  let heartbeatTimer: null | ReturnType<typeof setInterval> = null;
   /** 并发锁：防止短时间多次重连触发多个增量拉取请求 */
   let fetchInflight = false;
+
+  // ---- 心跳 ----
+
+  function startHeartbeat(): void {
+    stopHeartbeat();
+    heartbeatTimer = setInterval(() => {
+      sendPingSignal(visitorWs);
+    }, HEARTBEAT_MS);
+  }
+
+  function stopHeartbeat(): void {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  }
 
   // ---- 连接 ----
 
@@ -67,6 +91,7 @@ export function useVisitorWs(
   }
 
   function disconnect(): void {
+    stopHeartbeat();
     if (wsRetryTimer) {
       clearTimeout(wsRetryTimer);
       wsRetryTimer = null;
@@ -100,6 +125,8 @@ export function useVisitorWs(
       clearTimeout(wsRetryTimer);
       wsRetryTimer = null;
     }
+    // 连接建立后启动心跳，防止代理因空闲超时断开
+    startHeartbeat();
     // 重连成功后拉增量消息，补齐离线期间漏收的座席回复
     void fetchMissingMessages(sessionId.value);
   }
@@ -107,6 +134,8 @@ export function useVisitorWs(
   function handleWsClose(event: CloseEvent): void {
     visitorWs = null;
     wsStatus.value = 'disconnected';
+    // 断线时停止心跳
+    stopHeartbeat();
 
     if (event.code === 1000) {
       // 服务端正常关闭（座席结束会话），不重连

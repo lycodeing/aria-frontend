@@ -15,6 +15,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   apply: [content: string];
+  insert: [content: string];
   refresh: [];
   refreshWithPrompt: [prompt: string];
 }>();
@@ -112,14 +113,13 @@ const visibleSuggestions = computed(() =>
         <div
           v-for="item in visibleSuggestions"
           :key="item.id"
-          class="group cursor-pointer rounded-lg bg-white p-3 transition-colors hover:bg-[#f5fafe]"
-          @click="emit('apply', item.content)"
+          class="rounded-lg bg-white p-3 transition-colors hover:bg-[#f5fafe]"
         >
           <p class="text-[12px] leading-[1.6] text-[#0a0a0b]">
             {{ item.content }}
           </p>
           <div
-            class="mt-2 flex items-center gap-1.5 rounded-[5px] bg-[#f0f4ff] px-2 py-1.5"
+            class="mt-2 flex items-center justify-between gap-2 rounded-[5px] bg-[#f0f4ff] px-2 py-1.5"
           >
             <span
               class="text-[10px] font-medium"
@@ -129,7 +129,20 @@ const visibleSuggestions = computed(() =>
             >
               {{ item.source === 'KB' ? '知识库' : '上下文' }}
             </span>
-            <span class="text-[10px] text-[#9ca3af]">· 点击填入输入框</span>
+            <div class="flex items-center gap-1.5">
+              <button
+                class="rounded-md bg-[#1a73e8] px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-[#1763c4]"
+                @click="emit('insert', item.content)"
+              >
+                插入
+              </button>
+              <button
+                class="rounded-md border border-[#e4e7ed] bg-white px-2 py-0.5 text-[11px] text-[#52525b] transition-colors hover:bg-[#f5fafe]"
+                @click="emit('apply', item.content)"
+              >
+                替换
+              </button>
+            </div>
           </div>
         </div>
       </template>

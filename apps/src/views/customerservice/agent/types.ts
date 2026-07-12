@@ -8,6 +8,8 @@ export interface Msg {
   role: 'agent' | 'ai' | 'system' | 'tool' | 'user';
   text: string;
   time?: string;
+  /** 原始毫秒时间戳，用于左栏列表项按"今天 HH:MM / 昨天 / MM-DD"智能格式化 */
+  ts?: number;
   /** 仅 role='tool' 填充：被调用的工具名 */
   toolName?: string;
   /** 仅 role='tool' 填充：对应 AI 请求里的 toolCalls[].id */
@@ -44,6 +46,8 @@ export interface ClosedSessionItem {
 }
 
 export interface ClosedView {
+  /** 只读预览来源：closed=已结束会话，ai=AI 对话阶段旁观预览 */
+  kind?: 'ai' | 'closed';
   msgs: Msg[];
   session: ClosedSessionItem;
 }
