@@ -181,7 +181,7 @@ watch(
     if (newToken && !oldToken) {
       // 首次登录：建立 SSE 连接 + 加载初始队列
       queueChannel.init();
-      await queueChannel.loadQueue();
+      await queueChannel.loadSessions();
     } else if (newToken && newToken !== oldToken) {
       // token 刷新：重建 SSE 连接以使用新 token
       queueChannel.reconnect();

@@ -4,25 +4,25 @@ import type { ClosedSessionItem, ClosedView, SessionData } from './types';
 import type { QueueItem } from '#/composables/useSessionQueue';
 
 import { Icon } from '@iconify/vue';
-import { Button, Progress, Spin, Switch, Tag } from 'ant-design-vue';
+import { Button, Progress, Switch, Tag } from 'ant-design-vue';
 
 const props = defineProps<{
   agentOnline: boolean;
-  closedLoading: boolean;
+  aiQueue: QueueItem[];
   closedSessions: ClosedSessionItem[];
   closedView: ClosedView | null;
   concurrent: number;
   maxConcurrent: number;
-  pagedQueue: QueueItem[];
-  queue: QueueItem[];
+  pagedWaitingQueue: QueueItem[];
   queuePage: number;
   queueSearch: string;
   queueStateTab: 'active' | 'ai' | 'closed' | 'waiting';
   queueTotalPages: number;
   sessions: SessionData[];
   sseConnected: boolean;
-  visiblePagedQueue: QueueItem[];
+  visiblePagedWaitingQueue: QueueItem[];
   visibleSessions: SessionData[];
+  waitingQueue: QueueItem[];
 }>();
 
 const emit = defineEmits<{
@@ -79,10 +79,10 @@ const queueStateTabs = [
         <span class="text-[14px] font-medium text-[#0a0a0b]">会话队列</span>
         <div class="flex items-center gap-1.5">
           <span
-            v-if="queue.length > 0"
+            v-if="waitingQueue.length > 0"
             class="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#1a73e8] px-1 text-[11px] text-white"
           >
-            {{ queue.length }}
+            {{ waitingQueue.length }}
           </span>
           <!-- SSE 状态点 -->
           <span
@@ -137,17 +137,30 @@ const queueStateTabs = [
             )
           "
         >
+          <!-- AI 对话 Tab 角标 -->
           <span
-            v-if="tab.key === 'waiting' && queue.length"
-            class="flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white"
-            >{{ queue.length }}</span
+            v-if="tab.key === 'ai' && aiQueue.length"
+            class="flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px]"
+            :class="
+              queueStateTab === 'ai'
+                ? 'bg-white/30 text-white'
+                : 'bg-[#1a73e8]/10 text-[#1a73e8]'
+            "
+            >{{ aiQueue.length }}</span
           >
+          <!-- 等待人工 Tab 红点 -->
+          <span
+            v-else-if="tab.key === 'waiting' && waitingQueue.length"
+            class="flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white"
+            >{{ waitingQueue.length }}</span
+          >
+          <!-- 人工接待中 Tab 角标 -->
           <span
             v-else-if="tab.key === 'active' && sessions.length"
-            class="flex h-4 min-w-4 items-center justify-center rounded-full bg-white/30 px-1 text-[10px]"
+            class="flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px]"
             :class="
               queueStateTab === 'active'
-                ? 'text-white'
+                ? 'bg-white/30 text-white'
                 : 'bg-[#1a73e8]/10 text-[#1a73e8]'
             "
             >{{ sessions.length }}</span
@@ -163,9 +176,9 @@ const queueStateTabs = [
       >
         <!-- AI 对话 Tab：展示当前 AI 自动处理中的队列项 -->
         <template v-if="queueStateTab === 'ai'">
-          <div v-if="queue.length" class="space-y-1.5">
+          <div v-if="aiQueue.length" class="space-y-1.5">
             <div
-              v-for="item in queue"
+              v-for="item in aiQueue"
               :key="item.id"
               class="flex items-center gap-2 rounded-xl bg-white p-2.5"
             >
@@ -213,9 +226,9 @@ const queueStateTabs = [
 
         <!-- 等待人工 Tab -->
         <template v-else-if="queueStateTab === 'waiting'">
-          <div v-if="visiblePagedQueue.length" class="space-y-2">
+          <div v-if="visiblePagedWaitingQueue.length" class="space-y-2">
             <div
-              v-for="item in visiblePagedQueue"
+              v-for="item in visiblePagedWaitingQueue"
               :key="item.id"
               class="rounded-xl bg-white p-2.5"
             >
@@ -258,7 +271,7 @@ const queueStateTabs = [
 
           <!-- 搜索无结果 -->
           <div
-            v-else-if="queue.length && !visiblePagedQueue.length"
+            v-else-if="waitingQueue.length && !visiblePagedWaitingQueue.length"
             class="flex flex-col items-center justify-center py-8 text-center"
           >
             <Icon icon="lucide:search-x" class="mb-2 text-2xl text-[#e4e7ed]" />
@@ -357,10 +370,7 @@ const queueStateTabs = [
 
         <!-- 已结束 Tab -->
         <template v-else-if="queueStateTab === 'closed'">
-          <div v-if="closedLoading" class="flex justify-center py-8">
-            <Spin size="small" />
-          </div>
-          <div v-else-if="closedSessions.length" class="space-y-1.5">
+          <div v-if="closedSessions.length" class="space-y-1.5">
             <div
               v-for="item in closedSessions"
               :key="item.id"
