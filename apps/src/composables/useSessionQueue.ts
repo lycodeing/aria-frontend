@@ -51,9 +51,6 @@ export interface QueueItem {
   status: 'ACTIVE' | 'AI_CHAT' | 'CLOSED' | 'WAITING'; // 新增
 }
 
-/** 头像色常量，供 channel 和页面一致使用 */
-export const QUEUE_AVATAR_COLOR = '#f87171';
-
 export function toQueueItem(item: ApiSessionItem): QueueItem {
   return {
     id: item.sessionId,

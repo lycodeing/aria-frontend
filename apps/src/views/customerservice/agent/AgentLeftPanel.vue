@@ -13,7 +13,6 @@ const props = defineProps<{
   closedView: ClosedView | null;
   concurrent: number;
   maxConcurrent: number;
-  pagedWaitingQueue: QueueItem[];
   queuePage: number;
   queueSearch: string;
   queueStateTab: 'active' | 'ai' | 'closed' | 'waiting';

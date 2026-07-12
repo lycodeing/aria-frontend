@@ -804,7 +804,6 @@ onUnmounted(() => {
           :queue-state-tab="queueStateTab"
           :ai-queue="aiQueue"
           :waiting-queue="waitingQueue"
-          :paged-waiting-queue="pagedWaitingQueue"
           :queue-page="queuePage"
           :queue-total-pages="queueTotalPages"
           :queue-search="queueSearch"
