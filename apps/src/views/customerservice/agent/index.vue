@@ -452,8 +452,9 @@ watch(
 
 async function acceptItem(item: QueueItem): Promise<ApiSessionItem> {
   await acceptSessionApi(item.id);
-  // Channel 会通过 SSE ACCEPTED 事件自动将 status 改为 ACTIVE
-  // 乐观更新：手动触发一次 removeFromSessions 防止 SSE 延迟时用户看到重复条目
+  // 乐观更新：从 sessions 中移除该条目。
+  // 后续 SSE ACCEPTED 事件到来时条目已不存在，channel 层的状态迁移会静默跳过；
+  // 本地人工会话由 addSessionLocal() 负责创建，不依赖 channel.activeQueue。
   queueChannel.removeFromSessions(item.id);
   return {
     sessionId: item.id,
@@ -707,12 +708,17 @@ function quickReply(q: string) {
 
 // ===== 生命周期 =====
 onMounted(async () => {
-  // channel.loadSessions() 由 layouts/basic.vue 在登录时已调用
-  // 此处只需注册页面级事件回调
   queueChannel.onClosed(handleQueueClosed);
   queueChannel.onTransfer(handleQueueTransfer);
 
-  // 直接从 activeQueue 切片取已接入的会话
+  // Ensure sessions are loaded — handles direct-URL navigation (page refresh,
+  // bookmarked URL) where basic.vue's loadSessions() may not have resolved yet.
+  // On the normal post-login flow, sessions.value is already populated and this
+  // call is skipped.
+  if (queueChannel.sessions.value.length === 0) {
+    await queueChannel.loadSessions();
+  }
+
   const activeSessions = queueChannel.activeQueue.value;
 
   if (activeSessions.length > 0) {

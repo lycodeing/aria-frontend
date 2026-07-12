@@ -210,6 +210,10 @@ export function useSessionQueueChannel(): SessionQueueChannel {
       sessions.value.splice(0);
       sseRetryCount = 0;
       sseStatus.value = 'closed';
+      // handler Sets are intentionally NOT cleared here: page components own
+      // their own offClosed / offTransfer / offEnqueue lifecycle and call them
+      // in their onUnmounted hooks. Clearing here would silently break components
+      // that re-init the channel after a dispose-reinit cycle.
     },
 
     reconnect() {
