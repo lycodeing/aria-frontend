@@ -57,6 +57,11 @@ vite.config.ts.*
 .agents
 .claude
 .codex
+.workbuddy
 skills-lock.json
 .atomcode
 datalog
+
+# AI-generated docs
+docs/superpowers
+docs/plans
