@@ -16,7 +16,7 @@ import {
   Tag,
 } from 'ant-design-vue';
 
-import { requestClient } from '#/api/request';
+import { authClient } from '#/api/request';
 
 // ===== 用户列表 =====
 interface UserVO {
@@ -40,7 +40,7 @@ const PAGE_SIZE = 10;
 async function loadUsers() {
   loading.value = true;
   try {
-    const res: any = await requestClient.get('/users', {
+    const res: any = await authClient.get('/users', {
       params: {
         keyword: keyword.value || undefined,
         page: currentPage.value - 1,
@@ -146,10 +146,10 @@ async function submitForm() {
     await formRef.value?.validate();
     if (isEdit.value && editingId.value) {
       const { password: _pwd, ...updatePayload } = form.value;
-      await requestClient.put(`/users/${editingId.value}`, updatePayload);
+      await authClient.put(`/users/${editingId.value}`, updatePayload);
       message.success('用户信息已更新');
     } else {
-      await requestClient.post('/users', form.value);
+      await authClient.post('/users', form.value);
       message.success(`用户 ${form.value.username} 创建成功`);
     }
     modalVisible.value = false;
@@ -162,7 +162,7 @@ async function submitForm() {
 // ===== 用户操作 =====
 async function toggleStatus(user: UserVO) {
   const action = user.status === 'active' ? 'disable' : 'enable';
-  await requestClient.post(`/users/${user.id}/${action}`).catch(() => null);
+  await authClient.post(`/users/${user.id}/${action}`).catch(() => null);
   user.status = user.status === 'active' ? 'disabled' : 'active';
   message.success(
     `用户 ${user.username} 已${action === 'disable' ? '禁用' : '启用'}`,
@@ -174,7 +174,7 @@ function resetPwd(user: UserVO) {
     title: `重置 ${user.username} 的密码`,
     content: '重置后密码为 Test@123456，请告知用户及时修改。',
     onOk: async () => {
-      await requestClient
+      await authClient
         .post(`/users/${user.id}/reset-password`, {
           newPassword: 'Test@123456',
         })
@@ -189,7 +189,7 @@ function deleteUser(user: UserVO) {
     title: `确认删除用户 ${user.username}？`,
     okType: 'danger',
     onOk: async () => {
-      await requestClient.delete(`/users/${user.id}`).catch(() => null);
+      await authClient.delete(`/users/${user.id}`).catch(() => null);
       message.success('用户已删除');
       loadUsers();
     },

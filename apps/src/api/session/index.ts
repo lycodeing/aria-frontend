@@ -1,24 +1,18 @@
 // src/api/session/index.ts
 import { useAccessStore } from '@vben/stores';
 
-import {
-  publicRequestClient,
-  rawRequestClient,
-  requestClient,
-} from '#/api/request';
+import { conversationClient, publicConversationClient } from '#/api/request';
 
 /**
- * agentClient：带 Authorization token（rawRequestClient 已注入 token 拦截器），baseURL 为空，
- *              用于走 vite proxy 的 /api/v1/* 路径（避免 /api 前缀拼接成 /api/api/v1/*）。
+ * agentClient：带 Authorization token，baseURL=/conversation，
+ *              经过 nginx /conversation 前缀路由到 conversation-service。
  *
- * publicClient：I-03 修复 — 独立 RequestClient 实例，不注册 token 拦截器。
- *              /chat 页无需登录，与座席 token 共用 rawRequestClient 会导致访客请求
+ * publicClient：独立 RequestClient 实例，不注册 token 拦截器。
+ *              /chat 页无需登录，与座席 token 共用会导致访客请求
  *              意外携带座席 token，存在权限叠加和 token 泄露风险。
  */
-const agentClient = rawRequestClient;
-const publicClient = publicRequestClient;
-// requestClient 保留导入以兼容其他直接调用 /api/v1/* 的接口
-void requestClient;
+const agentClient = conversationClient;
+const publicClient = publicConversationClient;
 
 // -------------------------------------------------------
 // 访客身份验证（手机号 + 短信验证码）
@@ -26,7 +20,7 @@ void requestClient;
 
 /** 发送短信验证码（后端路径 /api/v1/chat/auth/sms/send → conversation-service:8082） */
 export async function sendSmsCodeApi(phone: string): Promise<void> {
-  return publicClient.post('/api/v1/chat/auth/sms/send', { phone });
+  return publicClient.post('/chat/auth/sms/send', { phone });
 }
 
 /** 校验短信验证码，成功返回访客 token */
@@ -34,7 +28,7 @@ export async function verifySmsCodeApi(
   phone: string,
   code: string,
 ): Promise<{ token: string }> {
-  return publicClient.post('/api/v1/chat/auth/sms/verify', { phone, code });
+  return publicClient.post('/chat/auth/sms/verify', { phone, code });
 }
 
 export interface SessionQueueItem {
@@ -97,19 +91,19 @@ export interface ChatHistoryItem {
  * 返回 AI_CHAT / WAITING / ACTIVE / CLOSED 四种状态，CLOSED 最多 50 条按结束时间倒序。
  */
 export async function getAllSessionsApi(): Promise<SessionQueueItem[]> {
-  return agentClient.get('/api/v1/sessions');
+  return agentClient.get('/sessions');
 }
 
 /** 座席接入会话（需 token） */
 export async function acceptSessionApi(
   sessionId: string,
 ): Promise<SessionQueueItem> {
-  return agentClient.post(`/api/v1/sessions/${sessionId}/accept`);
+  return agentClient.post(`/sessions/${sessionId}/accept`);
 }
 
 /** 获取结束会话（需 token） */
 export async function closeSessionApi(sessionId: string): Promise<void> {
-  return agentClient.post(`/api/v1/sessions/${sessionId}/close`);
+  return agentClient.post(`/sessions/${sessionId}/close`);
 }
 
 /**
@@ -122,7 +116,7 @@ export async function getSessionHistoryApi(
   sessionId: string,
   sinceSeq = 0,
 ): Promise<ChatHistoryItem[]> {
-  return agentClient.get('/api/v1/chat/history', {
+  return agentClient.get('/chat/history', {
     params: { sessionId, sinceSeq },
   });
 }
@@ -136,7 +130,7 @@ export async function getVisitorHistoryApi(
   sessionId: string,
   sinceSeq = 0,
 ): Promise<ChatHistoryItem[]> {
-  return publicClient.get('/api/v1/chat/history', {
+  return publicClient.get('/chat/history', {
     params: { sessionId, sinceSeq },
   });
 }
@@ -148,7 +142,7 @@ export async function transferToAgentApi(params: {
   transferReason?: string;
   userName: string;
 }): Promise<SessionQueueItem> {
-  return publicClient.post('/api/v1/chat/transfer', params);
+  return publicClient.post('/chat/transfer', params);
 }
 
 /**
@@ -159,7 +153,7 @@ export async function getSessionStateApi(sessionId: string): Promise<{
   sessionId: string;
   status: 'ACTIVE' | 'AI_CHAT' | 'CLOSED' | 'WAITING';
 }> {
-  return publicClient.get('/api/v1/chat/state', { params: { sessionId } });
+  return publicClient.get('/chat/state', { params: { sessionId } });
 }
 
 // -------------------------------------------------------
@@ -178,7 +172,7 @@ export interface OnlineAgentItem {
 
 /** 获取在线座席列表（用于转交 Modal） */
 export async function getOnlineAgentsApi(): Promise<OnlineAgentItem[]> {
-  return agentClient.get('/api/v1/sessions/agents/online');
+  return agentClient.get('/sessions/agents/online');
 }
 
 /**
@@ -189,7 +183,7 @@ export async function transferSessionApi(
   sessionId: string,
   targetAgentId: string,
 ): Promise<void> {
-  return agentClient.post(`/api/v1/sessions/${sessionId}/transfer`, {
+  return agentClient.post(`/sessions/${sessionId}/transfer`, {
     targetAgentId,
   });
 }
@@ -221,8 +215,8 @@ export function subscribeSessionEvents(
   const accessStore = useAccessStore();
   const token = accessStore.accessToken ?? '';
   const url = token
-    ? `/api/v1/sessions/events?token=${encodeURIComponent(token)}`
-    : '/api/v1/sessions/events';
+    ? `/conversation/api/v1/sessions/events?token=${encodeURIComponent(token)}`
+    : '/conversation/api/v1/sessions/events';
   const es = new EventSource(url);
   es.addEventListener('open', () => onOpen?.());
   es.addEventListener('message', (e) => {
@@ -343,7 +337,7 @@ export async function getVisitorSessionHistoryApi(
   visitorName: string,
   excludeSessionId: string,
 ): Promise<VisitorHistorySession[]> {
-  return agentClient.get('/api/v1/sessions/visitor-history', {
+  return agentClient.get('/sessions/visitor-history', {
     params: { visitorName, excludeSessionId },
   });
 }
@@ -355,7 +349,7 @@ export async function getVisitorSessionHistoryApi(
 export async function getAiSummaryApi(
   sessionId: string,
 ): Promise<{ summary: null | string }> {
-  return agentClient.get(`/api/v1/sessions/${sessionId}/ai-summary`);
+  return agentClient.get(`/sessions/${sessionId}/ai-summary`);
 }
 
 /**
@@ -367,8 +361,8 @@ export function createAiSummaryEventSource(sessionId: string): EventSource {
   const accessStore = useAccessStore();
   const token = accessStore.accessToken ?? '';
   const url = token
-    ? `/api/v1/sessions/${sessionId}/ai-summary/stream?token=${encodeURIComponent(token)}`
-    : `/api/v1/sessions/${sessionId}/ai-summary/stream`;
+    ? `/conversation/api/v1/sessions/${sessionId}/ai-summary/stream?token=${encodeURIComponent(token)}`
+    : `/conversation/api/v1/sessions/${sessionId}/ai-summary/stream`;
   return new EventSource(url);
 }
 
@@ -397,7 +391,7 @@ export async function getReplySuggestionsApi(
   signal?: AbortSignal,
 ): Promise<ReplySuggestion[]> {
   return agentClient.post(
-    `/api/v1/sessions/${sessionId}/reply-suggestions`,
+    `/sessions/${sessionId}/reply-suggestions`,
     undefined,
     { signal },
   );

@@ -7,47 +7,37 @@ export default defineConfig(async () => {
       server: {
         proxy: {
           // ----------------------------------------------------------------
-          // 统一 API 路由规则：前端全部使用 /api/ 开头，无需 rewrite
-          // 生产环境 nginx 按同样规则路由到不同服务
+          // 开发环境代理规则 — 所有请求通过 nginx 容器 (https://127.0.0.1:443)
+          // nginx 容器内再路由到各个后端服务，与生产环境保持一致
           // ----------------------------------------------------------------
 
-          // knowledge-service (8084)：路径本身就是 /api/knowledge/**，无需 rewrite
-          '/api/knowledge': {
+          // 认证服务（经 nginx /auth/ 前缀路由到 auth-service）
+          '/auth/api/v1': {
             changeOrigin: true,
-            target: 'http://localhost:8084',
-          },
-
-          // WebSocket 双向对话（经 nginx 8090 负载均衡到 conversation-service 集群）
-          '/ws': {
-            changeOrigin: true,
-            target: 'http://localhost:8090',
+            target: 'https://127.0.0.1:443',
+            secure: false, // 自签名证书
             ws: true,
           },
 
-          // conversation-service (经 nginx 8090 负载均衡)：对话 + 会话队列 + DIT 管理
-          '/api/v1/chat': {
+          // 对话服务（经 nginx /conversation/ 前缀路由到 conversation-service）
+          '/conversation/api/v1': {
             changeOrigin: true,
-            target: 'http://localhost:8090',
-          },
-          '/api/v1/sessions': {
-            changeOrigin: true,
-            target: 'http://localhost:8090',
-          },
-          '/api/v1/admin/dit': {
-            changeOrigin: true,
-            target: 'http://localhost:8090',
+            target: 'https://127.0.0.1:443',
+            secure: false, // 自签名证书
           },
 
-          // conversation-service (经 nginx 8090)：Dashboard 统计接口
-          '/api/v1/dashboard': {
+          // 知识库服务（经 nginx /knowledge/ 前缀路由到 knowledge-service）
+          '/knowledge/api': {
             changeOrigin: true,
-            target: 'http://localhost:8090',
+            target: 'https://127.0.0.1:443',
+            secure: false, // 自签名证书
           },
 
-          // auth-service (8083)：兜底规则，匹配其他所有 /api/v1/** 请求
-          '/api/v1': {
+          // WebSocket 双向对话（经 nginx /ws/ 前缀路由到 conversation-service）
+          '/ws': {
             changeOrigin: true,
-            target: 'http://localhost:8083',
+            target: 'https://127.0.0.1:443',
+            secure: false, // 自签名证书
             ws: true,
           },
         },

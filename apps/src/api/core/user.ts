@@ -1,6 +1,6 @@
 import type { UserInfo } from '@vben/types';
 
-import { requestClient } from '#/api/request';
+import { authClient } from '#/api/request';
 
 /**
  * 获取当前登录用户信息（Vben UserInfo 格式）。
@@ -13,7 +13,7 @@ import { requestClient } from '#/api/request';
  *   roles 由登录结果补充（UserVO 不含 roles）
  */
 export async function getUserInfoApi(): Promise<UserInfo> {
-  const raw = await requestClient.get<Record<string, any>>('/user/info');
+  const raw = await authClient.get<Record<string, any>>('/user/info');
   return {
     userId: String(raw.id ?? raw.userId ?? ''),
     username: raw.username ?? '',

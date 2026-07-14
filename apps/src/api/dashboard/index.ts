@@ -4,7 +4,7 @@
  * 所有接口走 vite proxy 的 /api/v1/dashboard/** 路径，
  * 由 conversation-service (8082) 提供服务，需 Sa-Token 登录。
  */
-import { rawRequestClient } from '#/api/request';
+import { conversationClient } from '#/api/request';
 
 // ─── 时间范围 ────────────────────────────────────────────────────────────────
 
@@ -145,14 +145,14 @@ export interface AgentWorkloadItem {
 
 /** 获取概览指标 */
 export function getDashboardOverviewApi(): Promise<DashboardOverviewData> {
-  return rawRequestClient.get('/api/v1/dashboard/overview');
+  return conversationClient.get('/dashboard/overview');
 }
 
 /** 获取会话趋势（按天，支持时间范围） */
 export function getConversationTrendsApi(
   range: TimeRange = 'month',
 ): Promise<ConversationTrendItem[]> {
-  return rawRequestClient.get('/api/v1/dashboard/conversation-trends', {
+  return conversationClient.get('/dashboard/conversation-trends', {
     params: toTimeRangeParams(range),
   });
 }
@@ -161,7 +161,7 @@ export function getConversationTrendsApi(
 export function getMessageTrendsApi(
   range: TimeRange = 'month',
 ): Promise<ConversationTrendItem[]> {
-  return rawRequestClient.get('/api/v1/dashboard/message-trends', {
+  return conversationClient.get('/dashboard/message-trends', {
     params: toTimeRangeParams(range),
   });
 }
@@ -170,24 +170,24 @@ export function getMessageTrendsApi(
 export function getEfficiencyTrendsApi(
   range: TimeRange = 'month',
 ): Promise<EfficiencyTrendItem[]> {
-  return rawRequestClient.get('/api/v1/dashboard/efficiency-trends', {
+  return conversationClient.get('/dashboard/efficiency-trends', {
     params: toTimeRangeParams(range),
   });
 }
 
 /** 获取会话状态分布 */
 export function getStatusDistributionApi(): Promise<StatusDistributionItem[]> {
-  return rawRequestClient.get('/api/v1/dashboard/status-distribution');
+  return conversationClient.get('/dashboard/status-distribution');
 }
 
 /** 获取问题标签分布 */
 export function getTagDistributionApi(): Promise<TagDistributionItem[]> {
-  return rawRequestClient.get('/api/v1/dashboard/tag-distribution');
+  return conversationClient.get('/dashboard/tag-distribution');
 }
 
 /** 获取最近会话列表 */
 export function getRecentSessionsApi(limit = 10): Promise<RecentSessionItem[]> {
-  return rawRequestClient.get('/api/v1/dashboard/recent-sessions', {
+  return conversationClient.get('/dashboard/recent-sessions', {
     params: { limit },
   });
 }
@@ -199,10 +199,10 @@ export function getRecentSessionsApi(limit = 10): Promise<RecentSessionItem[]> {
 export function getComplexityDistributionApi(): Promise<
   ComplexityDistributionItem[]
 > {
-  return rawRequestClient.get('/api/v1/dashboard/complexity-distribution');
+  return conversationClient.get('/dashboard/complexity-distribution');
 }
 
 /** 获取座席工作量统计 */
 export function getAgentWorkloadApi(): Promise<AgentWorkloadItem[]> {
-  return rawRequestClient.get('/api/v1/dashboard/agent-workload');
+  return conversationClient.get('/dashboard/agent-workload');
 }

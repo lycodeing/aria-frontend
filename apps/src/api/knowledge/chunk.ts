@@ -1,6 +1,6 @@
-import { rawRequestClient } from '#/api/request';
+import { knowledgeClient } from '#/api/request';
 
-const requestClient = rawRequestClient;
+const requestClient = knowledgeClient;
 
 /** 禁用 Chunk（retrieval_weight=0） */
 export async function disableChunkApi(chunkId: string): Promise<void> {

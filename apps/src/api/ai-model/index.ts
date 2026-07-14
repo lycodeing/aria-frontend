@@ -1,5 +1,5 @@
 // src/api/ai-model/index.ts
-import { requestClient } from '#/api/request';
+import { authClient } from '#/api/request';
 
 export interface AiModelConfigItem {
   id: number;
@@ -78,20 +78,20 @@ export const PROVIDER_PROTOCOL_MAP: Record<string, string> = {
  * @param modelType 可选，'CHAT' / 'EMBEDDING' / 'ROUTER'，不传则返回全部
  */
 export async function listAiModelsApi(page = 0, size = 20, modelType?: string) {
-  return requestClient.get<AiModelPageResult>('/admin/ai-models', {
+  return authClient.get<AiModelPageResult>('/admin/ai-models', {
     params: { page, size, ...(modelType ? { modelType } : {}) },
   });
 }
 
 export async function createAiModelApi(data: Partial<AiModelConfigItem>) {
-  return requestClient.post<AiModelConfigItem>('/admin/ai-models', data);
+  return authClient.post<AiModelConfigItem>('/admin/ai-models', data);
 }
 
 export async function updateAiModelApi(
   id: number,
   data: Partial<AiModelConfigItem>,
 ) {
-  return requestClient.put<undefined>(`/admin/ai-models/${id}`, data);
+  return authClient.put<undefined>(`/admin/ai-models/${id}`, data);
 }
 
 /**
@@ -99,17 +99,17 @@ export async function updateAiModelApi(
  * 使用独立的 PATCH 端点，避免触发 PUT 接口的完整字段校验。
  */
 export async function toggleAiModelEnabledApi(id: number, enabled: boolean) {
-  return requestClient.patch<undefined>(`/admin/ai-models/${id}/enabled`, {
+  return authClient.patch<undefined>(`/admin/ai-models/${id}/enabled`, {
     enabled,
   });
 }
 
 export async function setDefaultAiModelApi(id: number) {
-  return requestClient.put<undefined>(`/admin/ai-models/${id}/default`);
+  return authClient.put<undefined>(`/admin/ai-models/${id}/default`);
 }
 
 export async function deleteAiModelApi(id: number) {
-  return requestClient.delete<undefined>(`/admin/ai-models/${id}`);
+  return authClient.delete<undefined>(`/admin/ai-models/${id}`);
 }
 
 export interface AiModelTestResult {
@@ -124,5 +124,5 @@ export interface AiModelTestResult {
  * EMBEDDING：向 /v1/embeddings 发送一条测试文本，验证向量服务可访问
  */
 export async function testAiModelApi(id: number) {
-  return requestClient.post<AiModelTestResult>(`/admin/ai-models/${id}/test`);
+  return authClient.post<AiModelTestResult>(`/admin/ai-models/${id}/test`);
 }

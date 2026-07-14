@@ -61,7 +61,7 @@ export const getDocPreviewUrl = (docId: string) =>
 - [ ] **Step 2: 提交**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/api/knowledge/index.ts
 git commit -m "feat(知识库): 补充 KB 统计/Chunk 详情/预览 API"
 ```

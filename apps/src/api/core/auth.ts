@@ -1,4 +1,4 @@
-import { baseRequestClient, requestClient } from '#/api/request';
+import { authBaseClient, authClient } from '#/api/request';
 
 export namespace AuthApi {
   /** 登录接口参数 */
@@ -24,7 +24,7 @@ export namespace AuthApi {
  * 后端返回 tokenValue 字段，转换为前端期望的 accessToken。
  */
 export async function loginApi(data: AuthApi.LoginParams) {
-  const result = await requestClient.post<{
+  const result = await authClient.post<{
     [key: string]: any;
     tokenValue: string;
   }>('/auth/login', data);
@@ -37,7 +37,7 @@ export async function loginApi(data: AuthApi.LoginParams) {
  * 刷新 accessToken。
  */
 export async function refreshTokenApi() {
-  return baseRequestClient.post<AuthApi.RefreshTokenResult>('/auth/refresh', {
+  return authBaseClient.post<AuthApi.RefreshTokenResult>('/auth/refresh', {
     withCredentials: true,
   });
 }
@@ -46,7 +46,7 @@ export async function refreshTokenApi() {
  * 退出登录。
  */
 export async function logoutApi() {
-  return baseRequestClient.post('/auth/logout', {
+  return authBaseClient.post('/auth/logout', {
     withCredentials: true,
   });
 }
@@ -56,5 +56,5 @@ export async function logoutApi() {
  * 对应后端 GET /api/v1/auth/codes
  */
 export async function getAccessCodesApi() {
-  return requestClient.get<string[]>('/auth/codes');
+  return authClient.get<string[]>('/auth/codes');
 }
