@@ -107,7 +107,7 @@ else if (eventType === 'tool_call') {
 - [ ] **Step 4: 提交脚本逻辑**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/views/chat-widget/index.vue
 git commit -m "feat(chat-widget): 扩展 SSE 解析支持 tool_call/tool_done/slot_ask/candidates + domainCode"
 ```

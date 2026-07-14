@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - 后端项目路径：`/Users/lycodeing/IdeaProjects/ai-customerservice-backend/ai-conversation/conversation-service/src/main/java/com/aria/conversation`
-- 前端项目路径：`/Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps/src`
+- 前端项目路径：`/Users/lycodeing/WebstormProjects/aria-frontend/apps/src`
 - `ConversationTrendItemVO.month` 字段名保持不变（值从 `YYYY-MM` 扩展为 `YYYY-MM-DD`），不破坏前端现有类型
 - `rangeType` 默认值为 `month`，无参调用行为不变
 - 所有趋势数据按**天**聚合（不再按月），X 轴返回 `YYYY-MM-DD`
@@ -541,7 +541,7 @@ export function getAgentWorkloadApi(): Promise<AgentWorkloadItem[]> {
 - [ ] **Step 2: TypeScript 类型检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd typecheck 2>&1 | tail -20
 ```
 
@@ -550,7 +550,7 @@ pnpm --filter @vben/web-antd typecheck 2>&1 | tail -20
 - [ ] **Step 3: 提交**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/api/dashboard/index.ts
 git commit -m "feat(dashboard): API 层加 TimeRange 类型、toTimeRangeParams、EfficiencyTrendItem 及新接口函数"
 ```
@@ -600,7 +600,7 @@ const options = [
 - [ ] **Step 2: TypeScript 类型检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd typecheck 2>&1 | grep -E "error|dashboard-time-range" | head -20
 ```
 
@@ -609,7 +609,7 @@ pnpm --filter @vben/web-antd typecheck 2>&1 | grep -E "error|dashboard-time-rang
 - [ ] **Step 3: 提交**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/views/dashboard/analytics/dashboard-time-range-selector.vue
 git commit -m "feat(dashboard): 新增 DashboardTimeRangeSelector 时间范围选择器组件"
 ```
@@ -668,7 +668,7 @@ defineProps<{
 - [ ] **Step 3: TypeScript 类型检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd typecheck 2>&1 | grep -E "error|efficiency-stat" | head -20
 ```
 
@@ -677,7 +677,7 @@ pnpm --filter @vben/web-antd typecheck 2>&1 | grep -E "error|efficiency-stat" | 
 - [ ] **Step 4: 提交**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/views/dashboard/analytics/format-seconds.ts
 git add apps/src/views/dashboard/analytics/efficiency-stat-card.vue
 git commit -m "feat(dashboard): 新增 EfficiencyStatCard 组件和 formatSeconds 工具函数"
@@ -822,7 +822,7 @@ watch(
 - [ ] **Step 2: TypeScript 类型检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd typecheck 2>&1 | grep -E "error|efficiency-trends" | head -20
 ```
 
@@ -831,7 +831,7 @@ pnpm --filter @vben/web-antd typecheck 2>&1 | grep -E "error|efficiency-trends" 
 - [ ] **Step 3: 提交**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/views/dashboard/analytics/analytics-efficiency-trends.vue
 git commit -m "feat(dashboard): 新增 AnalyticsEfficiencyTrends 效率趋势折线图组件"
 ```
@@ -1102,7 +1102,7 @@ onMounted(async () => {
 - [ ] **Step 2: TypeScript 类型检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd typecheck 2>&1 | tail -30
 ```
 
@@ -1111,7 +1111,7 @@ pnpm --filter @vben/web-antd typecheck 2>&1 | tail -30
 - [ ] **Step 3: 提交**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/views/dashboard/analytics/index.vue
 git commit -m "feat(dashboard): analytics 页集成时间范围选择器、效率卡片和效率趋势 Tab"
 ```

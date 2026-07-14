@@ -1,8 +1,7 @@
-import { rawRequestClient } from '#/api/request';
+import { knowledgeClient } from '#/api/request';
 
-// requestClient baseURL 为空，路径直接命中 /api/knowledge/** proxy 规则 → knowledge-service:8081
-// 避免与 /api (auth) 代理冲突
-const requestClient = rawRequestClient;
+// knowledgeClient baseURL=/knowledge，经过 nginx /knowledge 前缀路由到 knowledge-service:8081
+const requestClient = knowledgeClient;
 
 // -------------------------------------------------------
 // 类型定义
@@ -205,11 +204,11 @@ export async function translateApi(text: string): Promise<string> {
 
 /** 获取文档预览 URL（直接返回 URL 字符串，用于 iframe src） */
 export function getDocPreviewUrl(docId: string): string {
-  return `/api/knowledge/docs/${docId}/preview`;
+  return `/knowledge/api/knowledge/docs/${docId}/preview`;
 }
 
 /** 获取文档原始文本内容（用于 Markdown 前端渲染） */
 export async function getDocRawContentApi(docId: string): Promise<string> {
-  const res = await fetch(`/api/knowledge/docs/${docId}/preview`);
+  const res = await fetch(`/knowledge/api/knowledge/docs/${docId}/preview`);
   return res.text();
 }

@@ -126,7 +126,7 @@ export const deleteBindingApi = (id: number) => requestClient.delete(`/admin/dit
 - [ ] **Step 2: 提交**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/api/dit/index.ts
 git commit -m "feat(DIT管理): 新增 DIT API 层（领域/意图/槽位/工具/绑定）"
 ```
@@ -547,7 +547,7 @@ async function deleteBinding(b: BindingDTO) {
 - [ ] **Step 2: 提交**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/views/customerservice/dit/domains/index.vue
 git commit -m "feat(DIT管理): 新增领域与意图配置页（左树+右详情+Tab）"
 ```
@@ -766,7 +766,7 @@ git commit -m "feat(DIT管理): 新增工具注册中心页"
 - [ ] **Step 2: 验证前端构建无报错**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm typecheck 2>&1 | head -20
 ```
 

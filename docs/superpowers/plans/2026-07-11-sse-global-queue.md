@@ -253,7 +253,7 @@ export function useSessionQueueChannel(): SessionQueueChannel {
 - [ ] **Step 6: 暂不提交（等 Task 2 一起），用 tsc 做类型检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd exec tsc --noEmit 2>&1 | head -40
 ```
 
@@ -347,7 +347,7 @@ export function toQueueItem(item: ApiSessionItem): QueueItem {
 - [ ] **Step 3: 检查有没有其他文件导入了 `useSessionQueue`（组合式函数本体）**
 
 ```bash
-grep -r "useSessionQueue" /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps/src --include="*.ts" --include="*.vue" -l
+grep -r "useSessionQueue" /Users/lycodeing/WebstormProjects/aria-frontend/apps/src --include="*.ts" --include="*.vue" -l
 ```
 
 Expected: 只有 `agent/index.vue` 和 `useSessionQueue.ts` 自身。Task 5 会更新 `agent/index.vue`。
@@ -355,7 +355,7 @@ Expected: 只有 `agent/index.vue` 和 `useSessionQueue.ts` 自身。Task 5 会�
 - [ ] **Step 4: 确认 `acceptSessionApi` 在 agent 页面还能直接 import**
 
 ```bash
-grep "acceptSessionApi" /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps/src/views/customerservice/agent/index.vue
+grep "acceptSessionApi" /Users/lycodeing/WebstormProjects/aria-frontend/apps/src/views/customerservice/agent/index.vue
 ```
 
 Expected: 找到现有 import，说明 `agent/index.vue` 已直接导入此 API，`acceptItem` 逻辑可内联在页面。
@@ -363,7 +363,7 @@ Expected: 找到现有 import，说明 `agent/index.vue` 已直接导入此 API�
 - [ ] **Step 5: 提交 Task 1 + Task 2**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/composables/useSessionQueueChannel.ts apps/src/composables/useSessionQueue.ts
 git commit -m "refactor(session-queue): 提取 SSE 单例 useSessionQueueChannel，精简 useSessionQueue 为工具函数"
 ```
@@ -651,7 +651,7 @@ describe('useSessionQueueChannel', () => {
 - [ ] **Step 5: 运行测试，确认全部通过**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd vitest run apps/src/composables/__tests__/useSessionQueueChannel.test.ts
 ```
 
@@ -711,7 +711,7 @@ watch(
 - [ ] **Step 3: 运行 tsc 类型检查，确认无新增错误**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd exec tsc --noEmit 2>&1 | head -40
 ```
 
@@ -916,7 +916,7 @@ onUnmounted(() => {
 - [ ] **Step 6: 运行 tsc 类型检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd exec tsc --noEmit 2>&1 | head -60
 ```
 

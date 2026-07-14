@@ -106,30 +106,63 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   return client;
 }
 
+// =========================================================================
+// 旧版 client（兼容保留，逐步迁移到下面的模块专用 client）
+// =========================================================================
 export const requestClient = createRequestClient(apiURL, {
   responseReturn: 'data',
 });
 
 export const baseRequestClient = new RequestClient({ baseURL: apiURL });
 
-// rawRequestClient：baseURL 为空，路径直接命中 vite proxy 规则，
-// baseURL 为空，路径不会被 /api 代理拦截
+/**
+ * rawRequestClient：baseURL 为空，路径直接命中 vite proxy 规则。
+ * @deprecated 请使用模块专用 client（authClient / conversationClient / knowledgeClient）。
+ */
 export const rawRequestClient = createRequestClient('', {
   responseReturn: 'data',
 });
 
 /**
  * I-03：访客公开接口专用 client（无 token 注入）。
- *
- * rawRequestClient 的 token 拦截器执行：
- *   config.headers.Authorization = formatToken(accessStore.accessToken)
- * 其中 formatToken(null) = null，axios 不发送 null header，
- * 因此访客未登录时天然不携带凭证。
- *
- * 但当同一浏览器上下文存在已登录的座席 session 时，accessStore.accessToken 非 null，
- * 访客请求会意外携带座席 token，存在权限叠加风险。
- * publicRequestClient 跳过 token 注入，彻底隔离两种身份。
+ * @deprecated 请使用 publicConversationClient。
  */
 export const publicRequestClient = createRequestClient('', {
+  responseReturn: 'data',
+});
+
+// =========================================================================
+// 模块专用 client — 适配 nginx 模块前缀路由
+// 规则：浏览器发 /auth/api/v1/xxx → nginx 去 /auth → auth-service
+//      浏览器发 /conversation/api/v1/xxx → nginx 去 /conversation → conversation-service
+//      浏览器发 /knowledge/api/xxx → nginx 去 /knowledge → knowledge-service
+// =========================================================================
+
+/** 认证服务 (auth-service:8083) — 登录/刷新/用户/菜单/AI模型/系统配置 */
+export const authClient = createRequestClient('/auth/api/v1', {
+  responseReturn: 'data',
+});
+
+/** 认证服务 — 无 token 刷新拦截器的 base client（用于 refreshToken/logout） */
+export const authBaseClient = new RequestClient({ baseURL: '/auth/api/v1' });
+
+/** 对话服务 (conversation-service:8082) — 会话/队列/Dashboard/DIT */
+export const conversationClient = createRequestClient('/conversation/api/v1', {
+  responseReturn: 'data',
+});
+
+/**
+ * 访客公开接口 (conversation-service) — 无 token 注入。
+ * 与 authClient 隔离，防止已登录座席的 token 泄露到访客请求。
+ */
+export const publicConversationClient = createRequestClient(
+  '/conversation/api/v1',
+  {
+    responseReturn: 'data',
+  },
+);
+
+/** 知识库服务 (knowledge-service:8081) — 文档/Chunk/翻译 */
+export const knowledgeClient = createRequestClient('/knowledge', {
   responseReturn: 'data',
 });

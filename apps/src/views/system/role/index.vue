@@ -18,7 +18,7 @@ import {
   Tree,
 } from 'ant-design-vue';
 
-import { requestClient } from '#/api/request';
+import { authClient } from '#/api/request';
 
 // ===== 角色列表 =====
 interface RoleVO {
@@ -36,7 +36,7 @@ const keyword = ref('');
 async function loadRoles() {
   loading.value = true;
   try {
-    const res: any = await requestClient.get('/roles', {
+    const res: any = await authClient.get('/roles', {
       params: { keyword: keyword.value || undefined, size: 50 },
     });
     roles.value = res.items ?? [];
@@ -89,7 +89,7 @@ const createForm = ref({ roleKey: '', roleName: '' });
 async function submitCreate() {
   try {
     await createRef.value?.validate();
-    await requestClient
+    await authClient
       .post('/roles', { ...createForm.value, isSystem: false })
       .catch(() => null);
     message.success(`角色 ${createForm.value.roleName} 创建成功`);
@@ -116,7 +116,7 @@ async function submitEdit() {
   try {
     await editRef.value?.validate();
     if (!editingRole.value) return;
-    await requestClient.put(`/roles/${editingRole.value.id}`, editForm.value);
+    await authClient.put(`/roles/${editingRole.value.id}`, editForm.value);
     message.success(`角色 ${editForm.value.roleName} 已更新`);
     editVisible.value = false;
     loadRoles();
@@ -127,7 +127,7 @@ async function submitEdit() {
 
 async function toggleRoleStatus(role: RoleVO) {
   const newStatus = role.status === 'active' ? 'inactive' : 'active';
-  await requestClient
+  await authClient
     .put(`/roles/${role.id}`, { roleName: role.roleName, status: newStatus })
     .catch(() => null);
   role.status = newStatus;
@@ -149,8 +149,8 @@ async function openMenuDrawer(role: RoleVO) {
   menuLoading.value = true;
   try {
     const [allMenus, roleMenuIds]: any = await Promise.all([
-      requestClient.get('/menus'),
-      requestClient.get(`/roles/${role.id}/menus`),
+      authClient.get('/menus'),
+      authClient.get(`/roles/${role.id}/menus`),
     ]);
     menuTree.value = mapApiTree(allMenus ?? []);
     if (menuTree.value.length === 0) {
@@ -168,7 +168,7 @@ async function openMenuDrawer(role: RoleVO) {
 
 async function saveMenus() {
   if (!currentRole.value) return;
-  await requestClient
+  await authClient
     .put(`/roles/${currentRole.value.id}/menus`, {
       menuIds: checkedMenuIds.value,
     })
@@ -187,7 +187,7 @@ function deleteRole(role: RoleVO) {
     title: `确认删除角色 ${role.roleName}？`,
     okType: 'danger',
     onOk: async () => {
-      await requestClient.delete(`/roles/${role.id}`).catch(() => null);
+      await authClient.delete(`/roles/${role.id}`).catch(() => null);
       message.success('角色已删除');
       loadRoles();
     },

@@ -132,7 +132,7 @@ export async function getSystemConfigMapApi(
 - [ ] **Step 2: Verify TypeScript compiles clean**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd exec tsc --noEmit 2>&1 | head -20
 ```
 Expected: 0 new errors.
@@ -239,7 +239,7 @@ describe('useSystemConfigStore', () => {
 - [ ] **Step 2: Run test to confirm it fails**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps
+cd /Users/lycodeing/WebstormProjects/aria-frontend/apps
 npx vitest run src/store/__tests__/system-config.test.ts 2>&1 | tail -10
 ```
 Expected: FAIL — `useSystemConfigStore` not found.
@@ -288,7 +288,7 @@ export const useSystemConfigStore = defineStore('systemConfig', () => {
 - [ ] **Step 4: Run test to confirm it passes**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps
+cd /Users/lycodeing/WebstormProjects/aria-frontend/apps
 npx vitest run src/store/__tests__/system-config.test.ts 2>&1 | tail -10
 ```
 Expected: 5/5 PASS.
@@ -318,7 +318,7 @@ Note: use dynamic import to avoid circular dependency (auth store → system-con
 - [ ] **Step 7: Run tsc and tests**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd exec tsc --noEmit 2>&1 | head -20
 cd apps && npx vitest run src/store/__tests__/system-config.test.ts 2>&1 | tail -5
 ```
@@ -636,7 +636,7 @@ onMounted(loadList);
 - [ ] **Step 2: Run tsc to verify types**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd exec tsc --noEmit 2>&1 | head -30
 ```
 Expected: 0 new errors.
@@ -744,8 +744,8 @@ Open `apps/src/router/routes/modules/customerservice.ts`. Add a new child to the
 Check if the project has a custom `RouteMeta` augmentation. Search:
 
 ```bash
-grep -r "configType" /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps/src/router/ 2>/dev/null
-grep -r "RouteMeta" /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps/src/router/ 2>/dev/null | head -5
+grep -r "configType" /Users/lycodeing/WebstormProjects/aria-frontend/apps/src/router/ 2>/dev/null
+grep -r "RouteMeta" /Users/lycodeing/WebstormProjects/aria-frontend/apps/src/router/ 2>/dev/null | head -5
 ```
 
 If `RouteMeta` is extended somewhere (e.g., in a `types/router.d.ts`), add `configType?: string` to it. If there is no augmentation and tsc reports an error about unknown property `configType`, add:
@@ -763,7 +763,7 @@ declare module 'vue-router' {
 - [ ] **Step 4: Run tsc**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd exec tsc --noEmit 2>&1 | head -20
 ```
 Expected: 0 new errors.
@@ -771,7 +771,7 @@ Expected: 0 new errors.
 - [ ] **Step 5: Run all unit tests**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps
+cd /Users/lycodeing/WebstormProjects/aria-frontend/apps
 npx vitest run src/store/__tests__/system-config.test.ts 2>&1 | tail -8
 ```
 Expected: 5/5 PASS.

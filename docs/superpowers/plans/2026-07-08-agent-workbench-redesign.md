@@ -178,7 +178,7 @@ export interface ClosedView {
 
 - [ ] 运行 TypeScript 类型检查
   ```bash
-  cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+  cd /Users/lycodeing/WebstormProjects/aria-frontend
   pnpm --filter @vben/web-antd typecheck 2>&1 | tail -30
   ```
 - [ ] 若有类型错误逐一修复

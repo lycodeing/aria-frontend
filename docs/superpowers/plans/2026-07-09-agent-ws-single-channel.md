@@ -59,7 +59,7 @@ export function connectAgentWs(
 - [ ] **Step 3: 运行 typecheck 确认无错误**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 pnpm --filter @vben/web-antd typecheck
 ```
 

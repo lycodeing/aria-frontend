@@ -6,12 +6,12 @@
 
 **Architecture:** Channel 持有模块级单例 `sessions: Ref<QueueItem[]>`，SSE 事件在 flat list 上原地更新 status（ENQUEUE 插入/更新，ACCEPTED 改为 ACTIVE，CLOSED 改为 CLOSED，TRANSFER 删除）。四个只读 computed 切片（aiQueue / waitingQueue / activeQueue / closedQueue）由 Channel 暴露，index.vue 和 AgentLeftPanel 直接绑定切片，不再各自维护独立数组。
 
-**Tech Stack:** Vue 3, TypeScript, Vitest, Ant Design Vue, Vite（项目根为 `/Users/lycodeing/WebstormProjects/ai-customerservice-frontend`）
+**Tech Stack:** Vue 3, TypeScript, Vitest, Ant Design Vue, Vite（项目根为 `/Users/lycodeing/WebstormProjects/aria-frontend`）
 
 ## Global Constraints
 
-- 测试运行命令：`cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend && pnpm vitest run apps/src/composables/__tests__/useSessionQueueChannel.test.ts`
-- TypeScript 检查命令：`cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps && pnpm typecheck`
+- 测试运行命令：`cd /Users/lycodeing/WebstormProjects/aria-frontend && pnpm vitest run apps/src/composables/__tests__/useSessionQueueChannel.test.ts`
+- TypeScript 检查命令：`cd /Users/lycodeing/WebstormProjects/aria-frontend/apps && pnpm typecheck`
 - 所有旧接口函数直接删除，不保留 `@deprecated`
 - status 枚举值：`'ACTIVE' | 'AI_CHAT' | 'CLOSED' | 'WAITING'`（全大写字符串）
 - git commit scope 格式：`feat(@vben/web-antd): ...`
@@ -151,7 +151,7 @@ export function toQueueItem(item: ApiSessionItem): QueueItem {
 - [ ] **Step 5: TypeScript 检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps && pnpm typecheck 2>&1 | grep -E "error TS|useSessionQueue|session/index" | head -20
+cd /Users/lycodeing/WebstormProjects/aria-frontend/apps && pnpm typecheck 2>&1 | grep -E "error TS|useSessionQueue|session/index" | head -20
 ```
 
 预期：无与这两个文件相关的 TS 错误。
@@ -159,7 +159,7 @@ cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps && pnpm ty
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/api/session/index.ts apps/src/composables/useSessionQueue.ts
 git commit -m "feat(@vben/web-antd): 统一会话队列接口，QueueItem 增加 status 字段"
 ```
@@ -442,7 +442,7 @@ it('loadSessions() 从 getAllSessionsApi 填充 sessions', async () => {
 - [ ] **Step 6: 运行测试，确认红灯（Channel 尚未实现新 API）**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend && pnpm vitest run apps/src/composables/__tests__/useSessionQueueChannel.test.ts 2>&1 | tail -30
+cd /Users/lycodeing/WebstormProjects/aria-frontend && pnpm vitest run apps/src/composables/__tests__/useSessionQueueChannel.test.ts 2>&1 | tail -30
 ```
 
 预期：多个用例 FAIL，原因是 `channel.sessions`、`channel.aiQueue` 等属性不存在。
@@ -712,7 +712,7 @@ export function useSessionQueueChannel(): SessionQueueChannel {
 - [ ] **Step 2: 运行测试，确认全部绿灯**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend && pnpm vitest run apps/src/composables/__tests__/useSessionQueueChannel.test.ts 2>&1 | tail -20
+cd /Users/lycodeing/WebstormProjects/aria-frontend && pnpm vitest run apps/src/composables/__tests__/useSessionQueueChannel.test.ts 2>&1 | tail -20
 ```
 
 预期：所有用例 PASS，无 FAIL。
@@ -720,7 +720,7 @@ cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend && pnpm vitest 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/composables/useSessionQueueChannel.ts apps/src/composables/__tests__/useSessionQueueChannel.test.ts
 git commit -m "feat(@vben/web-antd): 重构 useSessionQueueChannel 为 flat sessions list + 四切片"
 ```
@@ -983,7 +983,7 @@ onMounted(async () => {
 - [ ] **Step 11: TypeScript 检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps && pnpm typecheck 2>&1 | grep -E "error TS|index\.vue" | head -20
+cd /Users/lycodeing/WebstormProjects/aria-frontend/apps && pnpm typecheck 2>&1 | grep -E "error TS|index\.vue" | head -20
 ```
 
 预期：无 index.vue 相关的 TS 错误。
@@ -1271,7 +1271,7 @@ const props = defineProps<{
 - [ ] **Step 8: TypeScript 检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps && pnpm typecheck 2>&1 | grep -E "error TS|AgentLeftPanel" | head -20
+cd /Users/lycodeing/WebstormProjects/aria-frontend/apps && pnpm typecheck 2>&1 | grep -E "error TS|AgentLeftPanel" | head -20
 ```
 
 预期：无 AgentLeftPanel.vue 相关的 TS 错误。
@@ -1279,7 +1279,7 @@ cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps && pnpm ty
 - [ ] **Step 9: Commit**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/views/customerservice/agent/AgentLeftPanel.vue apps/src/views/customerservice/agent/index.vue
 git commit -m "feat(@vben/web-antd): AgentLeftPanel props 拆分，四 Tab 绑定独立 queue 切片"
 ```
@@ -1313,7 +1313,7 @@ await queueChannel.loadSessions();
 - [ ] **Step 2: TypeScript 全量检查**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps && pnpm typecheck 2>&1 | grep "error TS" | head -30
+cd /Users/lycodeing/WebstormProjects/aria-frontend/apps && pnpm typecheck 2>&1 | grep "error TS" | head -30
 ```
 
 预期：零 TS 错误。如有残留错误，根据文件路径定位并修复（常见原因：某处仍引用了已删除的 `queue` prop 或旧函数名）。
@@ -1321,7 +1321,7 @@ cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend/apps && pnpm ty
 - [ ] **Step 3: 运行所有单元测试**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend && pnpm vitest run 2>&1 | tail -20
+cd /Users/lycodeing/WebstormProjects/aria-frontend && pnpm vitest run 2>&1 | tail -20
 ```
 
 预期：全部 PASS，无 FAIL。
@@ -1329,7 +1329,7 @@ cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend && pnpm vitest 
 - [ ] **Step 4: 检查是否还有残留的旧 API 引用**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend && grep -r "getSessionQueueApi\|getActiveSessionsApi\|getClosedSessionsApi\|loadQueue\b\|\.queue\b\|pagedQueue\|visiblePagedQueue\b\|closedLoading" apps/src --include="*.ts" --include="*.vue" 2>/dev/null
+cd /Users/lycodeing/WebstormProjects/aria-frontend && grep -r "getSessionQueueApi\|getActiveSessionsApi\|getClosedSessionsApi\|loadQueue\b\|\.queue\b\|pagedQueue\|visiblePagedQueue\b\|closedLoading" apps/src --include="*.ts" --include="*.vue" 2>/dev/null
 ```
 
 预期：零输出。如有输出，逐一修复对应文件中的残留引用。
@@ -1337,7 +1337,7 @@ cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend && grep -r "get
 - [ ] **Step 5: 最终 commit**
 
 ```bash
-cd /Users/lycodeing/WebstormProjects/ai-customerservice-frontend
+cd /Users/lycodeing/WebstormProjects/aria-frontend
 git add apps/src/layouts/basic.vue
 git commit -m "feat(@vben/web-antd): basic.vue 改用 loadSessions，完成会话队列统一接口改造"
 ```
