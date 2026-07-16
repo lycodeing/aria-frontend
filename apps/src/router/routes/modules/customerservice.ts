@@ -61,6 +61,17 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        name: 'CustomerServiceCannedResponse',
+        path: '/customerservice/canned-response',
+        component: () =>
+          import('#/views/customerservice/canned-response/index.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_manager'],
+          icon: 'lucide:message-square-text',
+          title: '快捷回复',
+        },
+      },
+      {
         name: 'CustomerServiceDIT',
         path: '/customerservice/dit',
         meta: {

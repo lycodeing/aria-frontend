@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import type { ClosedView, Msg, SessionData } from './types';
 
+import type { CannedResponseSearchVO } from '#/api/canned-response/types';
+
 import { computed, nextTick, ref, watch } from 'vue';
+
+import { useUserStore } from '@vben/stores';
 
 import { Icon } from '@iconify/vue';
 import { Button, Spin } from 'ant-design-vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
+
+import { replaceCannedVars } from '#/utils/canned-response';
+
+import CannedResponsePicker from './components/CannedResponsePicker.vue';
 
 const props = defineProps<{
   activeSession: SessionData | undefined;
@@ -39,6 +47,8 @@ const emit = defineEmits<{
   'update:msgFilter': [val: string];
   'update:msgInput': [val: string];
 }>();
+
+const userStore = useUserStore();
 
 const MSG_FILTER_OPTIONS = [
   { key: '全部', label: '全部' },
@@ -96,6 +106,98 @@ function handleEnter(e: KeyboardEvent) {
     e.preventDefault();
     emit('send');
   }
+}
+
+// ===== 快捷回复（/ 触发） =====
+const textareaRef = ref<HTMLTextAreaElement | null>(null);
+const pickerRef = ref<InstanceType<typeof CannedResponsePicker> | null>(null);
+
+/** slash 命令激活状态：slashStart/slashEnd 指向 "/query" 片段在 msgInput 中的区间 */
+const slashOpen = ref(false);
+const slashQuery = ref('');
+const slashStart = ref(0);
+const slashEnd = ref(0);
+
+/** 当前坐席名，用于变量替换 {{agent_name}} */
+const agentName = computed(
+  () => userStore.userInfo?.realName || userStore.userInfo?.username || '',
+);
+
+function onInput(e: Event) {
+  const el = e.target as HTMLTextAreaElement;
+  emit('update:msgInput', el.value);
+  detectSlash(el);
+}
+
+/**
+ * 检测光标前是否处于 "/query" 片段内：
+ * 以 / 开头（或前一个字符为空白），且 / 与光标之间不含空格。
+ */
+function detectSlash(el: HTMLTextAreaElement) {
+  const pos = el.selectionStart ?? el.value.length;
+  const head = el.value.slice(0, pos);
+  const match = head.match(/(^|\s)\/(\S*)$/);
+  if (match) {
+    const kw = match[2] ?? '';
+    slashStart.value = pos - kw.length - 1; // '/' 的索引
+    slashEnd.value = pos; // 光标位置
+    slashQuery.value = kw;
+    slashOpen.value = true;
+  } else {
+    slashOpen.value = false;
+  }
+}
+
+/** 键盘路由：浮层展开时拦截 ↑/↓/Enter/Esc，避免误发消息 */
+function onKeydown(e: KeyboardEvent) {
+  if (slashOpen.value && pickerRef.value) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      pickerRef.value.move(1);
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      pickerRef.value.move(-1);
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      pickerRef.value.confirm();
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSlash();
+      return;
+    }
+  }
+  if (e.key === 'Enter') handleEnter(e);
+}
+
+function closeSlash() {
+  slashOpen.value = false;
+  slashQuery.value = '';
+}
+
+/** 选中快捷回复：变量替换后回填草稿，并将光标置于插入内容之后 */
+function onCannedSelect(item: CannedResponseSearchVO) {
+  const before = props.msgInput.slice(0, slashStart.value);
+  const after = props.msgInput.slice(slashEnd.value);
+  const replaced = replaceCannedVars(item.content, {
+    visitorName: props.activeSession?.name,
+    agentName: agentName.value,
+  });
+  emit('update:msgInput', `${before}${replaced}${after}`);
+  const caret = before.length + replaced.length;
+  nextTick(() => {
+    const el = textareaRef.value;
+    if (el) {
+      el.focus();
+      el.setSelectionRange(caret, caret);
+    }
+    closeSlash();
+  });
 }
 
 // closedView 独立的工具展开状态（与活跃会话 toolExpanded 完全隔离）
@@ -537,18 +639,25 @@ watch(
 
     <!-- Input area -->
     <footer
-      class="flex shrink-0 items-center gap-3 border-t border-[#e4e7ed] bg-white px-5 py-3"
+      class="relative flex shrink-0 items-end gap-3 border-t border-[#e4e7ed] bg-white px-5 py-3"
     >
+      <CannedResponsePicker
+        v-if="activeSession"
+        ref="pickerRef"
+        :open="slashOpen"
+        :query="slashQuery"
+        @select="onCannedSelect"
+        @close="closeSlash"
+      />
       <textarea
+        ref="textareaRef"
         :value="msgInput"
         rows="2"
-        placeholder="输入回复内容…（Enter 发送，Shift+Enter 换行）"
+        placeholder="输入回复内容…（Enter 发送，Shift+Enter 换行，/ 触发快捷回复）"
         class="min-h-[44px] flex-1 resize-none rounded-lg bg-[#f7f8fc] px-3.5 py-2.5 text-[14px] text-[#0a0a0b] outline-none placeholder:text-[#9ca3af] focus:ring-1 focus:ring-[#1a73e8]"
         style="scrollbar-width: thin"
-        @input="
-          emit('update:msgInput', ($event.target as HTMLTextAreaElement).value)
-        "
-        @keydown.enter="handleEnter"
+        @input="onInput"
+        @keydown="onKeydown"
       ></textarea>
       <button
         class="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[#1a73e8] text-white hover:opacity-90"
