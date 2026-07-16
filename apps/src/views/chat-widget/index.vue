@@ -2,6 +2,7 @@
 // ===== 主题隔离：强制 light 模式，不受后台暗色主题影响 =====
 // Vben Admin 通过给 <html> 加 dark class 切换主题，chat 页独立渲染需主动隔离
 
+import type { CsatRequestPayload } from '#/api/csat/types';
 import type { Msg } from '#/composables/useVisitorSession';
 
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
@@ -27,6 +28,8 @@ import { useSSEStream } from '#/composables/useSSEStream';
 import { useTransfer } from '#/composables/useTransfer';
 import { useVisitorSession } from '#/composables/useVisitorSession';
 import { useVisitorWs } from '#/composables/useVisitorWs';
+
+import CsatRatingCard from './components/CsatRatingCard.vue';
 
 // 配置 marked：开启 breaks（单个 \n 转 <br>），gfm 支持表格/删除线
 // 放在所有 import 之后避免 import(first) lint 报错
@@ -55,6 +58,9 @@ const inputText = ref('');
 let pendingMsg = '';
 /** 座席主动结束会话后为 true，此时底部显示「开始新对话」按钮 */
 const sessionEnded = ref(false);
+
+/** CSAT 评价邀请（AI 流末尾 SSE / 人工关闭 WS 推送），非空时展示评价卡片 */
+const csatInvite = ref<CsatRequestPayload | null>(null);
 
 // ===== URL 参数：域码（用于后端域路由） =====
 // 支持 ?domain=weather 和 ?domainCode=weather 两种写法
@@ -135,6 +141,10 @@ const ws = useVisitorWs(sessionId, readLastSeq, writeLastSeq, {
     agentJoined.value = false;
     transfer.clearTransferred(sessionId.value);
   },
+  onCsatRequest: (payload) => {
+    // 人工会话关闭后推送的评价邀请
+    csatInvite.value = payload;
+  },
   onReconnecting: (_attempt, _delaySec) => {
     // wsStatus 已变为 'connecting'，banner 会自动显示旋转动画，无需额外处理
   },
@@ -195,6 +205,10 @@ const sse = useSSEStream(
     },
     onDone: () => {
       /* streaming 状态由 useSSEStream 内部管理 */
+    },
+    onCsatRequest: (payload) => {
+      // AI 对话流末尾追加的评价邀请
+      csatInvite.value = payload;
     },
   },
   () => domainCode.value,
@@ -863,6 +877,13 @@ function startNewSession() {
           </div>
         </div>
         <div ref="msgsEnd"></div>
+
+        <!-- CSAT 评价卡片（会话结束后由 SSE/WS 推送触发） -->
+        <CsatRatingCard
+          v-if="csatInvite"
+          :payload="csatInvite"
+          @close="csatInvite = null"
+        />
       </div>
 
       <!-- ===== 快捷问题 ===== -->

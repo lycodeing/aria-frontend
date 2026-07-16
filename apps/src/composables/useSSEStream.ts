@@ -1,3 +1,5 @@
+import type { CsatRequestPayload } from '#/api/csat/types';
+
 /**
  * useSSEStream — AI 流式对话 SSE 解析与事件分发
  *
@@ -69,6 +71,8 @@ export interface SSEStreamHandlers {
   onTransfer: (payload: TransferPayload) => void;
   /** 域切换信号（访客端可静默忽略） */
   onDomainSwitch?: (code: string) => void;
+  /** CSAT 评价邀请（AI 流末尾追加，data 为 CsatRequestPayload JSON） */
+  onCsatRequest?: (payload: CsatRequestPayload) => void;
   /** 业务错误 */
   onError: (msg: string) => void;
   /** 流正常结束（收到 event:done + data:[DONE]） */
@@ -252,6 +256,12 @@ export function useSSEStream(
         streaming.value = false;
         handlers.onError('接收到非法的 SSE 数据格式');
         await reader.cancel();
+        break;
+      }
+      case 'csat_request': {
+        // AI 对话流末尾追加的评价邀请，JSON 解析失败则静默忽略（不阻塞主流程）
+        const payload = tryParse<CsatRequestPayload>(data);
+        if (payload?.csatId) handlers.onCsatRequest?.(payload);
         break;
       }
       case 'domain_switch': {

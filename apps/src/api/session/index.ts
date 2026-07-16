@@ -44,6 +44,7 @@ export interface WsChatMessage {
   type:
     | 'AGENT_JOINED'
     | 'CONNECTED'
+    | 'CSAT_REQUEST'
     | 'KICKED_OUT'
     | 'MESSAGE'
     | 'PING'

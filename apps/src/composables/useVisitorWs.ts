@@ -1,3 +1,4 @@
+import type { CsatRequestPayload } from '#/api/csat/types';
 import type { WsChatMessage } from '#/api/session';
 
 /**
@@ -43,6 +44,8 @@ export interface VisitorWsCallbacks {
   onMaxRetryExceeded: () => void;
   /** 断线重连中，通知 UI */
   onReconnecting: (attempt: number, delaySeconds: number) => void;
+  /** CSAT 评价邀请（人工会话关闭后由服务端 WS 推送，data 为 JSON 信封） */
+  onCsatRequest?: (payload: CsatRequestPayload) => void;
 }
 
 export function useVisitorWs(
@@ -102,6 +105,16 @@ export function useVisitorWs(
 
   // ---- 消息处理 ----
 
+  /** 安全解析 CSAT_REQUEST 信封（content 为 JSON 字符串） */
+  function tryParseCsat(content?: string): CsatRequestPayload | undefined {
+    if (!content) return undefined;
+    try {
+      return JSON.parse(content) as CsatRequestPayload;
+    } catch {
+      return undefined;
+    }
+  }
+
   function handleWsMessage(msg: WsChatMessage): void {
     // 更新 lastSeq：后端 Long 序列化为字符串，需 Number() 归一化
     if (msg.type === 'MESSAGE' && msg.seq !== null && msg.seq !== undefined) {
@@ -113,6 +126,11 @@ export function useVisitorWs(
       callbacks.onAgentMessage(msg.content ?? '');
     } else if (msg.type === 'AGENT_JOINED') {
       callbacks.onAgentJoined();
+    } else if (msg.type === 'CSAT_REQUEST') {
+      // 人工会话关闭后推送的评价邀请，JSON 信封放在 content 字段
+      // 解析失败静默忽略，不阻塞 WS 主消息链路
+      const payload = tryParseCsat(msg.content);
+      if (payload?.csatId) callbacks.onCsatRequest?.(payload);
     }
   }
 

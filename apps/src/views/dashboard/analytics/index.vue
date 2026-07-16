@@ -3,6 +3,12 @@ import type { AnalysisOverviewItem } from '@vben/common-ui';
 import type { TabOption } from '@vben/types';
 
 import type {
+  CsatByAgentItem,
+  CsatDistributionItem,
+  CsatOverviewData,
+  CsatTrendItem,
+} from '#/api/csat';
+import type {
   ComplexityDistributionItem,
   ComplexityItem,
   ComplexityLevel,
@@ -29,8 +35,15 @@ import {
   SvgDownloadIcon,
 } from '@vben/icons';
 
+import { Icon } from '@iconify/vue';
 import { message } from 'ant-design-vue';
 
+import {
+  getCsatByAgentApi,
+  getCsatDistributionApi,
+  getCsatOverviewApi,
+  getCsatTrendApi,
+} from '#/api/csat';
 import {
   getComplexityDistributionApi,
   getConversationTrendsApi,
@@ -50,6 +63,10 @@ import AnalyticsVisitsSource from './analytics-visits-source.vue';
 import AnalyticsVisits from './analytics-visits.vue';
 import AvgHandleTimeCard from './avg-handle-time-card.vue';
 import ComplexityTrendCard from './complexity-trend-card.vue';
+import CsatByAgentCard from './csat-by-agent-card.vue';
+import CsatDistributionCard from './csat-distribution-card.vue';
+import CsatStatCards from './csat-stat-cards.vue';
+import CsatTrendCard from './csat-trend-card.vue';
 import DashboardTimeRangeSelector from './dashboard-time-range-selector.vue';
 import PendingTicketsCard from './pending-tickets-card.vue';
 
@@ -110,7 +127,7 @@ const complexityData = ref<ComplexityDistributionItem[]>([]);
 // 复杂度等级 → 中文标签 + 语义色（与设计稿一致）
 const COMPLEXITY_META: Record<
   ComplexityLevel,
-  { color: string; label: string; }
+  { color: string; label: string }
 > = {
   SIMPLE: { label: '简单问题', color: 'bg-[#10B981]' },
   MEDIUM: { label: '中等问题', color: 'bg-[#F59E0B]' },
@@ -125,6 +142,16 @@ const complexityRows = computed<ComplexityItem[]>(() =>
     percent: item.percent,
   })),
 );
+
+// ─── CSAT 满意度评价数据 ───────────────────────────────────────────────────────
+const csatOverview = ref<CsatOverviewData>({
+  csatAvgScore: 0,
+  csatResponseRate: 0,
+  csatRatedCount: 0,
+});
+const csatTrend = ref<CsatTrendItem[]>([]);
+const csatDistribution = ref<CsatDistributionItem[]>([]);
+const csatByAgent = ref<CsatByAgentItem[]>([]);
 
 // ─── 请求竞态保护 ──────────────────────────────────────────────────────────────
 let latestRequestId = 0;
@@ -180,6 +207,8 @@ async function fetchTrendData(range: TimeRange) {
     efficiencyTrends.value = effTrends;
     overviewData.value = overview;
     updateOverviewItems(overview);
+    // CSAT 趋势随同一时间范围刷新
+    csatTrend.value = await getCsatTrendApi(range);
   } catch {
     if (id !== latestRequestId) return;
     message.error('数据加载失败，请重试');
@@ -212,6 +241,20 @@ onMounted(async () => {
     complexityData.value = [];
   }
 
+  // CSAT 满意度评价快照数据（不受时间范围影响），失败不影响其他卡片
+  try {
+    const [overview, distribution, byAgent] = await Promise.all([
+      getCsatOverviewApi(),
+      getCsatDistributionApi(),
+      getCsatByAgentApi(),
+    ]);
+    csatOverview.value = overview;
+    csatDistribution.value = distribution;
+    csatByAgent.value = byAgent;
+  } catch {
+    /* 保留默认值，卡片显示空态 */
+  }
+
   // 趋势数据按默认时间范围加载
   await fetchTrendData('month');
 });
@@ -227,6 +270,34 @@ onMounted(async () => {
 
     <!-- 概览指标卡片 -->
     <AnalysisOverview :items="overviewItems" />
+
+    <!-- CSAT 满意度评价区块 -->
+    <div class="mt-5">
+      <div class="mb-3 flex items-center gap-2">
+        <Icon icon="lucide:star" class="text-lg" style="color: #4f46e5" />
+        <span class="text-base font-semibold">满意度评价 (CSAT)</span>
+      </div>
+
+      <!-- 概览指标卡 -->
+      <CsatStatCards
+        :avg-score="csatOverview.csatAvgScore"
+        :rated-count="csatOverview.csatRatedCount"
+        :response-rate="csatOverview.csatResponseRate"
+      />
+
+      <!-- 趋势 + 分布 + 分坐席 -->
+      <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <AnalysisChartCard class="shadow-sm" title="评分趋势">
+          <CsatTrendCard :data="csatTrend" />
+        </AnalysisChartCard>
+        <AnalysisChartCard class="shadow-sm" title="星级分布">
+          <CsatDistributionCard :data="csatDistribution" />
+        </AnalysisChartCard>
+        <AnalysisChartCard class="shadow-sm" title="分坐席评分">
+          <CsatByAgentCard :data="csatByAgent" />
+        </AnalysisChartCard>
+      </div>
+    </div>
 
     <!-- 中间行：待处理列表 + 平均处理时长 + 复杂度趋势（设计稿版） -->
     <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
