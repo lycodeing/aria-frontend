@@ -101,7 +101,7 @@ export function useSSEStream(
     let reader: null | ReadableStreamDefaultReader<Uint8Array> = null;
     try {
       const code = domainCode?.() ?? '';
-      const response = await fetch('/api/v1/chat/stream', {
+      const response = await fetch('/conversation/api/v1/chat/stream', {
         body: JSON.stringify({
           message,
           sessionId: sessionId.value,
