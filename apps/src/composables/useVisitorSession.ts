@@ -51,11 +51,28 @@ export interface ToolCallStatus {
 
 // ---- 常量 ----
 
+/** 持久访客身份 key（永久，不随会话清除） */
+const ANONYMOUS_ID_KEY = 'aria_visitor_id';
 const HISTORY_KEY_PREFIX = 'chat_history_';
 const LAST_SEQ_KEY_PREFIX = 'chat_last_seq_';
 const SESSION_ENDED_KEY_PREFIX = 'chat_session_ended_';
 const CSAT_INVITE_KEY_PREFIX = 'chat_csat_invite_';
 const HISTORY_MAX_SIZE = 100;
+
+/**
+ * 持久访客身份：读取或生成 UUID，写入 localStorage。
+ *
+ * 该 ID 跨会话保持，不随 clearSession 删除，用于后端 getOrCreate 幂等逻辑
+ * （POST /chat/session/init 的 X-Anonymous-Id Header）。
+ */
+export function getOrCreateAnonymousId(): string {
+  let id = localStorage.getItem(ANONYMOUS_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(ANONYMOUS_ID_KEY, id);
+  }
+  return id;
+}
 
 export function useVisitorSession() {
   const sessionId = ref('');
@@ -69,21 +86,31 @@ export function useVisitorSession() {
   // ---- sessionId ----
 
   /**
-   * 初始化 sessionId：从 localStorage 恢复或重新生成。
-   * 使用 crypto.randomUUID() 避免 Math.random() 的碰撞风险。
+   * 初始化 sessionId：使用后端 POST /chat/session/init 返回的 sid。
+   *
+   * 职责：
+   *   - 将后端分配的 sid 写入内存 ref 和 localStorage（供离线降级使用）
+   *   - 从 localStorage 恢复会话结束态 & CSAT 待评价邀请
+   *
+   * 调用方：index.vue onMounted / startNewSession，传入 initSessionApi 的返回值。
+   * 降级：若网络故障导致 initSessionApi 失败，调用方传入 localStorage 缓存的 sid。
    */
-  function initSession(): string {
-    let sid = localStorage.getItem('chat_session_id');
-    if (!sid) {
-      sid = `guest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-      localStorage.setItem('chat_session_id', sid);
-    }
+  function initSession(sid: string): string {
+    localStorage.setItem('chat_session_id', sid);
     sessionId.value = sid;
     // 从持久化中恢复会话结束态 & CSAT 邀请
     sessionEnded.value =
       localStorage.getItem(SESSION_ENDED_KEY_PREFIX + sid) === '1';
     csatInvite.value = readCsatInvite(sid);
     return sid;
+  }
+
+  /**
+   * 降级读取：从 localStorage 取缓存 sid（initSessionApi 失败时兜底）。
+   * 返回空字符串表示本地也没有缓存（全新访客 + 离线场景）。
+   */
+  function readCachedSessionId(): string {
+    return localStorage.getItem('chat_session_id') ?? '';
   }
 
   // ---- 历史持久化 ----
@@ -260,6 +287,7 @@ export function useVisitorSession() {
     sessionEnded,
     csatInvite,
     initSession,
+    readCachedSessionId,
     loadHistory,
     mergeRemoteMsgs,
     clearSession,

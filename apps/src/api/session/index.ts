@@ -202,6 +202,28 @@ export async function getSessionStateApi(sessionId: string): Promise<{
   return publicClient.get('/chat/state', { params: { sessionId } });
 }
 
+/**
+ * 访客会话初始化（getOrCreate 语义）。
+ *
+ * 后端以 X-Anonymous-Id（持久访客身份，存 localStorage）为唯一键：
+ *   - 存在活跃会话（AI_CHAT / WAITING / ACTIVE）时直接返回，isNew=false
+ *   - 否则新建并返回，isNew=true
+ * 分布式锁保障同一 anonymousId 并发 init 的幂等性。
+ *
+ * @param anonymousId 持久访客 UUID（`aria_visitor_id`，不随会话清除）
+ */
+export async function initSessionApi(anonymousId: string): Promise<{
+  isNew: boolean;
+  sessionId: string;
+  status: 'ACTIVE' | 'AI_CHAT' | 'CLOSED' | 'WAITING';
+}> {
+  return publicClient.post(
+    '/chat/session/init',
+    {},
+    { headers: { 'X-Anonymous-Id': anonymousId } },
+  );
+}
+
 // -------------------------------------------------------
 // 座席间转交功能
 // -------------------------------------------------------
