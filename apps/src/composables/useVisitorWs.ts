@@ -46,6 +46,8 @@ export interface VisitorWsCallbacks {
   onReconnecting: (attempt: number, delaySeconds: number) => void;
   /** CSAT 评价邀请（人工会话关闭后由服务端 WS 推送，data 为 JSON 信封） */
   onCsatRequest?: (payload: CsatRequestPayload) => void;
+  /** 当前标签页被其他标签页踢出（多标签共用同一 sessionId），不重连 */
+  onKickedOut?: () => void;
 }
 
 export function useVisitorWs(
@@ -69,6 +71,11 @@ export function useVisitorWs(
   let heartbeatTimer: null | ReturnType<typeof setInterval> = null;
   /** 并发锁：防止短时间多次重连触发多个增量拉取请求 */
   let fetchInflight = false;
+  /**
+   * 被踢出标志：服务端在 close 帧前推送 KICKED_OUT 信令（另一标签页抢占同一 sessionId）。
+   * 收到后置 true，onclose 检测到此标志时跳过重连，避免两个标签页互踢的无限循环。
+   */
+  let kickedOut = false;
 
   // ---- 心跳 ----
 
@@ -89,6 +96,7 @@ export function useVisitorWs(
   // ---- 连接 ----
 
   function connect(sid: string): void {
+    kickedOut = false; // 新连接前重置，防止残留标志阻止后续重连
     wsStatus.value = 'connecting';
     const token = visitorToken?.() ?? '';
     visitorWs = connectVisitorWs(
@@ -146,6 +154,11 @@ export function useVisitorWs(
       // 解析失败静默忽略，不阻塞 WS 主消息链路
       const payload = extractCsatPayload(msg);
       if (payload) callbacks.onCsatRequest?.(payload);
+    } else if (msg.type === 'KICKED_OUT') {
+      // 同一 sessionId 被另一标签页抢占，服务端在关闭连接前推送此信令。
+      // 设置标志位，onclose 据此跳过重连，避免两个标签页互踢的无限循环。
+      kickedOut = true;
+      callbacks.onKickedOut?.();
     }
   }
 
@@ -169,6 +182,10 @@ export function useVisitorWs(
     wsStatus.value = 'disconnected';
     // 断线时停止心跳
     stopHeartbeat();
+
+    // 收到 KICKED_OUT 信令后被服务端关闭（1001）：另一标签页抢占同一 sessionId。
+    // 不重连，否则两个标签页会互踢形成无限循环。
+    if (kickedOut) return;
 
     if (event.code === 1000) {
       // 服务端正常关闭（座席结束会话），不重连
