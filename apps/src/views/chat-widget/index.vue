@@ -157,6 +157,17 @@ const ws = useVisitorWs(
       // 人工会话关闭后推送的评价邀请，持久化以便刷新后仍可提交
       setCsatInvite(payload);
     },
+    onKickedOut: () => {
+      // 同一 sessionId 在另一标签页打开，本标签页连接被服务端踢出。
+      // 用弹窗通知用户，关闭后清除座席接入状态。
+      agentJoined.value = false;
+      Modal.warning({
+        title: '连接已断开',
+        content:
+          '您已在其他标签页打开此会话，本页面连接已断开。请切换至新标签页继续对话。',
+        okText: '知道了',
+      });
+    },
     onReconnecting: (_attempt, _delaySec) => {
       // wsStatus 已变为 'connecting'，banner 会自动显示旋转动画，无需额外处理
     },
@@ -283,10 +294,12 @@ onMounted(async () => {
   void restorePendingCsat(sid);
 
   // 三重兜底恢复转接状态：
+  //   - WAITING / ACTIVE：后端确认会话仍活跃，清除残留的 sessionEnded 标志
+  //     （防止上次会话 CLOSED 后写入的 sessionEnded=1 遮盖排队中 UI）
   //   - ACTIVE：座席已接入 → agentJoined=true，TYPING 信号可用
   //   - CLOSED：会话已被服务端关闭 → 补 sessionEnded + 幂等分隔条
   //     覆盖「localStorage 被清但 sid 还在」的场景，避免用户往 CLOSED 会话发消息
-  await transfer.restoreTransferState(
+  const restored = await transfer.restoreTransferState(
     sid,
     () => {
       agentJoined.value = true;
@@ -301,6 +314,8 @@ onMounted(async () => {
       agentJoined.value = false;
     },
   );
+  // 后端确认 WAITING / ACTIVE：会话仍活跃，清除可能残留的 sessionEnded 标志
+  if (restored) clearSessionEnded(sid);
 });
 
 /**
