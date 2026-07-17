@@ -23,11 +23,18 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 
 import { getPendingCsatApi, skipCsatApi } from '#/api/csat';
-import { getVisitorHistoryApi, submitVisitorFeedbackApi } from '#/api/session';
+import {
+  getVisitorHistoryApi,
+  initSessionApi,
+  submitVisitorFeedbackApi,
+} from '#/api/session';
 import { readVisitorToken, useAuth } from '#/composables/useAuth';
 import { useSSEStream } from '#/composables/useSSEStream';
 import { useTransfer } from '#/composables/useTransfer';
-import { useVisitorSession } from '#/composables/useVisitorSession';
+import {
+  getOrCreateAnonymousId,
+  useVisitorSession,
+} from '#/composables/useVisitorSession';
 import { useVisitorWs } from '#/composables/useVisitorWs';
 
 import CsatRatingCard from './components/CsatRatingCard.vue';
@@ -55,6 +62,8 @@ function scrollBottom() {
 // ===== UI 状态 =====
 const msgsEnd = ref<HTMLDivElement>();
 const inputText = ref('');
+/** 会话初始化进行中（防止并发 init / startNewSession 重入） */
+const sessionInitializing = ref(false);
 /** 待处理消息（身份验证完成后自动发送） */
 let pendingMsg = '';
 
@@ -75,6 +84,7 @@ const {
   sessionEnded,
   csatInvite,
   initSession,
+  readCachedSessionId,
   loadHistory,
   mergeRemoteMsgs,
   clearSession,
@@ -270,7 +280,27 @@ const renderedHtmlMap = computed<Record<number, string>>(() => {
 // ===== 生命周期 =====
 
 onMounted(async () => {
-  const sid = initSession();
+  // 1. 获取/生成持久访客身份（aria_visitor_id，永不过期）
+  const anonymousId = getOrCreateAnonymousId();
+
+  // 2. 向后端 getOrCreate 会话（幂等），降级到本地缓存
+  let sid: string;
+  try {
+    sessionInitializing.value = true;
+    const result = await initSessionApi(anonymousId);
+    sid = result.sessionId;
+  } catch {
+    // 网络故障：降级到 localStorage 缓存 sid，保证离线可用
+    sid = readCachedSessionId();
+    if (!sid) {
+      // 全新访客 + 离线：临时本地 sid，网络恢复后下次刷新走后端 init
+      sid = `guest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    }
+  } finally {
+    sessionInitializing.value = false;
+  }
+
+  initSession(sid);
   loadHistory();
   scrollBottom();
 
@@ -433,7 +463,7 @@ function handleTypingInput() {
 
 function quickAsk(q: string) {
   // 会话已结束时：先自动开新对话，避免消息发到 CLOSED session 造成沉默错误
-  if (sessionEnded.value) startNewSession();
+  if (sessionEnded.value) void startNewSession();
   inputText.value = q;
   sendMsg();
 }
@@ -533,19 +563,31 @@ async function copyText(text: string) {
   }
 }
 
-function clearHistory() {
+async function clearHistory() {
+  if (sessionInitializing.value) return;
   // clearSession 已负责重置 sessionEnded / csatInvite / lastSeq / transferred 标志
   clearSession();
   currentAiMsgId = null;
   agentJoined.value = false;
-  // 清除后立即初始化新 sessionId，避免用户下一条消息发送时无 sessionId
-  initSession();
+  // 从后端 getOrCreate 新会话
+  const anonymousId = getOrCreateAnonymousId();
+  let sid: string;
+  try {
+    sessionInitializing.value = true;
+    const result = await initSessionApi(anonymousId);
+    sid = result.sessionId;
+  } catch {
+    sid = `guest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  } finally {
+    sessionInitializing.value = false;
+  }
+  initSession(sid);
 }
 
 /**
  * 会话结束后开始新对话。
  * 保留当前 msgs（含历史 + 分隔条），追加新对话开始标记，
- * 生成新 sessionId，重置会话相关状态。
+ * 向后端申请新 sessionId，重置会话相关状态。
  * 新消息将发送到新 session，历史记录仍在同一窗口可见。
  *
  * 关键点：
@@ -556,7 +598,8 @@ function clearHistory() {
  *      避免后端 PENDING 记录变孤儿（后端定时任务最终会转 EXPIRED，
  *      但主动 skip 更符合用户意图，且减少后台任务的处理量）。
  */
-function startNewSession() {
+async function startNewSession() {
+  if (sessionInitializing.value) return;
   const oldSid = sessionId.value;
   const orphanCsatId = csatInvite.value?.csatId;
 
@@ -576,10 +619,21 @@ function startNewSession() {
   appendMsg('ai', '新对话开始', { subType: 'session_start' });
   scrollBottom();
 
-  // 4. 切换到新 sid
-  const newSid = `guest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-  localStorage.setItem('chat_session_id', newSid);
-  sessionId.value = newSid;
+  // 4. 向后端申请新 sid（旧会话已 CLOSED，anonymousId 不变，后端会新建）
+  const anonymousId = getOrCreateAnonymousId();
+  let newSid: string;
+  try {
+    sessionInitializing.value = true;
+    const result = await initSessionApi(anonymousId);
+    newSid = result.sessionId;
+  } catch {
+    // 降级：本地生成临时 sid，网络恢复后下次 init 会走后端
+    newSid = `guest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  } finally {
+    sessionInitializing.value = false;
+  }
+
+  initSession(newSid);
   agentJoined.value = false;
   currentAiMsgId = null;
   inputText.value = '';
@@ -1105,7 +1159,13 @@ function startNewSession() {
             <p class="text-xs" style="color: #94a3b8">
               本次会话已结束，您可以查看上方历史记录
             </p>
-            <Button type="primary" class="w-full" @click="startNewSession">
+            <Button
+              type="primary"
+              class="w-full"
+              :loading="sessionInitializing"
+              :disabled="sessionInitializing"
+              @click="startNewSession"
+            >
               <template #icon>
                 <Icon icon="lucide:message-circle-plus" />
               </template>
@@ -1119,14 +1179,15 @@ function startNewSession() {
               v-model:value="inputText"
               placeholder="输入您的问题..."
               :auto-size="{ minRows: 1, maxRows: 4 }"
+              :disabled="sessionInitializing"
               class="flex-1"
               @input="handleTypingInput"
               @keydown.enter="handleEnter"
             />
             <Button
               type="primary"
-              :loading="sse.streaming.value"
-              :disabled="!inputText.trim()"
+              :loading="sse.streaming.value || sessionInitializing"
+              :disabled="!inputText.trim() || sessionInitializing"
               class="flex h-10 w-10 shrink-0 items-center justify-center"
               @click="sendMsg"
             >
