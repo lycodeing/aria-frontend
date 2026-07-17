@@ -56,6 +56,19 @@ export async function skipCsatApi(csatId: number): Promise<void> {
   return publicClient.post(`/chat/csat/${csatId}/skip`);
 }
 
+/**
+ * 查询该会话是否存在未过期的 CSAT 待评价邀请（服务端权威）。
+ * GET /conversation/api/v1/chat/csat/pending?sessionId=
+ *
+ * 用于刷新页面时恢复评价卡片：本地 localStorage 缺失或过期也能兜底。
+ * 后端仅返回 status=PENDING 且未过 expiredAt 的记录。
+ */
+export async function getPendingCsatApi(
+  sessionId: string,
+): Promise<import('./types').CsatRequestPayload | null> {
+  return publicClient.get('/chat/csat/pending', { params: { sessionId } });
+}
+
 // ─── 看板侧（座席/管理员，带 token） ───────────────────────────────────────────
 
 /**

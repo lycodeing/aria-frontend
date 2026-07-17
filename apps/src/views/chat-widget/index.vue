@@ -2,7 +2,6 @@
 // ===== 主题隔离：强制 light 模式，不受后台暗色主题影响 =====
 // Vben Admin 通过给 <html> 加 dark class 切换主题，chat 页独立渲染需主动隔离
 
-import type { CsatRequestPayload } from '#/api/csat/types';
 import type { Msg } from '#/composables/useVisitorSession';
 
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
@@ -23,7 +22,9 @@ import {
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 
-import { useAuth } from '#/composables/useAuth';
+import { getPendingCsatApi, skipCsatApi } from '#/api/csat';
+import { getVisitorHistoryApi, submitVisitorFeedbackApi } from '#/api/session';
+import { readVisitorToken, useAuth } from '#/composables/useAuth';
 import { useSSEStream } from '#/composables/useSSEStream';
 import { useTransfer } from '#/composables/useTransfer';
 import { useVisitorSession } from '#/composables/useVisitorSession';
@@ -56,11 +57,6 @@ const msgsEnd = ref<HTMLDivElement>();
 const inputText = ref('');
 /** 待处理消息（身份验证完成后自动发送） */
 let pendingMsg = '';
-/** 座席主动结束会话后为 true，此时底部显示「开始新对话」按钮 */
-const sessionEnded = ref(false);
-
-/** CSAT 评价邀请（AI 流末尾 SSE / 人工关闭 WS 推送），非空时展示评价卡片 */
-const csatInvite = ref<CsatRequestPayload | null>(null);
 
 // ===== URL 参数：域码（用于后端域路由） =====
 // 支持 ?domain=weather 和 ?domainCode=weather 两种写法
@@ -72,33 +68,44 @@ const domainCode = computed(
 
 // ===== Composables =====
 
-// 1. 会话与历史
+// 1. 会话与历史（含 sessionEnded / csatInvite 持久化状态）
 const {
   sessionId,
   msgs,
+  sessionEnded,
+  csatInvite,
   initSession,
   loadHistory,
+  mergeRemoteMsgs,
   clearSession,
   appendMsg,
   readLastSeq,
   writeLastSeq,
+  markSessionEnded,
+  clearSessionEnded,
+  setCsatInvite,
 } = useVisitorSession();
 
 // 2. 身份验证
-const auth = useAuth((_label) => {
-  appendMsg(
-    'ai',
-    `✅ 身份验证成功！账号已关联，历史订单信息已加载。${
-      pendingMsg ? '\n\n正在处理您刚才的问题...' : ''
-    }`,
-  );
-  message.success('验证成功，长期记忆已加载');
-  if (pendingMsg) {
-    const p = pendingMsg;
-    pendingMsg = '';
-    setTimeout(() => replyFor(p), 800);
-  }
-});
+//    第二参数：sessionId getter。verify 时随请求上送让后端写 session→phone 绑定，
+//    restoreAuthState 时也用它查 /chat/auth/state。
+const auth = useAuth(
+  (_label) => {
+    appendMsg(
+      'ai',
+      `✅ 身份验证成功！账号已关联，历史订单信息已加载。${
+        pendingMsg ? '\n\n正在处理您刚才的问题...' : ''
+      }`,
+    );
+    message.success('验证成功，长期记忆已加载');
+    if (pendingMsg) {
+      const p = pendingMsg;
+      pendingMsg = '';
+      setTimeout(() => replyFor(p), 800);
+    }
+  },
+  () => sessionId.value,
+);
 
 // 3. 转接人工
 const transfer = useTransfer(
@@ -117,40 +124,50 @@ const transfer = useTransfer(
 // 4. WebSocket
 // agentJoined：座席真正接入后才为 true（区别于 transferred，后者在排队时就是 true）
 const agentJoined = ref(false);
-const ws = useVisitorWs(sessionId, readLastSeq, writeLastSeq, {
-  onAgentMessage: (content) => {
-    appendMsg('agent', content);
-    scrollBottom();
+const ws = useVisitorWs(
+  sessionId,
+  readLastSeq,
+  writeLastSeq,
+  {
+    onAgentMessage: (content) => {
+      appendMsg('agent', content);
+      scrollBottom();
+    },
+    onAgentJoined: () => {
+      agentJoined.value = true;
+      scrollBottom();
+    },
+    onSessionClosed: () => {
+      // 追加语义化「会话结束」分隔条，并切换到「查看历史 + 新对话」模式
+      // markSessionEnded 会同步写 localStorage，刷新后仍是结束态
+      appendMsg('ai', '本次会话已结束，感谢您的使用。', {
+        subType: 'session_end',
+      });
+      transfer.clearTransferred(sessionId.value);
+      agentJoined.value = false;
+      markSessionEnded();
+    },
+    onMaxRetryExceeded: () => {
+      // 重试耗尽：清除转接状态和座席接入标记，避免 banner 永久停留
+      // 同时清除 localStorage 标志，下次加载不再尝试恢复已失效的 WS 连接
+      agentJoined.value = false;
+      transfer.clearTransferred(sessionId.value);
+    },
+    onCsatRequest: (payload) => {
+      // 人工会话关闭后推送的评价邀请，持久化以便刷新后仍可提交
+      setCsatInvite(payload);
+    },
+    onReconnecting: (_attempt, _delaySec) => {
+      // wsStatus 已变为 'connecting'，banner 会自动显示旋转动画，无需额外处理
+    },
   },
-  onAgentJoined: () => {
-    agentJoined.value = true;
-    scrollBottom();
-  },
-  onSessionClosed: () => {
-    // 追加语义化「会话结束」分隔条，并切换到「查看历史 + 新对话」模式
-    appendMsg('ai', '本次会话已结束，感谢您的使用。', {
-      subType: 'session_end',
-    });
-    transfer.clearTransferred(sessionId.value);
-    agentJoined.value = false;
-    sessionEnded.value = true;
-  },
-  onMaxRetryExceeded: () => {
-    // 重试耗尽：清除转接状态和座席接入标记，避免 banner 永久停留
-    // 同时清除 localStorage 标志，下次加载不再尝试恢复已失效的 WS 连接
-    agentJoined.value = false;
-    transfer.clearTransferred(sessionId.value);
-  },
-  onCsatRequest: (payload) => {
-    // 人工会话关闭后推送的评价邀请
-    csatInvite.value = payload;
-  },
-  onReconnecting: (_attempt, _delaySec) => {
-    // wsStatus 已变为 'connecting'，banner 会自动显示旋转动画，无需额外处理
-  },
-});
+  // 访客 token：登录后随 WS 握手上送，用于后端身份识别
+  () => readVisitorToken(),
+);
 
-// 5. SSE 流式对话（第 3 个参数把 URL 上的 domainCode 透传给后端）
+// 5. SSE 流式对话
+//    - 第 3 个参数：URL 上的 domainCode 透传给后端做域路由
+//    - 第 4 个参数：访客 token 透传给后端识别手机号身份
 const sse = useSSEStream(
   sessionId,
   {
@@ -207,11 +224,22 @@ const sse = useSSEStream(
       /* streaming 状态由 useSSEStream 内部管理 */
     },
     onCsatRequest: (payload) => {
-      // AI 对话流末尾追加的评价邀请
-      csatInvite.value = payload;
+      // AI 对话流末尾追加的评价邀请，持久化到 localStorage
+      setCsatInvite(payload);
+      // AI 侧发 CSAT 即表示后端已把会话置 CLOSED（区别于 WS 路径由 close(1000) 单独通知）。
+      // 与 WS 的 onSessionClosed 对齐：补 session_end 分隔条 + markSessionEnded，
+      // 避免 Textarea 保持可用，用户继续把消息发到已关闭的旧 sid。
+      if (!sessionEnded.value) {
+        appendMsg('ai', '本次会话已结束，感谢您的使用。', {
+          subType: 'session_end',
+        });
+        markSessionEnded();
+        agentJoined.value = false;
+      }
     },
   },
   () => domainCode.value,
+  () => readVisitorToken(),
 );
 
 /** 当前正在流式填充的 AI 气泡 ID（通过 ID 查找规避 splice 后 proxy 引用失效） */
@@ -245,12 +273,103 @@ onMounted(async () => {
   const sid = initSession();
   loadHistory();
   scrollBottom();
-  // 两重兜底恢复转接状态（localStorage 快路径 + 后端状态查询兜底）
-  // 若后端确认为 ACTIVE（座席已接入），同步设置 agentJoined，确保 TYPING 信号守卫正确
-  await transfer.restoreTransferState(sid, () => {
-    agentJoined.value = true;
-  });
+
+  // 并行触发三件独立的服务端权威恢复：不阻塞用户开始新一轮对话
+  //   1. 历史消息兜底（localStorage 缺失时全量拉）
+  //   2. 认证态服务端为真：/chat/auth/state，覆盖本地缓存
+  //   3. CSAT 待评价服务端为真：/chat/csat/pending，覆盖本地缓存
+  void fetchHistoryFallback(sid);
+  void auth.restoreAuthState();
+  void restorePendingCsat(sid);
+
+  // 三重兜底恢复转接状态：
+  //   - ACTIVE：座席已接入 → agentJoined=true，TYPING 信号可用
+  //   - CLOSED：会话已被服务端关闭 → 补 sessionEnded + 幂等分隔条
+  //     覆盖「localStorage 被清但 sid 还在」的场景，避免用户往 CLOSED 会话发消息
+  await transfer.restoreTransferState(
+    sid,
+    () => {
+      agentJoined.value = true;
+    },
+    () => {
+      if (sessionEnded.value) return;
+      // 结束标志与分隔条都是幂等操作
+      appendMsg('ai', '本次会话已结束，感谢您的使用。', {
+        subType: 'session_end',
+      });
+      markSessionEnded();
+      agentJoined.value = false;
+    },
+  );
 });
+
+/**
+ * 服务端权威恢复 CSAT 待评价：以 /chat/csat/pending 为准。
+ *   - 返回非空且未展示时 → 展示卡片
+ *   - 返回空但本地缓存了邀请 → 清除本地（可能已过期或后端撤销）
+ */
+async function restorePendingCsat(sid: string): Promise<void> {
+  if (!sid) return;
+  try {
+    const remote = await getPendingCsatApi(sid);
+    if (remote && remote.csatId) {
+      setCsatInvite(remote);
+    } else if (csatInvite.value) {
+      // 服务端已无 pending 记录（超时/已提交/已跳过），清除本地残留
+      setCsatInvite(null);
+    }
+  } catch {
+    // 网络错误：保留本地缓存态，不做降级
+  }
+}
+
+/**
+ * 后端历史兜底：只在本地 msgs 为空时全量拉一次（隐私模式/清缓存场景）。
+ *
+ * 为什么不用增量：SSE 流出的 AI 气泡本地已 echo 但 seq 未回填，
+ * 与后端返回的同一条消息（带 seq）无法按 seq 去重，会造成重复渲染。
+ * 因此约定：本地有 localStorage 记录时以本地为准；本地空时以后端为准。
+ */
+async function fetchHistoryFallback(sid: string): Promise<void> {
+  if (!sid) return;
+  if (msgs.value.length > 0) return;
+
+  try {
+    const items = await getVisitorHistoryApi(sid, 0);
+    if (items.length === 0) return;
+
+    const remote: Msg[] = [];
+    let maxSeq = 0;
+    for (const it of items) {
+      const seq =
+        it.seq === null || it.seq === undefined ? Number.NaN : Number(it.seq);
+      if (!it.content) continue;
+      if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq;
+      const role: Msg['role'] =
+        it.role === 'agent' ? 'agent' : it.role === 'user' ? 'user' : 'ai';
+      remote.push({
+        id: 0, // mergeRemoteMsgs 内会重新分配自增 id
+        role,
+        text: it.content,
+        seq: Number.isFinite(seq) ? seq : undefined,
+        time: it.timestamp
+          ? new Date(Number(it.timestamp)).toLocaleTimeString('zh-CN', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : '',
+        feedback: null,
+      });
+    }
+    if (remote.length > 0) {
+      mergeRemoteMsgs(remote);
+      scrollBottom();
+    }
+    if (maxSeq > 0) writeLastSeq(maxSeq);
+  } catch (error) {
+    console.warn('[chat-widget] fetchHistoryFallback failed', sid, error);
+  }
+}
 
 onUnmounted(() => {
   sse.abort();
@@ -264,6 +383,11 @@ onUnmounted(() => {
 function sendMsg() {
   const text = inputText.value.trim();
   if (!text || sse.streaming.value) return;
+  // 会话已结束：拒绝发送，提示用户开启新对话
+  if (sessionEnded.value) {
+    message.info('本次会话已结束，请点击「开始新对话」');
+    return;
+  }
   inputText.value = '';
 
   const userMsg = appendMsg('user', text, { retryText: text });
@@ -293,11 +417,13 @@ function handleEnter(e: KeyboardEvent) {
   }
 }
 
-// 访客输入中信号：仅在座席已接入（agentJoined）时发送。
-// transferred=true 时会话可能仍在排队（WAITING），座席未接入，发送无意义。
+// 访客输入中信号：仅在座席已接入（agentJoined）且 WS 处于 connected 时发送。
+// - transferred=true 但仍在 WAITING → 座席未接入，发送无意义
+// - WS 正在重连中 → sendTyping 走 readyState 守卫会静默失败，但仍触发 debounce 空转
 let typingDebounceTimer: null | ReturnType<typeof setTimeout> = null;
 function handleTypingInput() {
   if (!agentJoined.value) return;
+  if (ws.wsStatus.value !== 'connected') return;
   if (typingDebounceTimer) return; // 防抖：500ms 内只发一次
   ws.sendTyping();
   typingDebounceTimer = setTimeout(() => {
@@ -306,6 +432,8 @@ function handleTypingInput() {
 }
 
 function quickAsk(q: string) {
+  // 会话已结束时：先自动开新对话，避免消息发到 CLOSED session 造成沉默错误
+  if (sessionEnded.value) startNewSession();
   inputText.value = q;
   sendMsg();
 }
@@ -345,20 +473,55 @@ function retryMsg(m: Msg) {
 
   if (transfer.transferred.value) {
     sendWsWithLoading(m);
-  } else {
-    // 移除失败的 AI 气泡，重新调 replyFor
-    const lastAi = [...msgs.value]
-      .toReversed()
-      .find((x) => x.role === 'ai' && x.failed);
-    if (lastAi) msgs.value.splice(msgs.value.indexOf(lastAi), 1);
-    replyFor(m.retryText);
+    return;
   }
+
+  // AI 模式重试：
+  //   - 若点的是 AI 气泡自身，直接移除该气泡
+  //   - 若点的是 user 气泡，移除紧随其后的失败 AI 气泡（如果存在）
+  // 避免误删任意 failed AI（老实现遍历全表找 last failed AI，会跨轮误删）
+  if (m.role === 'ai') {
+    const idx = msgs.value.indexOf(m);
+    if (idx !== -1) msgs.value.splice(idx, 1);
+  } else if (m.role === 'user') {
+    const idx = msgs.value.indexOf(m);
+    const next = idx === -1 ? null : msgs.value[idx + 1];
+    if (next && next.role === 'ai' && next.failed) {
+      msgs.value.splice(idx + 1, 1);
+    }
+  }
+  // 复位当前流式引用，避免上一个 currentAiMsgId 悬空到已被 splice 的位置
+  currentAiMsgId = null;
+  replyFor(m.retryText);
 }
 
 // ===== 工具方法 =====
 
-function setFeedback(m: Msg, type: 'down' | 'up') {
-  m.feedback = type;
+/**
+ * AI 消息反馈（点赞/点踩）。
+ *
+ * 交互：
+ *   - 再次点击同一按钮 → 取消评价（feedback=null）
+ *   - 乐观更新 UI，后端失败时回滚并提示
+ *
+ * 关键：优先携带 msg.seq（后端来源的历史消息或增量拉取补齐时才有 seq），
+ * 缺失时后端按 sessionId 定位当前流最后一条 AI 消息。
+ */
+async function setFeedback(m: Msg, type: 'down' | 'up') {
+  const prev = m.feedback ?? null;
+  const next = prev === type ? null : type;
+  m.feedback = next;
+  try {
+    await submitVisitorFeedbackApi({
+      sessionId: sessionId.value,
+      seq: typeof m.seq === 'number' ? m.seq : undefined,
+      feedback: next,
+    });
+  } catch {
+    // 后端未上线或短暂故障：回滚本地态并轻提示，不阻塞主流程
+    m.feedback = prev;
+    message.error('反馈提交失败，请稍后再试');
+  }
 }
 
 async function copyText(text: string) {
@@ -371,9 +534,10 @@ async function copyText(text: string) {
 }
 
 function clearHistory() {
+  // clearSession 已负责重置 sessionEnded / csatInvite / lastSeq / transferred 标志
   clearSession();
   currentAiMsgId = null;
-  sessionEnded.value = false;
+  agentJoined.value = false;
   // 清除后立即初始化新 sessionId，避免用户下一条消息发送时无 sessionId
   initSession();
 }
@@ -383,19 +547,39 @@ function clearHistory() {
  * 保留当前 msgs（含历史 + 分隔条），追加新对话开始标记，
  * 生成新 sessionId，重置会话相关状态。
  * 新消息将发送到新 session，历史记录仍在同一窗口可见。
+ *
+ * 关键点：
+ *   1. 切换 sid 前必须先清除旧 sid 的 sessionEnded / csatInvite / transferred
+ *      相关 localStorage 键，避免下次误恢复到已作废的旧会话状态。
+ *   2. 若旧 sid 存在未处理的 CSAT 邀请（用户既没提交也没跳过），
+ *      开新会话意味着放弃评价 —— 前端顺手替用户调 skipCsatApi，
+ *      避免后端 PENDING 记录变孤儿（后端定时任务最终会转 EXPIRED，
+ *      但主动 skip 更符合用户意图，且减少后台任务的处理量）。
  */
 function startNewSession() {
-  const newSid = `guest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const oldSid = sessionId.value;
+  const orphanCsatId = csatInvite.value?.csatId;
 
-  // 追加新对话开始分隔条（保留历史消息在同一窗口内）
+  // 1. 先清除旧 sid 的所有会话级持久化状态
+  clearSessionEnded(oldSid);
+  setCsatInvite(null); // 清 localStorage 里旧 sid 对应的 CSAT 邀请
+  transfer.clearTransferred(oldSid);
+
+  // 2. 存在孤儿 CSAT → 后端 skip 掉（失败静默，不阻塞新对话）
+  if (orphanCsatId) {
+    void skipCsatApi(orphanCsatId).catch(() => {
+      /* 后端已 expired 或网络错误都不需要通知用户 */
+    });
+  }
+
+  // 3. 追加新对话开始分隔条（保留历史消息在同一窗口内）
   appendMsg('ai', '新对话开始', { subType: 'session_start' });
   scrollBottom();
 
-  // 切换到新 session，重置会话状态（不清空 msgs，让用户能看到上下文）
+  // 4. 切换到新 sid
+  const newSid = `guest-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   localStorage.setItem('chat_session_id', newSid);
   sessionId.value = newSid;
-  sessionEnded.value = false;
-  transfer.clearTransferred(newSid);
   agentJoined.value = false;
   currentAiMsgId = null;
   inputText.value = '';
@@ -878,11 +1062,11 @@ function startNewSession() {
         </div>
         <div ref="msgsEnd"></div>
 
-        <!-- CSAT 评价卡片（会话结束后由 SSE/WS 推送触发） -->
+        <!-- CSAT 评价卡片（会话结束后由 SSE/WS 推送触发，setCsatInvite(null) 会同步清 localStorage） -->
         <CsatRatingCard
           v-if="csatInvite"
           :payload="csatInvite"
-          @close="csatInvite = null"
+          @close="setCsatInvite(null)"
         />
       </div>
 

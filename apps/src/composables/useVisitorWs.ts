@@ -53,6 +53,11 @@ export function useVisitorWs(
   readLastSeq: () => number,
   writeLastSeq: (seq: number) => void,
   callbacks: VisitorWsCallbacks,
+  /**
+   * 可选：访客 token 取值器。返回非空时 WS 握手 URL 追加 ?token=xxx，
+   * 后端据此校验访客身份、绑定手机号会话。
+   */
+  visitorToken?: () => string,
 ) {
   const wsStatus = ref<'connected' | 'connecting' | 'disconnected'>(
     'disconnected',
@@ -85,11 +90,13 @@ export function useVisitorWs(
 
   function connect(sid: string): void {
     wsStatus.value = 'connecting';
+    const token = visitorToken?.() ?? '';
     visitorWs = connectVisitorWs(
       sid,
       handleWsMessage,
       handleWsOpen,
       handleWsClose,
+      token || undefined,
     );
   }
 
@@ -105,14 +112,22 @@ export function useVisitorWs(
 
   // ---- 消息处理 ----
 
-  /** 安全解析 CSAT_REQUEST 信封（content 为 JSON 字符串） */
-  function tryParseCsat(content?: string): CsatRequestPayload | undefined {
-    if (!content) return undefined;
-    try {
-      return JSON.parse(content) as CsatRequestPayload;
-    } catch {
-      return undefined;
-    }
+  /**
+   * 从 WS 消息顶层字段提取 CSAT 评价邀请 payload。
+   * 服务端推送的 csat_request 消息字段全部位于顶层，无 content 嵌套。
+   */
+  function extractCsatPayload(
+    msg: WsChatMessage,
+  ): CsatRequestPayload | undefined {
+    const raw = msg as unknown as Record<string, unknown>;
+    const csatId = Number(raw.csatId);
+    if (!Number.isFinite(csatId) || csatId <= 0) return undefined;
+    return {
+      csatId,
+      sessionId: String(raw.sessionId ?? ''),
+      message: String(raw.message ?? ''),
+      expiresAt: String(raw.expiresAt ?? ''),
+    };
   }
 
   function handleWsMessage(msg: WsChatMessage): void {
@@ -126,11 +141,11 @@ export function useVisitorWs(
       callbacks.onAgentMessage(msg.content ?? '');
     } else if (msg.type === 'AGENT_JOINED') {
       callbacks.onAgentJoined();
-    } else if (msg.type === 'CSAT_REQUEST') {
-      // 人工会话关闭后推送的评价邀请，JSON 信封放在 content 字段
+    } else if (msg.type === 'csat_request') {
+      // 人工会话关闭后推送的评价邀请，字段全部位于消息顶层（无 content 嵌套）
       // 解析失败静默忽略，不阻塞 WS 主消息链路
-      const payload = tryParseCsat(msg.content);
-      if (payload?.csatId) callbacks.onCsatRequest?.(payload);
+      const payload = extractCsatPayload(msg);
+      if (payload) callbacks.onCsatRequest?.(payload);
     }
   }
 
