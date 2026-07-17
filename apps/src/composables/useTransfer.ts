@@ -80,52 +80,56 @@ export function useTransfer(
   }
 
   /**
-   * onMounted 时调用：两重兜底检测转接状态。
+   * onMounted 时调用：以后端 session 状态为准恢复转接。
    *
-   * 第一重：localStorage 有转接标志 → 直接恢复（快路径，无网络请求）
-   * 第二重：localStorage 无标志 → 查询后端 session 状态（兜底 AI 工具触发转接后页面关闭的场景）
-   *         若后端返回 WAITING/ACTIVE，补写 localStorage 并恢复 WS 连接
+   * 关键设计：**必须先问后端拿到 status 再决定是否 ws.connect()**。
+   * 早期实现有"快路径"（localStorage 有转接标志就先拉 WS，再异步查后端），
+   * 但若座席已把会话 CLOSED，前端一连上，后端立刻关连接（非 1000 code），
+   * 触发 handleWsClose 指数退避重连 → 握手 101 → 再被关 → 死循环，
+   * 表现为"101 建了却一直在重连"。
    *
-   * @param onAgentActive 可选回调：当确认后端状态为 ACTIVE（座席已接入）时触发，
-   *                      调用方可借此同步本地 agentJoined 标志。
-   *                      快路径（localStorage）无法直接知道状态，会补查后端确认。
+   * 三种后端状态的处理：
+   *   - WAITING / ACTIVE：补写 localStorage，回调 onTransferSuccess 拉 WS
+   *   - CLOSED：清 localStorage 转接标志，回调 onClosed 让上层置 sessionEnded
+   *   - 网络错误：以本地 localStorage 标志兜底（best-effort，可能触发上述死循环，
+   *     但无法访问后端时也别无选择；相比之下"能连不上"比"完全不连"损失更小）
+   *
+   * @param onAgentActive 可选回调：确认后端状态为 ACTIVE（座席已接入）时触发。
+   * @param onClosed      可选回调：确认后端状态为 CLOSED（会话已结束）时触发，
+   *                      上层应据此写 sessionEnded 并追加语义分隔条。
    * @returns 是否恢复了转接状态
    */
   async function restoreTransferState(
     sid: string,
     onAgentActive?: () => void,
+    onClosed?: () => void,
   ): Promise<boolean> {
-    // 快路径：localStorage 已有标志，无需请求后端恢复 WS
-    if (localStorage.getItem(TRANSFER_KEY(sid)) === '1') {
-      transferred.value = true;
-      onTransferSuccess();
-      // 快路径不知道后端当前状态，若调用方关心是否 ACTIVE，补查一次
-      if (onAgentActive) {
-        try {
-          const { status } = await getSessionStateApi(sid);
-          if (status === 'ACTIVE') onAgentActive();
-        } catch {
-          // 网络错误静默忽略
-        }
-      }
-      return true;
-    }
+    const hasLocalFlag = localStorage.getItem(TRANSFER_KEY(sid)) === '1';
 
-    // 兜底路径：查询后端 session 状态
+    // 主路径：以后端 session 状态为准
     try {
       const { status } = await getSessionStateApi(sid);
       if (status === 'WAITING' || status === 'ACTIVE') {
-        // 补写 localStorage，下次刷新走快路径
         markTransferred(sid);
         onTransferSuccess();
         if (status === 'ACTIVE') onAgentActive?.();
         return true;
       }
+      if (status === 'CLOSED') {
+        // 后端已关闭：清掉可能残留的转接标志，避免下次刷新又走死循环
+        if (hasLocalFlag) clearTransferred(sid);
+        onClosed?.();
+      }
+      return false;
     } catch {
-      // 网络错误静默忽略，不影响正常 AI 对话
+      // 网络错误兜底：只有本地标志有效时才尝试连 WS
+      if (hasLocalFlag) {
+        transferred.value = true;
+        onTransferSuccess();
+        return true;
+      }
+      return false;
     }
-
-    return false;
   }
 
   return {

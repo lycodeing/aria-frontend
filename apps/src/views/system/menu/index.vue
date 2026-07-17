@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { computed, onMounted, reactive, ref } from 'vue';
 
-import { Page } from '@vben/common-ui';
+import { IconPicker, Page } from '@vben/common-ui';
 
 import { Icon } from '@iconify/vue';
 import {
@@ -406,12 +406,7 @@ onMounted(loadList);
           </div>
           <div class="flex gap-3">
             <FormItem label="图标" class="flex-1">
-              <Input v-model:value="form.icon" placeholder="lucide:users">
-                <template #prefix>
-                  <Icon v-if="form.icon" :icon="form.icon" class="opacity-50" />
-                  <Icon v-else icon="lucide:image" class="opacity-30" />
-                </template>
-              </Input>
+              <IconPicker v-model="form.icon" prefix="lucide" />
             </FormItem>
             <FormItem label="排序" class="w-24">
               <InputNumber

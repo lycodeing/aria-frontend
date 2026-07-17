@@ -40,8 +40,11 @@ const submitting = ref(false);
 /** 展示用星级（悬停优先于选中） */
 const displayScore = computed(() => hoverScore.value || score.value);
 
-/** 星级文案 */
-const scoreLabels = ['', '很不满意', '不满意', '一般', '满意', '非常满意'];
+/** 星级对应的语义标签（悬停/选中时展示，给用户即时反馈） */
+const SCORE_LABELS = ['非常不满意', '不满意', '一般', '满意', '非常满意'];
+const scoreLabel = computed(() =>
+  displayScore.value > 0 ? SCORE_LABELS[displayScore.value - 1] : '',
+);
 
 async function submit() {
   if (score.value < 1) {
@@ -85,7 +88,7 @@ function finish() {
 <template>
   <div
     data-theme="light"
-    class="mx-1 my-3 rounded-2xl border px-4 py-4"
+    class="mx-1 my-3 rounded-2xl border px-5 py-5"
     style="
       background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%);
       border-color: #c7d2fe;
@@ -120,57 +123,175 @@ function finish() {
 
     <!-- 评价态 -->
     <template v-else>
-      <p class="mb-2.5 text-sm font-medium" style="color: #1e293b">
+      <!-- 标题 + 副标题 -->
+      <p class="text-sm font-bold" style="color: #1e293b">
         {{ payload.message || '请对本次服务进行评价' }}
+      </p>
+      <p class="mt-1 mb-4 text-xs" style="color: #94a3b8">
+        您的反馈将帮助我们改进服务质量
       </p>
 
       <!-- 星级选择 -->
-      <div class="flex items-center gap-1.5">
+      <!--
+        用两个不同的图标（material-symbols:star 实心 / lucide:star 描边）区分状态。
+        原方案两侧都用 lucide:star + CSS fill 覆盖 —— 但 lucide 图标 SVG 内
+        path 硬编码了 fill="none"，外层 style 的 fill:#f59e0b 无法生效，
+        导致选中态只有描边变金色，星身仍空心，UI 上看起来"没标记黄色"。
+      -->
+      <div class="flex items-center justify-center gap-2">
         <button
           v-for="n in 5"
           :key="n"
-          class="transition-transform hover:scale-110"
-          style="line-height: 0"
+          class="csat-star-btn"
+          :aria-label="`${n} 星`"
           @mouseenter="hoverScore = n"
           @mouseleave="hoverScore = 0"
           @click="score = n"
         >
           <Icon
-            icon="lucide:star"
-            class="text-2xl"
-            :style="n <= displayScore ? 'color:#f59e0b' : 'color:#d1d5db'"
+            v-if="n <= displayScore"
+            icon="material-symbols:star-rounded"
+            class="csat-star csat-star--active"
+          />
+          <Icon
+            v-else
+            icon="material-symbols:star-outline-rounded"
+            class="csat-star csat-star--inactive"
           />
         </button>
-        <span
-          v-if="displayScore > 0"
-          class="ml-1 text-xs font-medium"
-          style="color: #f59e0b"
-          >{{ scoreLabels[displayScore] }}</span
-        >
       </div>
 
-      <!-- 文字评语 -->
-      <Textarea
-        v-model:value="comment"
-        :auto-size="{ minRows: 2, maxRows: 3 }"
-        placeholder="补充说明（选填）"
-        class="mt-3"
-        style="background: #fff"
-      />
+      <!-- 悬停/选中星级的语义标签（占位保持高度稳定，不让下方内容跳动） -->
+      <p class="mt-2 h-4 text-center text-xs" style="color: #f59e0b">
+        {{ scoreLabel }}
+      </p>
 
-      <!-- 操作 -->
-      <div class="mt-3 flex items-center gap-2">
+      <!--
+        文字评语（未选星前禁用，引导用户先评分再补文字）。
+        show-count 会把字数塞到文本域右下角贴着按钮，视觉杂乱 —
+        改成自绘的左下小字，跟按钮行分开。
+      -->
+      <div class="csat-textarea-wrap mt-3">
+        <Textarea
+          v-model:value="comment"
+          :auto-size="{ minRows: 2, maxRows: 3 }"
+          :maxlength="200"
+          :disabled="score < 1"
+          :placeholder="score < 1 ? '请先选择星级评分' : '补充说明（可选）'"
+          style="background: #fff"
+        />
+        <span
+          class="csat-count"
+          :class="{ 'csat-count--max': comment.length >= 200 }"
+        >
+          {{ comment.length }} / 200
+        </span>
+      </div>
+
+      <!-- 操作：跳过在左（次要），提交在右（主要），等宽避免主次不清 -->
+      <div class="csat-actions mt-4">
+        <Button
+          class="csat-btn"
+          :disabled="submitting"
+          size="large"
+          @click="skip"
+        >
+          跳过
+        </Button>
         <Button
           type="primary"
-          class="flex-1"
+          class="csat-btn"
           :loading="submitting"
           :disabled="score < 1"
+          size="large"
           @click="submit"
         >
           提交评价
         </Button>
-        <Button :disabled="submitting" @click="skip">跳过</Button>
       </div>
     </template>
   </div>
 </template>
+
+<style scoped>
+/* ===== 星级按钮 =====
+ * 用两枚不同图标（material-symbols 实心 / 描边）区分状态，
+ * 避免 lucide:star 硬编码 fill="none" 无法被外层 CSS 覆盖的问题。
+ */
+.csat-star-btn {
+  padding: 2px;
+  line-height: 0;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  transition:
+    transform 0.15s ease,
+    filter 0.15s ease;
+}
+
+.csat-star-btn:hover {
+  transform: scale(1.12);
+}
+
+.csat-star-btn:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.csat-star {
+  font-size: 40px;
+  transition: color 0.15s ease;
+}
+
+.csat-star--active {
+  color: #f59e0b;
+
+  /* 让金色更饱满 */
+  filter: drop-shadow(0 1px 2px rgb(245 158 11 / 25%));
+}
+
+.csat-star--inactive {
+  color: #d1d5db;
+}
+
+/* ===== 文本域 + 自绘字数 =====
+ * antd 原生 show-count 位于右下角外部，跟按钮行紧邻会挤在一起；
+ * 改成左下小字，跟按钮行明确分离。
+ */
+.csat-textarea-wrap {
+  position: relative;
+}
+
+.csat-count {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: #94a3b8;
+  text-align: right;
+  transition: color 0.15s ease;
+}
+
+.csat-count--max {
+  color: #ef4444;
+}
+
+/* ===== 操作按钮 =====
+ * 等宽（1:1 flex）让「跳过」和「提交评价」在视觉上等分，
+ * 避免默认 antd 二级按钮太单薄跟主按钮分量不匹配。
+ */
+.csat-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.csat-actions :deep(.csat-btn) {
+  flex: 1;
+  height: 40px;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 8px;
+}
+</style>

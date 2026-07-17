@@ -23,12 +23,36 @@ export async function sendSmsCodeApi(phone: string): Promise<void> {
   return publicClient.post('/chat/auth/sms/send', { phone });
 }
 
-/** 校验短信验证码，成功返回访客 token */
+/**
+ * 校验短信验证码，成功返回访客 token。
+ *
+ * 传入 sessionId 时后端会写入 `visitor:session:auth:{sessionId} -> phone` 绑定（TTL 2h），
+ * 用于刷新页面后通过 {@link getVisitorAuthStateApi} 恢复登录态。
+ */
 export async function verifySmsCodeApi(
   phone: string,
   code: string,
+  sessionId?: string,
 ): Promise<{ token: string }> {
-  return publicClient.post('/chat/auth/sms/verify', { phone, code });
+  return publicClient.post('/chat/auth/sms/verify', {
+    phone,
+    code,
+    ...(sessionId ? { sessionId } : {}),
+  });
+}
+
+/**
+ * 查询访客当前 sessionId 的认证状态（刷新页面时用于服务端权威恢复）。
+ *
+ * 返回：
+ *   - authenticated: 该 sessionId 是否已完成手机号验证
+ *   - phoneMask: 已认证时返回脱敏手机号（如 138****5678），用于 UI 标签
+ */
+export async function getVisitorAuthStateApi(sessionId: string): Promise<{
+  authenticated: boolean;
+  phoneMask?: null | string;
+}> {
+  return publicClient.get('/chat/auth/state', { params: { sessionId } });
 }
 
 export interface SessionQueueItem {
@@ -45,6 +69,7 @@ export interface WsChatMessage {
     | 'AGENT_JOINED'
     | 'CONNECTED'
     | 'CSAT_REQUEST'
+    | 'csat_request'
     | 'KICKED_OUT'
     | 'MESSAGE'
     | 'PING'
@@ -105,6 +130,26 @@ export async function acceptSessionApi(
 /** 获取结束会话（需 token） */
 export async function closeSessionApi(sessionId: string): Promise<void> {
   return agentClient.post(`/sessions/${sessionId}/close`);
+}
+
+/**
+ * 访客端提交消息反馈（点赞 / 点踩）。
+ *
+ * 前后端契约（对齐后端 M-04）：
+ *   POST /conversation/api/v1/chat/messages/feedback
+ *   body: { sessionId, seq, feedback: 'up' | 'down' | null }
+ *
+ * 使用点：
+ *   - AI 气泡下方的 thumbs-up / thumbs-down 按钮
+ *   - feedback=null 表示取消评价
+ *   - seq 缺失（如流式当轮尚未回填 seq）时后端按 sessionId 定位最近一条 AI 消息
+ */
+export async function submitVisitorFeedbackApi(params: {
+  feedback: 'down' | 'up' | null;
+  seq?: number;
+  sessionId: string;
+}): Promise<void> {
+  return publicClient.post('/chat/messages/feedback', params);
 }
 
 /**
@@ -246,14 +291,21 @@ function buildWsUrl(path: string): string {
  * 访客端 WebSocket 连接。
  * 路径：/ws/chat/{sessionId}（经 Vite proxy 转发到 localhost:8082）
  * onClose 传入 CloseEvent，调用方可根据 code 区分主动关闭（1000）和异常断线。
+ *
+ * 浏览器原生 WebSocket 不支持自定义 Header，token 通过 query param 传递，
+ * 后端 VisitorHandshakeInterceptor 也从 ?token= 读取校验。
  */
 export function connectVisitorWs(
   sessionId: string,
   onMessage: (msg: WsChatMessage) => void,
   onOpen?: () => void,
   onClose?: (event: CloseEvent) => void,
+  token?: string,
 ): WebSocket {
-  const ws = new WebSocket(buildWsUrl(`/ws/chat/${sessionId}`));
+  const path = token
+    ? `/ws/chat/${sessionId}?token=${encodeURIComponent(token)}`
+    : `/ws/chat/${sessionId}`;
+  const ws = new WebSocket(buildWsUrl(path));
   ws.addEventListener('open', () => onOpen?.());
   ws.addEventListener('message', (e) => {
     try {

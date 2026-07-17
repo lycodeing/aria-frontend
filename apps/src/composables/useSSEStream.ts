@@ -87,6 +87,11 @@ export function useSSEStream(
    * 供后端做域路由（例如 ?domainCode=weather 走天气域小模型）。
    */
   domainCode?: () => string,
+  /**
+   * 可选：访客 token 取值器。返回非空时以 `Authorization: Bearer <token>` 挂载，
+   * 后端据此关联手机号身份，识别到订单/账单等敏感问题。
+   */
+  visitorToken?: () => string,
 ) {
   const streaming = ref(false);
   let abortCtrl: AbortController | null = null;
@@ -105,13 +110,18 @@ export function useSSEStream(
     let reader: null | ReadableStreamDefaultReader<Uint8Array> = null;
     try {
       const code = domainCode?.() ?? '';
+      const token = visitorToken?.() ?? '';
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) headers.Authorization = `Bearer ${token}`;
       const response = await fetch('/conversation/api/v1/chat/stream', {
         body: JSON.stringify({
           message,
           sessionId: sessionId.value,
           ...(code ? { domainCode: code } : {}),
         }),
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         method: 'POST',
         signal,
       });
