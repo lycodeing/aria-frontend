@@ -289,21 +289,31 @@ function deleteUser(user: UserVO) {
         <FormItem
           label="用户名"
           name="username"
-          :rules="[{ required: true, message: '请输入用户名' }]"
+          :rules="[
+            { required: true, message: '请输入用户名' },
+            { min: 3, max: 50, message: '用户名长度须为 3~50 位' },
+          ]"
         >
           <Input
             v-model:value="form.username"
-            placeholder="登录账号（英文）"
+            placeholder="登录账号（英文，3~50 位）"
             :disabled="isEdit"
           />
         </FormItem>
-        <FormItem label="姓名" name="displayName">
+        <FormItem
+          label="姓名"
+          name="displayName"
+          :rules="[{ required: true, message: '请输入显示名称' }]"
+        >
           <Input v-model:value="form.displayName" placeholder="显示名称" />
         </FormItem>
         <FormItem
           label="邮箱"
           name="email"
-          :rules="[{ type: 'email', message: '请输入有效邮箱' }]"
+          :rules="[
+            { required: true, message: '请输入邮箱' },
+            { type: 'email', message: '请输入有效邮箱' },
+          ]"
         >
           <Input v-model:value="form.email" placeholder="邮箱地址" />
         </FormItem>
@@ -314,11 +324,18 @@ function deleteUser(user: UserVO) {
           v-if="!isEdit"
           label="初始密码"
           name="password"
-          :rules="[{ required: true, message: '请设置初始密码' }]"
+          :rules="[
+            { required: true, message: '请设置初始密码' },
+            {
+              pattern:
+                /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':\\|,.<>/?]).{8,}$/,
+              message: '至少8位，须含大写字母、数字和特殊字符',
+            },
+          ]"
         >
           <Input.Password
             v-model:value="form.password"
-            placeholder="至少8位，含大小写字母和数字"
+            placeholder="至少8位，须含大写字母、数字和特殊字符"
           />
         </FormItem>
       </Form>
