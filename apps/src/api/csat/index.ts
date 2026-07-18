@@ -73,10 +73,23 @@ export async function getPendingCsatApi(
 
 /**
  * CSAT 概览（平均分 / 响应率 / 评价数）。
- * GET /conversation/api/v1/dashboard/csat-overview
+ *
+ * 后端未在 /dashboard 下单独暴露 csat-overview 接口，CSAT 概览字段
+ * （csatAvgScore / csatResponseRate / csatRatedCount）已并入主概览
+ * GET /conversation/api/v1/dashboard/overview 的返回体中，
+ * 此处复用该接口并抽取 CSAT 字段，避免多一次无效请求 404。
  */
 export async function getCsatOverviewApi(): Promise<CsatOverviewData> {
-  return agentClient.get('/dashboard/csat-overview');
+  const overview = await agentClient.get<{
+    csatAvgScore?: number;
+    csatRatedCount?: number;
+    csatResponseRate?: number;
+  }>('/dashboard/overview');
+  return {
+    csatAvgScore: Number(overview?.csatAvgScore ?? 0),
+    csatResponseRate: Number(overview?.csatResponseRate ?? 0),
+    csatRatedCount: Number(overview?.csatRatedCount ?? 0),
+  };
 }
 
 /**

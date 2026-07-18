@@ -43,6 +43,20 @@ export async function refreshTokenApi() {
 }
 
 /**
+ * 短信验证码登录。
+ * 后端返回 tokenValue 字段，转换为前端期望的 accessToken。
+ * POST /auth/api/v1/auth/sms/login
+ */
+export async function smsLoginApi(data: Record<string, any>) {
+  const result = await authClient.post<{
+    [key: string]: any;
+    tokenValue: string;
+  }>('/auth/sms/login', data);
+  return { accessToken: result.tokenValue, ...result } as AuthApi.LoginResult &
+    typeof result;
+}
+
+/**
  * 退出登录。
  */
 export async function logoutApi() {

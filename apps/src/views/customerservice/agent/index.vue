@@ -239,7 +239,7 @@ function historyItemToMsg(h: {
   };
 }
 
-function formatShortDate(isoString: string | undefined): string {
+function formatShortDate(isoString: null | string | undefined): string {
   if (!isoString) return '';
   return new Date(isoString).toLocaleDateString('zh-CN', {
     month: '2-digit',
@@ -1057,9 +1057,9 @@ onUnmounted(() => {
                 <span
                   class="shrink-0 rounded px-1.5 py-0.5 text-[10px]"
                   :style="
-                    resolveTagColor(item.tag) === 'red'
+                    resolveTagColor(item.tag ?? '') === 'red'
                       ? 'background:#fff1f0;color:#cf1322'
-                      : resolveTagColor(item.tag) === 'orange'
+                      : resolveTagColor(item.tag ?? '') === 'orange'
                         ? 'background:#fff7e6;color:#d46b08'
                         : 'background:#e8f0ff;color:#1a73e8'
                   "
