@@ -61,6 +61,12 @@ export interface DashboardOverviewData {
   avgHandleSeconds: number;
   /** 平均首次回复时长（秒），first_reply_at - accepted_at */
   avgFirstReplySeconds: number;
+  /** CSAT 平均评分（0-5），随主概览一起返回 */
+  csatAvgScore?: number;
+  /** CSAT 响应率（0-100） */
+  csatResponseRate?: number;
+  /** CSAT 评价总数 */
+  csatRatedCount?: number;
 }
 
 /** 会话趋势数据项（month 字段值为 YYYY-MM-DD 日期标签） */
@@ -102,12 +108,12 @@ export interface TagDistributionItem {
 /** 复杂度等级（对应后端 cs_conversation.complexity 字段取值） */
 export type ComplexityLevel = 'COMPLEX' | 'MEDIUM' | 'SIMPLE';
 
-/** 复杂度分布数据项（后端按等级聚合后的占比） */
+/** 复杂度分布数据项（后端按等级聚合的会话数量） */
 export interface ComplexityDistributionItem {
-  /** 等级：SIMPLE / MEDIUM / COMPLEX */
-  level: ComplexityLevel;
-  /** 该等级占比（0-100，后端已计算，保留一位小数） */
-  percent: number;
+  /** 等级：SIMPLE / MEDIUM / COMPLEX（后端返回字段名 complexity） */
+  complexity: ComplexityLevel;
+  /** 该等级会话数量 */
+  count: number;
 }
 
 /**

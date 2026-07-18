@@ -41,7 +41,6 @@ import { message } from 'ant-design-vue';
 import {
   getCsatByAgentApi,
   getCsatDistributionApi,
-  getCsatOverviewApi,
   getCsatTrendApi,
 } from '#/api/csat';
 import {
@@ -134,14 +133,25 @@ const COMPLEXITY_META: Record<
   COMPLEX: { label: '复杂问题', color: 'bg-[#EF4444]' },
 };
 
-// 后端 level 映射为卡片需要的 { label, color, percent }
-const complexityRows = computed<ComplexityItem[]>(() =>
-  complexityData.value.map((item) => ({
-    label: COMPLEXITY_META[item.level].label,
-    color: COMPLEXITY_META[item.level].color,
-    percent: item.percent,
-  })),
-);
+// 后端返回 { complexity, count }，这里映射为卡片需要的 { label, color, percent }。
+// percent 由 count / 总会话数 计算得出（保留一位小数）；缺失档位按 0% 补齐，保证三档稳定展示。
+const COMPLEXITY_ORDER: ComplexityLevel[] = ['SIMPLE', 'MEDIUM', 'COMPLEX'];
+const complexityRows = computed<ComplexityItem[]>(() => {
+  const items = complexityData.value ?? [];
+  if (items.length === 0) return [];
+  const byLevel = new Map<ComplexityLevel, number>(
+    items.map((i) => [i.complexity, i.count ?? 0]),
+  );
+  const total = [...byLevel.values()].reduce((s, c) => s + c, 0) || 1;
+  return COMPLEXITY_ORDER.map((level) => {
+    const meta = COMPLEXITY_META[level];
+    return {
+      label: meta.label,
+      color: meta.color,
+      percent: Math.round(((byLevel.get(level) ?? 0) / total) * 1000) / 10,
+    };
+  });
+});
 
 // ─── CSAT 满意度评价数据 ───────────────────────────────────────────────────────
 const csatOverview = ref<CsatOverviewData>({
@@ -241,22 +251,29 @@ onMounted(async () => {
     complexityData.value = [];
   }
 
-  // CSAT 满意度评价快照数据（不受时间范围影响），失败不影响其他卡片
+  // CSAT 分布/分坐席：快照数据，不受时间范围影响；失败不影响其他卡片
   try {
-    const [overview, distribution, byAgent] = await Promise.all([
-      getCsatOverviewApi(),
+    const [distribution, byAgent] = await Promise.all([
       getCsatDistributionApi(),
       getCsatByAgentApi(),
     ]);
-    csatOverview.value = overview;
     csatDistribution.value = distribution;
     csatByAgent.value = byAgent;
   } catch {
     /* 保留默认值，卡片显示空态 */
   }
 
-  // 趋势数据按默认时间范围加载
+  // 趋势数据按默认时间范围加载；/dashboard/overview 同步填充 overviewData
   await fetchTrendData('month');
+
+  // CSAT 概览字段已并入 /dashboard/overview 返回体，直接从 overviewData 提取，
+  // 避免重复发起一次 GET /dashboard/overview 请求。
+  const ov = overviewData.value;
+  csatOverview.value = {
+    csatAvgScore: Number(ov?.csatAvgScore ?? 0),
+    csatResponseRate: Number(ov?.csatResponseRate ?? 0),
+    csatRatedCount: Number(ov?.csatRatedCount ?? 0),
+  };
 });
 </script>
 
