@@ -72,6 +72,17 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        name: 'CustomerServiceBusinessHours',
+        path: '/customerservice/business-hours',
+        component: () =>
+          import('#/views/customerservice/business-hours/index.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_manager'],
+          icon: 'lucide:clock',
+          title: '业务时间',
+        },
+      },
+      {
         name: 'CustomerServiceDIT',
         path: '/customerservice/dit',
         meta: {

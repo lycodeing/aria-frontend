@@ -67,6 +67,48 @@ const routes: RouteRecordRaw[] = [
           title: '系统配置',
         },
       },
+      {
+        name: 'SystemTags',
+        path: '/system/tags',
+        component: () => import('#/views/system/tags/index.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_manager'],
+          icon: 'lucide:tag',
+          title: '标签字典',
+        },
+      },
+      {
+        name: 'SystemSla',
+        path: '/system/sla',
+        component: () => import('#/views/system/sla/index.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_manager'],
+          icon: 'lucide:gauge',
+          title: 'SLA 管理',
+        },
+      },
+      {
+        name: 'SystemSlaWebhooks',
+        path: '/system/sla/webhooks',
+        component: () => import('#/views/system/sla/webhook.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_manager'],
+          icon: 'lucide:webhook',
+          title: 'Webhook 配置',
+          hideInMenu: true, // shown as tab within SLA page, not separate menu item
+        },
+      },
+      {
+        name: 'SystemSlaBreaches',
+        path: '/system/sla/breaches',
+        component: () => import('#/views/system/sla/breaches.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_manager'],
+          icon: 'lucide:alert-triangle',
+          title: 'SLA 违规记录',
+          hideInMenu: true, // shown as tab within SLA page
+        },
+      },
     ],
   },
 ];
