@@ -192,6 +192,12 @@ function updateOverviewItems(data: DashboardOverviewData) {
   ];
 }
 
+// ─── SLA 违规率格式化 ──────────────────────────────────────────────────────────
+function formatRate(rate?: number): string {
+  if (rate === null || rate === undefined) return '0.0';
+  return (rate * 100).toFixed(1);
+}
+
 async function fetchTrendData(range: TimeRange) {
   const id = ++latestRequestId;
   try {
@@ -270,6 +276,68 @@ onMounted(async () => {
 
     <!-- 概览指标卡片 -->
     <AnalysisOverview :items="overviewItems" />
+
+    <!-- SLA 违规统计区块 -->
+    <div class="mt-5">
+      <div class="mb-3 flex items-center gap-2">
+        <Icon
+          icon="lucide:shield-alert"
+          class="text-lg"
+          style="color: #ef4444"
+        />
+        <span class="text-base font-semibold">SLA 违规统计</span>
+      </div>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <!-- 今日 SLA 违规次数 -->
+        <div
+          class="flex items-center gap-4 rounded-xl border bg-card p-4 text-card-foreground shadow-sm"
+        >
+          <div
+            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
+            style="background: #fef2f2"
+          >
+            <Icon
+              icon="lucide:alarm-clock-off"
+              class="text-xl"
+              style="color: #ef4444"
+            />
+          </div>
+          <div class="min-w-0">
+            <p class="text-xs text-muted-foreground">今日SLA违规</p>
+            <p class="text-2xl font-semibold leading-none tabular-nums">
+              {{ overviewData?.slaBreachCount ?? 0 }}
+              <span class="ml-1 text-sm font-normal text-muted-foreground"
+                >次</span
+              >
+            </p>
+          </div>
+        </div>
+        <!-- SLA 违规率 -->
+        <div
+          class="flex items-center gap-4 rounded-xl border bg-card p-4 text-card-foreground shadow-sm"
+        >
+          <div
+            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
+            style="background: #fff7ed"
+          >
+            <Icon
+              icon="lucide:percent"
+              class="text-xl"
+              style="color: #f97316"
+            />
+          </div>
+          <div class="min-w-0">
+            <p class="text-xs text-muted-foreground">SLA违规率</p>
+            <p class="text-2xl font-semibold leading-none tabular-nums">
+              {{ formatRate(overviewData?.slaBreachRate) }}
+              <span class="ml-1 text-sm font-normal text-muted-foreground"
+                >%</span
+              >
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- CSAT 满意度评价区块 -->
     <div class="mt-5">
