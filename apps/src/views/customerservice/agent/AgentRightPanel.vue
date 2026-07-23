@@ -1,12 +1,35 @@
 <script setup lang="ts">
 import type { ClosedView, SessionData } from './types';
 
+import type { NoteVO } from '#/api/note/index';
 import type { ReplySuggestion, VisitorHistorySession } from '#/api/session';
+import type { TagVO } from '#/api/tag/index';
 import type { SummaryState } from '#/composables/useVisitorHistory';
 
-import { Icon } from '@iconify/vue';
-import { Button } from 'ant-design-vue';
+import { ref, watch } from 'vue';
 
+import { Icon } from '@iconify/vue';
+import {
+  Button,
+  Collapse,
+  CollapsePanel,
+  Modal,
+  Select,
+  Space,
+  Tag,
+  Textarea,
+} from 'ant-design-vue';
+
+import { createNoteApi, deleteNoteApi, listNotesApi } from '#/api/note/index';
+import {
+  addSessionTagApi,
+  addVisitorTagApi,
+  listSessionTagsApi,
+  listTagsApi,
+  listVisitorTagsApi,
+  removeSessionTagApi,
+  removeVisitorTagApi,
+} from '#/api/tag/index';
 import { formatWaitTime, resolveTagColor } from '#/composables/useSessionQueue';
 
 import AISuggestPanel from './AISuggestPanel.vue';
@@ -37,6 +60,124 @@ function formatShortDate(isoString: string | undefined): string {
     day: '2-digit',
   });
 }
+
+// ===== Tag & Note state =====
+const visitorTags = ref<TagVO[]>([]);
+const sessionTags = ref<TagVO[]>([]);
+const allTags = ref<TagVO[]>([]);
+const tagPickerMode = ref<'session' | 'visitor'>('visitor');
+const tagPickerVisibleVisitor = ref(false);
+const tagPickerVisibleSession = ref(false);
+const selectedTagIdVisitor = ref<string | undefined>();
+const selectedTagIdSession = ref<string | undefined>();
+
+const notes = ref<NoteVO[]>([]);
+const newNoteContent = ref('');
+const savingNote = ref(false);
+
+// ===== Helpers =====
+function formatTime(time: string | undefined): string {
+  if (!time) return '';
+  return time.slice(0, 16).replace('T', ' ');
+}
+
+// ===== Load data =====
+async function loadTagsAndNotes(sessionId: string) {
+  const [vTags, sTags, noteList, tagDict] = await Promise.all([
+    listVisitorTagsApi(sessionId),
+    listSessionTagsApi(sessionId),
+    listNotesApi(sessionId),
+    listTagsApi(),
+  ]);
+  visitorTags.value = vTags;
+  sessionTags.value = sTags;
+  notes.value = noteList;
+  allTags.value = tagDict;
+}
+
+// ===== Tag operations =====
+async function removeVisitorTag(tagId: number | string) {
+  const sid = props.activeSession?.id;
+  if (!sid) return;
+  await removeVisitorTagApi(sid, tagId);
+  visitorTags.value = visitorTags.value.filter((t) => t.id !== tagId);
+}
+
+async function removeSessionTag(tagId: number | string) {
+  const sid = props.activeSession?.id;
+  if (!sid) return;
+  await removeSessionTagApi(sid, tagId);
+  sessionTags.value = sessionTags.value.filter((t) => t.id !== tagId);
+}
+
+async function confirmAddVisitorTag(tagId: string) {
+  const sid = props.activeSession?.id;
+  if (!sid || !tagId) return;
+  const added = await addVisitorTagApi(sid, { tagId });
+  visitorTags.value.push(added);
+  selectedTagIdVisitor.value = undefined;
+  tagPickerVisibleVisitor.value = false;
+}
+
+async function confirmAddSessionTag(tagId: string) {
+  const sid = props.activeSession?.id;
+  if (!sid || !tagId) return;
+  const added = await addSessionTagApi(sid, { tagId });
+  sessionTags.value.push(added);
+  selectedTagIdSession.value = undefined;
+  tagPickerVisibleSession.value = false;
+}
+
+function showTagPicker(mode: 'session' | 'visitor') {
+  tagPickerMode.value = mode;
+  if (mode === 'visitor') {
+    tagPickerVisibleVisitor.value = true;
+  } else {
+    tagPickerVisibleSession.value = true;
+  }
+}
+
+// ===== Note operations =====
+async function saveNote() {
+  const sid = props.activeSession?.id;
+  if (!newNoteContent.value.trim() || !sid) return;
+  savingNote.value = true;
+  try {
+    const note = await createNoteApi(sid, newNoteContent.value);
+    notes.value.push(note);
+    newNoteContent.value = '';
+  } finally {
+    savingNote.value = false;
+  }
+}
+
+async function deleteNote(noteId: number | string) {
+  const sid = props.activeSession?.id;
+  if (!sid) return;
+  Modal.confirm({
+    title: '删除备注',
+    content: '确定要删除这条备注吗？',
+    okType: 'danger',
+    async onOk() {
+      await deleteNoteApi(sid, noteId);
+      notes.value = notes.value.filter((n) => n.id !== noteId);
+    },
+  });
+}
+
+// ===== Watch session change =====
+watch(
+  () => props.activeSession?.id,
+  (newId) => {
+    if (newId) {
+      visitorTags.value = [];
+      sessionTags.value = [];
+      notes.value = [];
+      loadTagsAndNotes(newId);
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -198,6 +339,120 @@ function formatShortDate(isoString: string | undefined): string {
           查看全部会话
         </Button>
       </div>
+
+      <!-- ===== 标签管理 ===== -->
+      <Collapse :bordered="false" class="bg-transparent">
+        <CollapsePanel key="tags" header="标签管理">
+          <!-- 访客标签 -->
+          <div class="mb-3">
+            <div class="mb-1 text-xs text-gray-500">访客标签（跨会话）</div>
+            <div class="flex flex-wrap gap-1">
+              <Tag
+                v-for="tag in visitorTags"
+                :key="tag.id"
+                :color="tag.color"
+                closable
+                @close="removeVisitorTag(tag.id)"
+                >{{ tag.name }}</Tag
+              >
+              <template v-if="tagPickerVisibleVisitor">
+                <Select
+                  v-model:value="selectedTagIdVisitor"
+                  size="small"
+                  style="width: 120px"
+                  placeholder="选择标签"
+                  :options="
+                    allTags.map((t) => ({ value: String(t.id), label: t.name }))
+                  "
+                  @change="(v: any) => confirmAddVisitorTag(String(v))"
+                  @blur="tagPickerVisibleVisitor = false"
+                />
+              </template>
+              <Button
+                v-else
+                size="small"
+                type="dashed"
+                @click="showTagPicker('visitor')"
+                >+ 添加</Button
+              >
+            </div>
+          </div>
+          <!-- 会话标签 -->
+          <div>
+            <div class="mb-1 text-xs text-gray-500">会话标签</div>
+            <div class="flex flex-wrap gap-1">
+              <Tag
+                v-for="tag in sessionTags"
+                :key="tag.id"
+                :color="tag.color"
+                closable
+                @close="removeSessionTag(tag.id)"
+                >{{ tag.name }}</Tag
+              >
+              <template v-if="tagPickerVisibleSession">
+                <Select
+                  v-model:value="selectedTagIdSession"
+                  size="small"
+                  style="width: 120px"
+                  placeholder="选择标签"
+                  :options="
+                    allTags.map((t) => ({ value: String(t.id), label: t.name }))
+                  "
+                  @change="(v: any) => confirmAddSessionTag(String(v))"
+                  @blur="tagPickerVisibleSession = false"
+                />
+              </template>
+              <Button
+                v-else
+                size="small"
+                type="dashed"
+                @click="showTagPicker('session')"
+                >+ 添加</Button
+              >
+            </div>
+          </div>
+        </CollapsePanel>
+      </Collapse>
+
+      <!-- ===== 内部备注 ===== -->
+      <Collapse :bordered="false" class="bg-transparent">
+        <CollapsePanel key="notes" header="内部备注">
+          <div
+            v-for="note in notes"
+            :key="note.id"
+            class="mb-2 rounded bg-gray-50 p-2 text-sm"
+          >
+            <div>{{ note.content }}</div>
+            <div class="mt-1 flex justify-between text-xs text-gray-400">
+              <span>{{ note.createdBy }}</span>
+              <Space>
+                <span>{{ formatTime(note.createTime) }}</span>
+                <Button type="link" size="small" @click="deleteNote(note.id)"
+                  >删除</Button
+                >
+              </Space>
+            </div>
+          </div>
+          <div v-if="notes.length === 0" class="text-xs text-gray-400">
+            暂无备注
+          </div>
+          <div class="mt-2">
+            <Textarea
+              v-model:value="newNoteContent"
+              :rows="2"
+              placeholder="添加内部备注..."
+            />
+            <Button
+              class="mt-1"
+              size="small"
+              type="primary"
+              :loading="savingNote"
+              @click="saveNote"
+              >保存备注</Button
+            >
+          </div>
+        </CollapsePanel>
+      </Collapse>
 
       <!-- AI suggest panel (fills remaining space) -->
       <AISuggestPanel
