@@ -197,10 +197,7 @@ const columns = [
 </script>
 
 <template>
-  <Page
-    title="SLA 策略管理"
-    description="配置服务等级协议，定义超时阈值与违规处置行为"
-  >
+  <Page>
     <template #extra>
       <Button type="primary" @click="openCreate">+ 新增策略</Button>
     </template>

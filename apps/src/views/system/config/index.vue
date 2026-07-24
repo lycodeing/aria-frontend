@@ -35,9 +35,6 @@ const configType = computed(() => {
   if (route.meta.configType) return route.meta.configType as string;
   return route.path === '/system/config' ? 'SYSTEM' : 'CUSTOMER_SERVICE';
 });
-const pageTitle = computed(() =>
-  configType.value === 'CUSTOMER_SERVICE' ? '客服配置' : '系统配置',
-);
 
 // ===== 列表状态 =====
 const list = ref<SystemConfigVO[]>([]);
@@ -175,7 +172,7 @@ watch(configType, () => {
 </script>
 
 <template>
-  <Page :description="`管理 ${pageTitle} 类配置项`" :title="pageTitle">
+  <Page>
     <!-- 搜索栏 -->
     <div class="mb-3 flex items-center gap-2">
       <Input

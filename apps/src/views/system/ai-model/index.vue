@@ -290,10 +290,7 @@ const columns = computed(() => {
 </script>
 
 <template>
-  <Page
-    title="AI 模型配置"
-    description="统一管理对话大模型和向量模型，支持后台热切换无需重启服务"
-  >
+  <Page>
     <template #extra>
       <Button type="primary" @click="openCreate">+ 新增配置</Button>
     </template>

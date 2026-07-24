@@ -156,7 +156,7 @@ onMounted(loadList);
 </script>
 
 <template>
-  <Page title="标签字典" description="管理系统预定义标签与自定义标签">
+  <Page>
     <template #extra>
       <Button type="primary" @click="openCreate">+ 新增标签</Button>
     </template>

@@ -45,10 +45,11 @@ export interface QueueItem {
   color: string;
   waitMin: string;
   waitSince: number;
+  acceptedAt: number; // epoch milliseconds，座席接入时间
   reason: string;
   tag: string;
   tagColor: string;
-  status: 'ACTIVE' | 'AI_CHAT' | 'CLOSED' | 'WAITING'; // 新增
+  status: 'ACTIVE' | 'AI_CHAT' | 'CLOSED' | 'WAITING';
 }
 
 export function toQueueItem(item: ApiSessionItem): QueueItem {
@@ -58,6 +59,7 @@ export function toQueueItem(item: ApiSessionItem): QueueItem {
     color: resolveStatusColor(item.status),
     waitMin: formatWaitTime(item.waitSince),
     waitSince: item.waitSince,
+    acceptedAt: item.acceptedAt ?? 0,
     reason: item.transferReason,
     tag: item.tag,
     tagColor: resolveTagColor(item.tag),

@@ -201,7 +201,7 @@ onMounted(loadList);
 </script>
 
 <template>
-  <Page title="菜单管理" description="管理系统菜单、路由和按钮权限">
+  <Page>
     <template #extra>
       <Button type="primary" @click="openCreate()">
         <template #icon><Icon icon="lucide:plus" /></template>

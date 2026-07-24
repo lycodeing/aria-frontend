@@ -258,10 +258,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <Page
-    title="业务时间配置"
-    description="配置客服工作时间、节假日和离线自动回复"
-  >
+  <Page>
     <Tabs v-model:active-key="activeTab">
       <TabPane key="schedule" tab="每周排班">
         <div style="margin-bottom: 12px; text-align: right">

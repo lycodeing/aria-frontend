@@ -27,7 +27,6 @@ const props = defineProps<{
   msgFilter: string;
   msgInput: string;
   queue: { length: number };
-  quickReplies: string[];
   toolExpanded: Record<number, boolean>;
   /** 访客输入中状态，true 时在消息列表底部显示"正在输入"动画 */
   visitorTyping?: boolean;
@@ -38,7 +37,6 @@ const emit = defineEmits<{
   closeSession: [];
   copyMsg: [text: string];
   exitClosed: [];
-  quickReply: [q: string];
   reconnectSession: [];
   send: [];
   takeoverAi: [];
@@ -622,20 +620,6 @@ watch(
       <Icon icon="lucide:arrow-down" class="text-[14px]" />
       {{ newMsgCount }} 条新消息
     </button>
-
-    <!-- Quick replies -->
-    <div
-      class="flex shrink-0 gap-1.5 overflow-x-auto border-t border-[#e4e7ed] bg-white px-4 py-2"
-    >
-      <button
-        v-for="q in quickReplies"
-        :key="q"
-        class="shrink-0 rounded-md bg-[#f7f8fc] px-3 py-1.5 text-[12px] text-[#52525b] transition hover:bg-[#eef1f8]"
-        @click="emit('quickReply', q)"
-      >
-        {{ q }}
-      </button>
-    </div>
 
     <!-- Input area -->
     <footer

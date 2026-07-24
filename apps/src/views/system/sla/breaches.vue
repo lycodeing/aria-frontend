@@ -107,7 +107,7 @@ onMounted(loadList);
 </script>
 
 <template>
-  <Page title="SLA 违规记录" description="查询历史 SLA 违规与预警事件，只读">
+  <Page>
     <!-- 筛选栏 -->
     <Space wrap style="margin-bottom: 16px">
       <Input

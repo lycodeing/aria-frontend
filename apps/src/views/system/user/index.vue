@@ -198,7 +198,7 @@ function deleteUser(user: UserVO) {
 </script>
 
 <template>
-  <Page title="用户管理" description="管理系统用户、分配角色、重置密码">
+  <Page>
     <template #extra>
       <Button type="primary" @click="openCreate">
         <template #icon><Icon icon="ant-design:plus-outlined" /></template

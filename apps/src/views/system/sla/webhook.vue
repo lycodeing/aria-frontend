@@ -207,7 +207,7 @@ onMounted(loadList);
 </script>
 
 <template>
-  <Page title="Webhook 配置" description="管理 SLA 告警推送的 Webhook 端点">
+  <Page>
     <template #extra>
       <Button type="primary" @click="openCreate">+ 新增 Webhook</Button>
     </template>

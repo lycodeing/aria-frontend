@@ -153,7 +153,8 @@ async function loadDomains() {
   }
 }
 
-async function selectDomain(id: number) {
+async function selectDomain(id: null | number | undefined) {
+  if (!id) return;
   selectedDomainId.value = id;
   selectedIntentId.value = null;
   try {
@@ -163,7 +164,8 @@ async function selectDomain(id: number) {
   }
 }
 
-async function selectIntent(id: number) {
+async function selectIntent(id: null | number | undefined) {
+  if (!id) return;
   selectedIntentId.value = id;
   activeTab.value = 'basic';
   try {
@@ -234,7 +236,8 @@ function confirmDeleteDomain(d: DomainDTO) {
     okType: 'danger',
     async onOk() {
       try {
-        await deleteDomainApi(d.id!);
+        if (!d.id) return;
+        await deleteDomainApi(d.id);
         message.success('已删除');
         if (selectedDomainId.value === d.id) {
           selectedDomainId.value = null;
@@ -301,9 +304,11 @@ async function saveIntent() {
     return;
   }
   savingIntent.value = true;
+  const domainId = selectedDomainId.value;
+  if (!domainId) return;
   const data = {
     ...intentForm.value,
-    domainId: selectedDomainId.value!,
+    domainId,
     exampleQueries: JSON.stringify(exampleQueriesList.value.filter(Boolean)),
   } as IntentDTO;
   try {
@@ -315,7 +320,7 @@ async function saveIntent() {
       message.success('创建成功');
     }
     intentDrawerVisible.value = false;
-    intents.value = await listIntentsApi(selectedDomainId.value!);
+    intents.value = await listIntentsApi(domainId);
   } catch {
     message.error('操作失败，请重试');
   } finally {
@@ -332,7 +337,8 @@ async function confirmDeleteIntent(i: IntentDTO) {
     okType: 'danger',
     async onOk() {
       try {
-        await deleteIntentApi(i.id!);
+        if (!i.id) return;
+        await deleteIntentApi(i.id);
         message.success('已删除');
         if (selectedIntentId.value === i.id) selectedIntentId.value = null;
         intents.value = await listIntentsApi(domainId);
@@ -374,9 +380,11 @@ async function saveSlot() {
     return;
   }
   savingSlot.value = true;
+  const intentId = selectedIntentId.value;
+  if (!intentId) return;
   const data = {
     ...slotForm.value,
-    intentId: selectedIntentId.value!,
+    intentId,
     resolveStrategy: JSON.stringify(resolveStrategyList.value.filter(Boolean)),
   } as SlotDTO;
   try {
@@ -385,7 +393,7 @@ async function saveSlot() {
       : createSlotApi(data));
     message.success('保存成功');
     slotDrawerVisible.value = false;
-    slots.value = await listSlotsApi(selectedIntentId.value!);
+    slots.value = await listSlotsApi(intentId);
   } catch {
     message.error('保存失败，请重试');
   } finally {
@@ -402,7 +410,8 @@ function confirmDeleteSlot(s: SlotDTO) {
     okType: 'danger',
     async onOk() {
       try {
-        await deleteSlotApi(s.id!);
+        if (!s.id) return;
+        await deleteSlotApi(s.id);
         message.success('已删除');
         slots.value = await listSlotsApi(intentId);
       } catch {
@@ -425,7 +434,10 @@ async function saveBinding() {
   }
   savingBinding.value = true;
   const intentId = selectedIntentId.value;
-  if (!intentId) { savingBinding.value = false; return; }
+  if (!intentId) {
+    savingBinding.value = false;
+    return;
+  }
   const data = {
     ...bindingForm.value,
     intentId,
@@ -451,7 +463,8 @@ function confirmDeleteBinding(b: BindingDTO) {
     okType: 'danger',
     async onOk() {
       try {
-        await deleteBindingApi(b.id!);
+        if (!b.id) return;
+        await deleteBindingApi(b.id);
         message.success('已解除');
         bindings.value = await listBindingsApi(intentId);
       } catch {
@@ -463,11 +476,7 @@ function confirmDeleteBinding(b: BindingDTO) {
 </script>
 
 <template>
-  <Page
-    title="领域与意图管理"
-    description="管理客服领域、意图、槽位及工具绑定配置"
-    auto-content-height
-  >
+  <Page auto-content-height>
     <div class="flex h-full min-h-0 gap-4 overflow-hidden">
       <!-- 左侧领域列表 -->
       <Card
@@ -486,12 +495,20 @@ function confirmDeleteBinding(b: BindingDTO) {
           :key="d.id"
           class="domain-item"
           :class="[{ active: selectedDomainId === d.id }]"
-          @click="selectDomain(d.id!)"
+          @click="selectDomain(d.id)"
         >
           <span>{{ d.name }}</span>
           <Space size="small" class="domain-actions">
-            <Button type="link" size="small" @click.stop="openEditDomain(d)">编辑</Button>
-            <Button type="link" danger size="small" @click.stop="confirmDeleteDomain(d)">删除</Button>
+            <Button type="link" size="small" @click.stop="openEditDomain(d)"
+              >编辑</Button
+            >
+            <Button
+              type="link"
+              danger
+              size="small"
+              @click.stop="confirmDeleteDomain(d)"
+              >删除</Button
+            >
           </Space>
         </div>
       </Card>
@@ -518,15 +535,25 @@ function confirmDeleteBinding(b: BindingDTO) {
               :key="i.id"
               class="intent-item"
               :class="[{ active: selectedIntentId === i.id }]"
-              @click="selectIntent(i.id!)"
+              @click="selectIntent(i.id)"
             >
-              <span>{{ i.name }}
-                <small style="color: #999">({{ i.code }})</small></span>
+              <span
+                >{{ i.name }}
+                <small style="color: #999">({{ i.code }})</small></span
+              >
               <Space size="small">
                 <Tag v-if="i.autoTransfer" color="orange">转人工</Tag>
                 <Tag v-if="i.skipRag" color="blue">跳过RAG</Tag>
-                <Button type="link" size="small" @click.stop="openEditIntent(i)">编辑</Button>
-                <Button type="link" danger size="small" @click.stop="confirmDeleteIntent(i)">删除</Button>
+                <Button type="link" size="small" @click.stop="openEditIntent(i)"
+                  >编辑</Button
+                >
+                <Button
+                  type="link"
+                  danger
+                  size="small"
+                  @click.stop="confirmDeleteIntent(i)"
+                  >删除</Button
+                >
               </Space>
             </div>
           </div>
@@ -601,7 +628,9 @@ function confirmDeleteBinding(b: BindingDTO) {
                   <template v-if="column.key === 'resolveStrategy'">
                     <Space wrap>
                       <Tag
-                        v-for="(s, idx) in parseResolveStrategy(record.resolveStrategy)"
+                        v-for="(s, idx) in parseResolveStrategy(
+                          record.resolveStrategy,
+                        )"
                         :key="idx"
                         color="purple"
                       >
@@ -611,8 +640,19 @@ function confirmDeleteBinding(b: BindingDTO) {
                   </template>
                   <template v-if="column.key === 'actions'">
                     <Space>
-                      <Button type="link" size="small" @click="openEditSlot(record as SlotDTO)">编辑</Button>
-                      <Button type="link" danger size="small" @click="confirmDeleteSlot(record as SlotDTO)">删除</Button>
+                      <Button
+                        type="link"
+                        size="small"
+                        @click="openEditSlot(record as SlotDTO)"
+                        >编辑</Button
+                      >
+                      <Button
+                        type="link"
+                        danger
+                        size="small"
+                        @click="confirmDeleteSlot(record as SlotDTO)"
+                        >删除</Button
+                      >
                     </Space>
                   </template>
                 </template>
@@ -641,15 +681,23 @@ function confirmDeleteBinding(b: BindingDTO) {
                   </template>
                   <template v-if="column.key === 'executionMode'">
                     <Tag
-:color="
-                      record.executionMode === 'REQUIRED' ? 'error' : 'processing'
-                    "
+                      :color="
+                        record.executionMode === 'REQUIRED'
+                          ? 'error'
+                          : 'processing'
+                      "
                     >
                       {{ record.executionMode }}
                     </Tag>
                   </template>
                   <template v-if="column.key === 'actions'">
-                    <Button type="link" danger size="small" @click="confirmDeleteBinding(record as BindingDTO)">解除</Button>
+                    <Button
+                      type="link"
+                      danger
+                      size="small"
+                      @click="confirmDeleteBinding(record as BindingDTO)"
+                      >解除</Button
+                    >
                   </template>
                 </template>
               </Table>
@@ -715,31 +763,31 @@ function confirmDeleteBinding(b: BindingDTO) {
           <Textarea v-model:value="intentForm.description" :rows="2" />
         </FormItem>
         <FormItem label="示例句子">
-            <div class="flex flex-col gap-2">
-              <div
-                v-for="(_, idx) in exampleQueriesList"
-                :key="idx"
-                class="flex items-center gap-2"
+          <div class="flex flex-col gap-2">
+            <div
+              v-for="(_, idx) in exampleQueriesList"
+              :key="idx"
+              class="flex items-center gap-2"
+            >
+              <Input
+                v-model:value="exampleQueriesList[idx]"
+                placeholder="如：帮我查订单"
+                class="flex-1"
+              />
+              <Button
+                type="link"
+                danger
+                size="small"
+                @click="removeExampleQuery(idx)"
               >
-                <Input
-                  v-model:value="exampleQueriesList[idx]"
-                  placeholder="如：帮我查订单"
-                  class="flex-1"
-                />
-                <Button
-                  type="link"
-                  danger
-                  size="small"
-                  @click="removeExampleQuery(idx)"
-                >
-                  删除
-                </Button>
-              </div>
-              <Button size="small" @click="addExampleQuery">
-                + 添加示例句子
+                删除
               </Button>
             </div>
-          </FormItem>
+            <Button size="small" @click="addExampleQuery">
+              + 添加示例句子
+            </Button>
+          </div>
+        </FormItem>
         <FormItem label="自动转人工">
           <Switch v-model:checked="intentForm.autoTransfer" />
         </FormItem>
@@ -788,36 +836,44 @@ function confirmDeleteBinding(b: BindingDTO) {
           <Switch v-model:checked="slotForm.required" />
         </FormItem>
         <FormItem label="解析策略">
-            <div class="flex flex-col gap-2">
-              <div
-                v-for="(_, idx) in resolveStrategyList"
-                :key="idx"
-                class="flex items-center gap-2"
+          <div class="flex flex-col gap-2">
+            <div
+              v-for="(_, idx) in resolveStrategyList"
+              :key="idx"
+              class="flex items-center gap-2"
+            >
+              <Select
+                v-model:value="resolveStrategyList[idx]"
+                class="flex-1"
+                placeholder="选择策略"
               >
-                <Select
-                  v-model:value="resolveStrategyList[idx]"
-                  class="flex-1"
-                  placeholder="选择策略"
+                <SelectOption value="EXTRACT"
+                  >EXTRACT（从用户消息中提取）</SelectOption
                 >
-                  <SelectOption value="EXTRACT">EXTRACT（从用户消息中提取）</SelectOption>
-                  <SelectOption value="SESSION">SESSION（从会话上下文获取）</SelectOption>
-                  <SelectOption value="DISCOVER">DISCOVER（调用发现工具查询）</SelectOption>
-                  <SelectOption value="ASK_USER">ASK_USER（反问用户获取）</SelectOption>
-                </Select>
-                <Button
-                  type="link"
-                  danger
-                  size="small"
-                  @click="removeResolveStrategy(idx)"
+                <SelectOption value="SESSION"
+                  >SESSION（从会话上下文获取）</SelectOption
                 >
-                  删除
-                </Button>
-              </div>
-              <Button size="small" @click="addResolveStrategy">
-                + 添加策略
+                <SelectOption value="DISCOVER"
+                  >DISCOVER（调用发现工具查询）</SelectOption
+                >
+                <SelectOption value="ASK_USER"
+                  >ASK_USER（反问用户获取）</SelectOption
+                >
+              </Select>
+              <Button
+                type="link"
+                danger
+                size="small"
+                @click="removeResolveStrategy(idx)"
+              >
+                删除
               </Button>
             </div>
-          </FormItem>
+            <Button size="small" @click="addResolveStrategy">
+              + 添加策略
+            </Button>
+          </div>
+        </FormItem>
         <FormItem label="发现工具码">
           <Input v-model:value="slotForm.discoverToolCode" />
         </FormItem>

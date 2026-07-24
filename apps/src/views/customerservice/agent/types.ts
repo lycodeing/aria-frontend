@@ -31,6 +31,8 @@ export interface SessionData {
   tag: string;
   /** 入队时间戳（epoch 秒） */
   waitSince: number;
+  /** 座席接入时间戳（epoch 秒），用于实时显示接入时长 */
+  acceptedAt: number;
   msgs: Msg[];
   /** 非当前会话时收到的未读消息数，切换到该会话时归零 */
   unread: number;

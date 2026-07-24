@@ -169,7 +169,7 @@ function lastMsgTime(s: SessionData): string {
         <button
           v-for="tab in queueStateTabs"
           :key="tab.key"
-          class="flex h-[26px] flex-1 items-center justify-center gap-1 rounded-md text-[11px] transition-colors"
+          class="flex h-[28px] flex-1 items-center justify-center gap-1 rounded-md text-[11px] transition-colors"
           :class="
             queueStateTab === tab.key
               ? 'bg-[#1a73e8] font-medium text-white'
@@ -182,6 +182,7 @@ function lastMsgTime(s: SessionData): string {
             )
           "
         >
+          <Icon :icon="tab.icon" class="shrink-0 text-[12px]" />
           <!-- AI 对话 Tab 角标 -->
           <span
             v-if="tab.key === 'ai' && aiQueue.length"
@@ -210,7 +211,7 @@ function lastMsgTime(s: SessionData): string {
             "
             >{{ sessions.length }}</span
           >
-          {{ tab.label }}
+          <span class="hidden sm:inline">{{ tab.label }}</span>
         </button>
       </div>
 

@@ -490,10 +490,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <Page
-    title="知识库管理"
-    description="管理客服知识文档，支持 PDF / Markdown / HTML / Word / 工单"
-  >
+  <Page>
     <template #extra>
       <Space>
         <Button @click="searchModalVisible = true">🔍 检索测试</Button>
