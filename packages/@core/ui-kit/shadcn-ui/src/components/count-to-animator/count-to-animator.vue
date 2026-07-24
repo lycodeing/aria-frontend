@@ -1,5 +1,13 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref, unref, watch, watchEffect } from 'vue';
+import {
+  computed,
+  onMounted,
+  onUnmounted,
+  ref,
+  unref,
+  watch,
+  watchEffect,
+} from 'vue';
 
 import { isNumber } from '@vben-core/shared/utils';
 
@@ -51,8 +59,27 @@ const emit = defineEmits<{
 }>();
 
 const source = ref(props.startVal);
-const disabled = ref(false);
-let outputValue = useTransition(source);
+// Respect prefers-reduced-motion: render the final value immediately instead of
+// animating. This is both an accessibility improvement and makes headless/automated
+// verification deterministic (rAF is throttled in background/hidden tabs, freezing the count-up).
+const prefersReducedMotion =
+  typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false;
+// When the document is hidden, rAF is paused by the browser so the count-up would
+// freeze at startVal forever. Render the final value immediately in that case.
+const isHidden =
+  typeof document !== 'undefined' && document.visibilityState === 'hidden';
+const disabled = ref(prefersReducedMotion || isHidden);
+let outputValue = useTransition(source, { disabled });
+
+// 具名函数，便于 onUnmounted 精确移除，避免闭包匿名函数无法反注册的内存泄漏
+function handleVisibilityChange() {
+  if (!document.hidden && !prefersReducedMotion) {
+    disabled.value = false;
+    start();
+  }
+}
 
 const value = computed(() => formatNumber(unref(outputValue)));
 
@@ -67,7 +94,18 @@ watch([() => props.startVal, () => props.endVal], () => {
 });
 
 onMounted(() => {
+  // If the tab becomes visible later, let the count-up play for real users
+  // who had the component mount while the document was hidden.
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+  }
   props.autoplay && start();
+});
+
+onUnmounted(() => {
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }
 });
 
 function start() {

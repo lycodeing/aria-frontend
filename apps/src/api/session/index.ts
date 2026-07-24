@@ -395,13 +395,18 @@ export function sendPingSignal(ws: null | WebSocket): void {
 // 历史工单 + AI 总结
 // -------------------------------------------------------
 
-/** 访客历史工单摘要 */
+/** 访客历史工单摘要（对齐后端 VisitorHistoryVO） */
 export interface VisitorHistorySession {
   sessionId: string;
-  tag: string;
-  transferReason: string;
+  /** 问题标签（无则为 null） */
+  tag: null | string;
+  /** 转人工原因（无则为空串或 null） */
+  transferReason?: null | string;
+  /** 会话状态：AI_CHAT / WAITING / ACTIVE / CLOSED */
+  status?: string;
   startedAt: string; // ISO 8601
-  endedAt: string;
+  /** 结束时间，进行中/AI 对话为 null */
+  endedAt: null | string;
   msgCount: number;
   aiSummary?: null | string; // 已缓存则有值，否则 null
 }

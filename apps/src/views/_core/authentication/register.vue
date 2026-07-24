@@ -3,13 +3,19 @@ import type { VbenFormSchema } from '@vben/common-ui';
 import type { Recordable } from '@vben/types';
 
 import { computed, h, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { AuthenticationRegister, z } from '@vben/common-ui';
 import { $t } from '@vben/locales';
 
+import { message } from 'ant-design-vue';
+
+import { authClient } from '#/api/request';
+
 defineOptions({ name: 'Register' });
 
 const loading = ref(false);
+const router = useRouter();
 
 const formSchema = computed((): VbenFormSchema[] => {
   return [
@@ -81,8 +87,28 @@ const formSchema = computed((): VbenFormSchema[] => {
   ];
 });
 
-function handleSubmit(value: Recordable<any>) {
-  void value;
+/**
+ * 注册账号（座席端）。
+ * 后端约定：POST /auth/api/v1/auth/register
+ * 注册成功后跳转到登录页。
+ */
+async function handleSubmit(value: Recordable<any>) {
+  loading.value = true;
+  try {
+    await authClient.post('/auth/register', {
+      username: value.username,
+      password: value.password,
+      // confirmPassword 已由表单层校验通过，无需透传给后端
+    });
+    message.success($t('authentication.registerSuccess') || '注册成功，请登录');
+    await router.push('/auth/login');
+  } catch {
+    message.error(
+      $t('authentication.registerFailed') || '注册失败，请稍后重试',
+    );
+  } finally {
+    loading.value = false;
+  }
 }
 </script>
 

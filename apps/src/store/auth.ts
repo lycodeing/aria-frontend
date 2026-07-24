@@ -43,13 +43,17 @@ export const useAuthStore = defineStore('auth', () => {
   async function authLogin(
     params: Recordable<any>,
     onSuccess?: () => Promise<void> | void,
+    customLoginFn?: (
+      p: Recordable<any>,
+    ) => Promise<Record<string, any> & { accessToken: string }>,
   ) {
     let userInfo: null | UserInfo = null;
     try {
       loginLoading.value = true;
 
       // 获取完整登录结果（含 roles、mustChangePassword 等字段）
-      const loginResult = await loginApi(params);
+      // customLoginFn 允许短信验证码等登录方式复用同一套登录后处理逻辑
+      const loginResult = await (customLoginFn ?? loginApi)(params);
       const { accessToken } = loginResult;
 
       if (accessToken) {
