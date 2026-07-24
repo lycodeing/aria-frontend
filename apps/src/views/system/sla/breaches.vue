@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { SlaBreachListParams, SlaBreachVO } from '#/api/sla/index';
 
-import { computed, onMounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -27,7 +27,7 @@ const filterDateRange = ref<[dayjs.Dayjs, dayjs.Dayjs] | undefined>(undefined);
 
 // ===== 分页状态 =====
 const page = ref(1);
-const pageSize = 20;
+const pageSize = ref(20);
 
 // ===== 列表状态 =====
 const rawList = ref<SlaBreachVO[]>([]);
@@ -38,10 +38,11 @@ async function loadList() {
   try {
     const params: SlaBreachListParams = {
       page: page.value,
-      pageSize,
+      pageSize: pageSize.value,
     };
     if (filterSessionId.value) params.sessionId = filterSessionId.value;
     if (filterBreachType.value) params.breachType = filterBreachType.value;
+    if (filterStage.value) params.stage = filterStage.value;
     if (filterDateRange.value) {
       params.startDate = filterDateRange.value[0].format('YYYY-MM-DD');
       params.endDate = filterDateRange.value[1].format('YYYY-MM-DD');
@@ -59,14 +60,12 @@ function onSearch() {
   loadList();
 }
 
-// 客户端按阶段过滤（API 不支持 stage 参数）
-const list = computed(() => {
-  if (!filterStage.value) return rawList.value;
-  return rawList.value.filter((r) => r.stage === filterStage.value);
-});
+// stage is now passed to the API — rawList is the final display list
+const list = rawList;
 
-function onPageChange(p: number) {
+function onPageChange(p: number, ps: number) {
   page.value = p;
+  pageSize.value = ps;
   loadList();
 }
 
@@ -134,6 +133,7 @@ onMounted(loadList);
         allow-clear
         style="width: 110px"
       >
+        <SelectOption value="">全部阶段</SelectOption>
         <SelectOption value="WARNING">预警</SelectOption>
         <SelectOption value="BREACH">违规</SelectOption>
       </Select>
@@ -155,11 +155,7 @@ onMounted(loadList);
       :pagination="{
         current: page,
         pageSize,
-        total:
-          list.length < pageSize
-            ? (page - 1) * pageSize + list.length
-            : page * pageSize + 1,
-        showSizeChanger: false,
+        showSizeChanger: true,
         onChange: onPageChange,
       }"
     >

@@ -282,8 +282,12 @@ onMounted(loadList);
       width="520px"
       @ok="submit"
     >
-      <Form layout="vertical" style="margin-top: 16px">
-        <FormItem label="名称" required>
+      <Form layout="vertical" style="margin-top: 16px" :model="form">
+        <FormItem
+          label="名称"
+          name="name"
+          :rules="[{ required: true, message: '请输入 Webhook 名称' }]"
+        >
           <Input v-model:value="form.name" placeholder="如：飞书告警机器人" />
         </FormItem>
         <FormItem label="类型" required>
@@ -294,7 +298,14 @@ onMounted(loadList);
             <SelectOption value="CUSTOM">自定义</SelectOption>
           </Select>
         </FormItem>
-        <FormItem label="Webhook URL" required>
+        <FormItem
+          label="Webhook URL"
+          name="url"
+          :rules="[
+            { required: true, message: '请输入 URL' },
+            { pattern: /^https:\/\//, message: 'URL 必须以 https:// 开头' },
+          ]"
+        >
           <Input
             v-model:value="form.url"
             placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."

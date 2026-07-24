@@ -273,9 +273,13 @@ const columns = [
       width="600px"
       @ok="submit"
     >
-      <Form layout="vertical" style="margin-top: 16px">
+      <Form layout="vertical" style="margin-top: 16px" :model="form">
         <!-- 策略名称 -->
-        <FormItem label="策略名称" required>
+        <FormItem
+          label="策略名称"
+          name="name"
+          :rules="[{ required: true, message: '请输入策略名称' }]"
+        >
           <Input
             v-model:value="form.name"
             placeholder="如：VIP客户优先级策略"

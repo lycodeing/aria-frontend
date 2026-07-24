@@ -40,6 +40,7 @@ export interface SlaBreachVO {
 export interface SlaBreachListParams {
   sessionId?: string;
   breachType?: string;
+  stage?: string;
   startDate?: string;
   endDate?: string;
   page?: number;

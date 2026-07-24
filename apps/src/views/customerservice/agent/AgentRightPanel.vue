@@ -6,13 +6,14 @@ import type { ReplySuggestion, VisitorHistorySession } from '#/api/session';
 import type { TagVO } from '#/api/tag/index';
 import type { SummaryState } from '#/composables/useVisitorHistory';
 
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import { Icon } from '@iconify/vue';
 import {
   Button,
   Collapse,
   CollapsePanel,
+  message,
   Modal,
   Select,
   Space,
@@ -75,6 +76,19 @@ const notes = ref<NoteVO[]>([]);
 const newNoteContent = ref('');
 const savingNote = ref(false);
 
+// ===== Filtered tag options (I4: hide already-applied tags) =====
+const availableVisitorTags = computed(() =>
+  allTags.value.filter(
+    (t) => !visitorTags.value.some((v) => String(v.id) === String(t.id)),
+  ),
+);
+
+const availableSessionTags = computed(() =>
+  allTags.value.filter(
+    (t) => !sessionTags.value.some((s) => String(s.id) === String(t.id)),
+  ),
+);
+
 // ===== Helpers =====
 function formatTime(time: string | undefined): string {
   if (!time) return '';
@@ -83,49 +97,71 @@ function formatTime(time: string | undefined): string {
 
 // ===== Load data =====
 async function loadTagsAndNotes(sessionId: string) {
-  const [vTags, sTags, noteList, tagDict] = await Promise.all([
-    listVisitorTagsApi(sessionId),
-    listSessionTagsApi(sessionId),
-    listNotesApi(sessionId),
-    listTagsApi(),
-  ]);
-  visitorTags.value = vTags;
-  sessionTags.value = sTags;
-  notes.value = noteList;
-  allTags.value = tagDict;
+  try {
+    const [vTags, sTags, noteList, tagDict] = await Promise.all([
+      listVisitorTagsApi(sessionId),
+      listSessionTagsApi(sessionId),
+      listNotesApi(sessionId),
+      listTagsApi(),
+    ]);
+    // Guard: discard results if session changed while requests were in flight
+    if (props.activeSession?.id !== sessionId) return;
+    visitorTags.value = vTags;
+    sessionTags.value = sTags;
+    notes.value = noteList;
+    allTags.value = tagDict;
+  } catch {
+    message.error('加载标签和备注失败');
+  }
 }
 
 // ===== Tag operations =====
 async function removeVisitorTag(tagId: number | string) {
   const sid = props.activeSession?.id;
   if (!sid) return;
-  await removeVisitorTagApi(sid, tagId);
-  visitorTags.value = visitorTags.value.filter((t) => t.id !== tagId);
+  try {
+    await removeVisitorTagApi(sid, tagId);
+    visitorTags.value = visitorTags.value.filter((t) => t.id !== tagId);
+  } catch {
+    message.error('移除标签失败');
+  }
 }
 
 async function removeSessionTag(tagId: number | string) {
   const sid = props.activeSession?.id;
   if (!sid) return;
-  await removeSessionTagApi(sid, tagId);
-  sessionTags.value = sessionTags.value.filter((t) => t.id !== tagId);
+  try {
+    await removeSessionTagApi(sid, tagId);
+    sessionTags.value = sessionTags.value.filter((t) => t.id !== tagId);
+  } catch {
+    message.error('移除标签失败');
+  }
 }
 
 async function confirmAddVisitorTag(tagId: string) {
   const sid = props.activeSession?.id;
   if (!sid || !tagId) return;
-  const added = await addVisitorTagApi(sid, { tagId });
-  visitorTags.value.push(added);
-  selectedTagIdVisitor.value = undefined;
-  tagPickerVisibleVisitor.value = false;
+  try {
+    const added = await addVisitorTagApi(sid, { tagId });
+    visitorTags.value.push(added);
+    selectedTagIdVisitor.value = undefined;
+    tagPickerVisibleVisitor.value = false;
+  } catch {
+    message.error('添加标签失败');
+  }
 }
 
 async function confirmAddSessionTag(tagId: string) {
   const sid = props.activeSession?.id;
   if (!sid || !tagId) return;
-  const added = await addSessionTagApi(sid, { tagId });
-  sessionTags.value.push(added);
-  selectedTagIdSession.value = undefined;
-  tagPickerVisibleSession.value = false;
+  try {
+    const added = await addSessionTagApi(sid, { tagId });
+    sessionTags.value.push(added);
+    selectedTagIdSession.value = undefined;
+    tagPickerVisibleSession.value = false;
+  } catch {
+    message.error('添加标签失败');
+  }
 }
 
 function showTagPicker(mode: 'session' | 'visitor') {
@@ -146,6 +182,8 @@ async function saveNote() {
     const note = await createNoteApi(sid, newNoteContent.value);
     notes.value.push(note);
     newNoteContent.value = '';
+  } catch {
+    message.error('保存备注失败');
   } finally {
     savingNote.value = false;
   }
@@ -159,8 +197,12 @@ async function deleteNote(noteId: number | string) {
     content: '确定要删除这条备注吗？',
     okType: 'danger',
     async onOk() {
-      await deleteNoteApi(sid, noteId);
-      notes.value = notes.value.filter((n) => n.id !== noteId);
+      try {
+        await deleteNoteApi(sid, noteId);
+        notes.value = notes.value.filter((n) => n.id !== noteId);
+      } catch {
+        message.error('删除备注失败');
+      }
     },
   });
 }
@@ -362,7 +404,10 @@ watch(
                   style="width: 120px"
                   placeholder="选择标签"
                   :options="
-                    allTags.map((t) => ({ value: String(t.id), label: t.name }))
+                    availableVisitorTags.map((t) => ({
+                      value: String(t.id),
+                      label: t.name,
+                    }))
                   "
                   @change="(v: any) => confirmAddVisitorTag(String(v))"
                   @blur="tagPickerVisibleVisitor = false"
@@ -396,7 +441,10 @@ watch(
                   style="width: 120px"
                   placeholder="选择标签"
                   :options="
-                    allTags.map((t) => ({ value: String(t.id), label: t.name }))
+                    availableSessionTags.map((t) => ({
+                      value: String(t.id),
+                      label: t.name,
+                    }))
                   "
                   @change="(v: any) => confirmAddSessionTag(String(v))"
                   @blur="tagPickerVisibleSession = false"
