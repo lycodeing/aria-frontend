@@ -228,10 +228,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Page
-    title="快捷回复管理"
-    description="管理座席快捷回复分组与公共模板，坐席在对话框输入 / 即可检索插入"
-  >
+  <Page>
     <div class="flex gap-4">
       <!-- 左：分组 -->
       <div

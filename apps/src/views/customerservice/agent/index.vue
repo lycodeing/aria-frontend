@@ -319,6 +319,7 @@ async function handleQueueTransfer(event: SessionSseEvent) {
         minLabel: '刚转入',
         tag: event.item.tag,
         waitSince: event.item.waitSince,
+        acceptedAt: event.item.acceptedAt ?? 0,
       });
       queueStateTab.value = 'active';
       message.success(`已自动接入转交会话：${event.item.userName}`);
@@ -503,6 +504,7 @@ async function acceptItem(item: QueueItem): Promise<ApiSessionItem> {
     transferReason: item.reason,
     tag: item.tag,
     waitSince: item.waitSince,
+    acceptedAt: item.acceptedAt ?? 0,
     status: 'ACTIVE',
   };
 }
@@ -564,14 +566,6 @@ const msgInput = computed({
     if (activeSession.value) drafts.value.set(activeSession.value.id, v);
   },
 });
-const QUICK_REPLY = [
-  '已核实订单信息',
-  '安排补发处理',
-  '提交快递投诉',
-  '退款申请处理',
-  '感谢您的耐心等待',
-];
-
 // ===== 转交 Modal =====
 const transferVisible = ref(false);
 const transferTarget = ref('');
@@ -645,6 +639,7 @@ function switchSession(s: SessionData) {
 }
 
 async function addSessionLocal(params: {
+  acceptedAt: number;
   color: string;
   id: string;
   minLabel: string;
@@ -676,6 +671,7 @@ async function addSessionLocal(params: {
     transferReason: params.transferReason,
     tag: params.tag,
     waitSince: params.waitSince,
+    acceptedAt: params.acceptedAt,
     unread: 0,
     msgs:
       loadedMsgs.length > 0
@@ -707,6 +703,7 @@ async function acceptQueue(item: QueueItem) {
       transferReason: item.reason,
       tag: item.tag,
       waitSince: item.waitSince,
+      acceptedAt: item.acceptedAt ?? 0,
       minLabel: '刚接入',
     });
     queueStateTab.value = 'active';
@@ -758,11 +755,6 @@ async function doCloseSession() {
   message.success('会话已结束，正在生成长期记忆摘要...');
 }
 
-function quickReply(q: string) {
-  // 快捷回复默认可追加，避免覆盖正在输入的内容
-  insertSuggestion(q);
-}
-
 // ===== 生命周期 =====
 onMounted(async () => {
   queueChannel.onClosed(handleQueueClosed);
@@ -807,6 +799,7 @@ onMounted(async () => {
         transferReason: item.reason,
         tag: item.tag,
         waitSince: item.waitSince,
+        acceptedAt: item.acceptedAt ?? 0,
         unread: 0,
         msgs:
           loadedMsgs.length > 0
@@ -837,11 +830,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <Page
-    auto-content-height
-    title="座席工作台"
-    description="实时接待转接会话，查看 AI 对话上下文"
-  >
+  <Page auto-content-height content-class="p-0 overflow-hidden">
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
       <!-- SSE 断线横幅 -->
       <Alert
@@ -900,7 +889,6 @@ onUnmounted(() => {
           :active-ws-status="activeWsStatus"
           :ws-status-meta="wsStatusMeta"
           :tool-expanded="toolExpanded"
-          :quick-replies="QUICK_REPLY"
           :queue="waitingQueue"
           :max-concurrent="MAX_CONCURRENT"
           :concurrent="concurrent"
@@ -912,7 +900,6 @@ onUnmounted(() => {
           @update:msg-input="msgInput = $event"
           @update:msg-filter="msgFilter = $event"
           @send="sendAgent"
-          @quick-reply="quickReply"
           @toggle-tool="toggleTool"
           @transfer="transferVisible = true"
           @close-session="requestCloseSession"

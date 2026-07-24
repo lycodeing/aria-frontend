@@ -61,6 +61,10 @@ export interface DashboardOverviewData {
   avgHandleSeconds: number;
   /** 平均首次回复时长（秒），first_reply_at - accepted_at */
   avgFirstReplySeconds: number;
+  /** SLA 违规次数（今日） */
+  slaBreachCount?: number;
+  /** SLA 违规率（0–1），slaBreachCount / todayConversationCount */
+  slaBreachRate?: number;
   /** CSAT 平均评分（0-5），随主概览一起返回 */
   csatAvgScore?: number;
   /** CSAT 响应率（0-100） */

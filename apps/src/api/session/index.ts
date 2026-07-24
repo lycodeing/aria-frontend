@@ -61,6 +61,7 @@ export interface SessionQueueItem {
   transferReason: string;
   tag: string;
   waitSince: number; // epoch seconds
+  acceptedAt?: number; // epoch seconds，座席接入时间（可选，AI_CHAT/WAITING 阶段为空）
   status: 'ACTIVE' | 'AI_CHAT' | 'CLOSED' | 'WAITING';
 }
 

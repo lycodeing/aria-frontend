@@ -242,7 +242,7 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
 </script>
 
 <template>
-  <Page title="角色管理" description="管理系统角色，配置菜单权限和数据权限范围">
+  <Page>
     <template #extra>
       <Button type="primary" @click="createVisible = true">
         <template #icon><Icon icon="ant-design:plus-outlined" /></template
