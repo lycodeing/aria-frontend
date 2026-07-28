@@ -78,6 +78,16 @@ const selectedIntentExamples = computed(() => {
   }
 });
 
+const selectedIntentKeywords = computed(() => {
+  if (!selectedIntent.value?.keywords) return [];
+  try {
+    const arr = JSON.parse(selectedIntent.value.keywords);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+});
+
 // ---- 抽屉状态 ----
 const domainDrawerVisible = ref(false);
 const intentDrawerVisible = ref(false);
@@ -621,10 +631,10 @@ function confirmDeleteBinding(b: BindingDTO) {
                   <span v-else>-</span>
                 </DescriptionsItem>
                 <DescriptionsItem label="关键词规则" :span="2">
-                  <template v-if="selectedIntent.keywords && JSON.parse(selectedIntent.keywords || '[]').length">
+                  <template v-if="selectedIntentKeywords.length">
                     <Space wrap>
                       <Tag
-                        v-for="(kw, idx) in JSON.parse(selectedIntent.keywords || '[]')"
+                        v-for="(kw, idx) in selectedIntentKeywords"
                         :key="idx"
                         color="green"
                       >
