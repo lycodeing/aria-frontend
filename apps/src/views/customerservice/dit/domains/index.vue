@@ -332,9 +332,9 @@ async function saveIntent() {
     message.error('code、名称、描述为必填');
     return;
   }
-  savingIntent.value = true;
   const domainId = selectedDomainId.value;
   if (!domainId) return;
+  savingIntent.value = true;
   const data = {
     ...intentForm.value,
     domainId,
