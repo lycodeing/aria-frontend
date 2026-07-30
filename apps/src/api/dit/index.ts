@@ -31,6 +31,15 @@ export interface IntentDTO {
   fallbackReply?: string;
   sortOrder?: number;
   enabled?: boolean;
+  /**
+   * 关键词列表，JSON 数组字符串，如 '["转人工","找真人"]'。
+   * 非空时后端 Layer 1 规则分类器启用关键词匹配。
+   */
+  keywords?: string;
+  /**
+   * 关键词匹配模式：ANY_CONTAINS（默认）/ ALL_CONTAINS / REGEX
+   */
+  keywordMatchMode?: string;
 }
 export const listIntentsApi = (domainId: number) =>
   conversationClient.get<IntentDTO[]>('/admin/dit/intents', {

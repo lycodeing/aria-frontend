@@ -59,7 +59,7 @@ const submitting = ref(false);
 interface FormState {
   name: string;
   color: string;
-  source: string;
+  source: 'CUSTOM' | 'PRESET';
 }
 
 const emptyForm = (): FormState => ({
@@ -98,7 +98,11 @@ async function submit() {
   submitting.value = true;
   try {
     if (editingId.value === null) {
-      await createTagApi({ name: form.name, color: form.color });
+      await createTagApi({
+        name: form.name,
+        color: form.color,
+        source: form.source,
+      });
       message.success('创建成功');
     } else {
       await updateTagApi(editingId.value, {

@@ -78,6 +78,16 @@ const selectedIntentExamples = computed(() => {
   }
 });
 
+const selectedIntentKeywords = computed(() => {
+  if (!selectedIntent.value?.keywords) return [];
+  try {
+    const arr = JSON.parse(selectedIntent.value.keywords);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+});
+
 // ---- 抽屉状态 ----
 const domainDrawerVisible = ref(false);
 const intentDrawerVisible = ref(false);
@@ -262,6 +272,17 @@ function removeExampleQuery(index: number) {
   exampleQueriesList.value.splice(index, 1);
 }
 
+// ---- 关键词列表编辑器 ----
+const keywordsList = ref<string[]>([]);
+
+function addKeyword() {
+  keywordsList.value.push('');
+}
+
+function removeKeyword(index: number) {
+  keywordsList.value.splice(index, 1);
+}
+
 // ---- 解析策略列表编辑器 ----
 const resolveStrategyList = ref<string[]>([]);
 
@@ -276,20 +297,28 @@ function removeResolveStrategy(index: number) {
 // ---- 意图 CRUD ----
 function openCreateIntent() {
   editingIntent.value = null;
-  intentForm.value = { autoTransfer: false, skipRag: false, sortOrder: 0 };
+  intentForm.value = { autoTransfer: false, skipRag: false, sortOrder: 0, keywordMatchMode: 'ANY_CONTAINS' };
   exampleQueriesList.value = [];
+  keywordsList.value = [];
   intentDrawerVisible.value = true;
 }
 
 function openEditIntent(i: IntentDTO) {
   editingIntent.value = i;
   intentForm.value = { ...i };
-  // 解析 JSON 数组字符串为列表
+  // 解析示例句子
   try {
     const arr = JSON.parse(i.exampleQueries || '[]');
     exampleQueriesList.value = Array.isArray(arr) ? arr : [];
   } catch {
     exampleQueriesList.value = [];
+  }
+  // 解析关键词列表
+  try {
+    const arr = JSON.parse(i.keywords || '[]');
+    keywordsList.value = Array.isArray(arr) ? arr : [];
+  } catch {
+    keywordsList.value = [];
   }
   intentDrawerVisible.value = true;
 }
@@ -303,13 +332,14 @@ async function saveIntent() {
     message.error('code、名称、描述为必填');
     return;
   }
-  savingIntent.value = true;
   const domainId = selectedDomainId.value;
   if (!domainId) return;
+  savingIntent.value = true;
   const data = {
     ...intentForm.value,
     domainId,
     exampleQueries: JSON.stringify(exampleQueriesList.value.filter(Boolean)),
+    keywords: JSON.stringify(keywordsList.value.filter(Boolean)),
   } as IntentDTO;
   try {
     if (editingIntent.value?.id) {
@@ -600,6 +630,21 @@ function confirmDeleteBinding(b: BindingDTO) {
                   </template>
                   <span v-else>-</span>
                 </DescriptionsItem>
+                <DescriptionsItem label="关键词规则" :span="2">
+                  <template v-if="selectedIntentKeywords.length">
+                    <Space wrap>
+                      <Tag
+                        v-for="(kw, idx) in selectedIntentKeywords"
+                        :key="idx"
+                        color="green"
+                      >
+                        {{ kw }}
+                      </Tag>
+                      <Tag color="default">{{ selectedIntent.keywordMatchMode || 'ANY_CONTAINS' }}</Tag>
+                    </Space>
+                  </template>
+                  <span v-else>未配置（仅 BERT + LLM 分类）</span>
+                </DescriptionsItem>
               </Descriptions>
             </TabPane>
 
@@ -787,6 +832,46 @@ function confirmDeleteBinding(b: BindingDTO) {
               + 添加示例句子
             </Button>
           </div>
+        </FormItem>
+        <FormItem
+          label="关键词（Layer 1 规则匹配）"
+          help="配置关键词后，用户消息命中时直接返回本意图，跳过 BERT 和 LLM，延迟 < 1ms"
+        >
+          <div class="flex flex-col gap-2">
+            <div
+              v-for="(_, idx) in keywordsList"
+              :key="idx"
+              class="flex items-center gap-2"
+            >
+              <Input
+                v-model:value="keywordsList[idx]"
+                placeholder="如：转人工"
+                class="flex-1"
+              />
+              <Button
+                type="link"
+                danger
+                size="small"
+                @click="removeKeyword(idx)"
+              >
+                删除
+              </Button>
+            </div>
+            <Button size="small" @click="addKeyword">+ 添加关键词</Button>
+          </div>
+        </FormItem>
+        <FormItem label="关键词匹配模式">
+          <Select v-model:value="intentForm.keywordMatchMode" style="width: 100%">
+            <SelectOption value="ANY_CONTAINS">
+              ANY_CONTAINS — 任意关键词命中即触发（默认）
+            </SelectOption>
+            <SelectOption value="ALL_CONTAINS">
+              ALL_CONTAINS — 所有关键词同时出现才触发
+            </SelectOption>
+            <SelectOption value="REGEX">
+              REGEX — keywords[0] 作为正则表达式匹配
+            </SelectOption>
+          </Select>
         </FormItem>
         <FormItem label="自动转人工">
           <Switch v-model:checked="intentForm.autoTransfer" />

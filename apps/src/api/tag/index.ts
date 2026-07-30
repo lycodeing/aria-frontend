@@ -29,6 +29,7 @@ export async function listTagsApi(params?: {
 export async function createTagApi(data: {
   color: string;
   name: string;
+  source?: 'CUSTOM' | 'PRESET';
 }): Promise<TagVO> {
   return conversationClient.post('/admin/tags', data);
 }

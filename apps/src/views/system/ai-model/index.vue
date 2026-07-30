@@ -40,11 +40,11 @@ import {
   updateAiModelApi,
 } from '#/api/ai-model';
 
-// ===== TAB 切换（CHAT / EMBEDDING / ROUTER） =====
-const activeTab = ref<'CHAT' | 'EMBEDDING' | 'ROUTER'>('CHAT');
+// ===== TAB 切换（CHAT / EMBEDDING / ROUTER / RERANKER / INTENT） =====
+const activeTab = ref<'CHAT' | 'EMBEDDING' | 'INTENT' | 'RERANKER' | 'ROUTER'>('CHAT');
 
 function onTabChange(key: number | string) {
-  activeTab.value = key as 'CHAT' | 'EMBEDDING' | 'ROUTER';
+  activeTab.value = key as 'CHAT' | 'EMBEDDING' | 'INTENT' | 'RERANKER' | 'ROUTER';
   loadList();
 }
 
@@ -52,6 +52,14 @@ function onTabChange(key: number | string) {
 const isEmbeddingTab = computed(() => activeTab.value === 'EMBEDDING');
 /** 当前 TAB 是路由小模型 */
 const isRouterTab = computed(() => activeTab.value === 'ROUTER');
+/** 当前 TAB 是精排模型 */
+const isRerankerTab = computed(() => activeTab.value === 'RERANKER');
+/** 当前 TAB 是意图分类模型 */
+const isIntentTab = computed(() => activeTab.value === 'INTENT');
+/** 工具型服务（无温度/MaxTokens）：EMBEDDING / ROUTER / RERANKER / INTENT */
+const isToolServiceTab = computed(
+  () => isEmbeddingTab.value || isRouterTab.value || isRerankerTab.value || isIntentTab.value,
+);
 
 // ===== 列表状态 =====
 const list = ref<AiModelConfigItem[]>([]);
@@ -104,6 +112,38 @@ const emptyForm = (): Partial<AiModelConfigItem> => {
       temperature: 0,
       maxTokens: 32,
       timeoutSec: 5,
+      isEnabled: true,
+      remark: '',
+    };
+  }
+  if (isRerankerTab.value) {
+    return {
+      name: '',
+      provider: 'CUSTOM',
+      apiProtocol: 'OPENAI_COMPATIBLE',
+      modelType: 'RERANKER',
+      baseUrl: 'http://localhost:8001',
+      apiKeyEnc: '',
+      modelName: 'bge-reranker-v2-m3',
+      temperature: 0,
+      maxTokens: 0,
+      timeoutSec: 10,
+      isEnabled: true,
+      remark: '',
+    };
+  }
+  if (isIntentTab.value) {
+    return {
+      name: '',
+      provider: 'CUSTOM',
+      apiProtocol: 'OPENAI_COMPATIBLE',
+      modelType: 'INTENT',
+      baseUrl: 'http://localhost:8090',
+      apiKeyEnc: '',
+      modelName: 'bert-intent',
+      temperature: 0,
+      maxTokens: 0,
+      timeoutSec: 1,
       isEnabled: true,
       remark: '',
     };
@@ -282,9 +322,34 @@ const routerColumns = [
   { title: '操作', key: 'action', width: 240 },
 ];
 
+/** 精排模型：Base URL、模型名、超时 */
+const rerankerColumns = [
+  { title: '名称', dataIndex: 'name', key: 'name' },
+  { title: '供应商', dataIndex: 'provider', key: 'provider', width: 120 },
+  { title: 'Base URL', dataIndex: 'baseUrl', key: 'baseUrl' },
+  { title: '模型', dataIndex: 'modelName', key: 'modelName', width: 180 },
+  { title: '超时(s)', dataIndex: 'timeoutSec', key: 'timeoutSec', width: 80 },
+  { title: '状态', key: 'status', width: 80 },
+  { title: '默认', key: 'isDefault', width: 70, align: 'center' as const },
+  { title: '操作', key: 'action', width: 240 },
+];
+
+/** 意图分类模型：只需 Base URL 和超时，模型名可选 */
+const intentColumns = [
+  { title: '名称', dataIndex: 'name', key: 'name' },
+  { title: 'Base URL', dataIndex: 'baseUrl', key: 'baseUrl' },
+  { title: '模型', dataIndex: 'modelName', key: 'modelName', width: 180 },
+  { title: '超时(s)', dataIndex: 'timeoutSec', key: 'timeoutSec', width: 80 },
+  { title: '状态', key: 'status', width: 80 },
+  { title: '默认', key: 'isDefault', width: 70, align: 'center' as const },
+  { title: '操作', key: 'action', width: 240 },
+];
+
 const columns = computed(() => {
   if (isEmbeddingTab.value) return embeddingColumns;
   if (isRouterTab.value) return routerColumns;
+  if (isRerankerTab.value) return rerankerColumns;
+  if (isIntentTab.value) return intentColumns;
   return chatColumns;
 });
 </script>
@@ -295,7 +360,7 @@ const columns = computed(() => {
       <Button type="primary" @click="openCreate">+ 新增配置</Button>
     </template>
 
-    <!-- TAB 切换：对话模型 / 向量模型 / 路由模型 -->
+    <!-- TAB 切换：对话模型 / 向量模型 / 路由模型 / 精排模型 / 意图分类模型 -->
     <Tabs
       :active-key="activeTab"
       @change="onTabChange"
@@ -304,6 +369,8 @@ const columns = computed(() => {
       <TabPane key="CHAT" tab="对话模型" />
       <TabPane key="EMBEDDING" tab="向量模型（Embedding）" />
       <TabPane key="ROUTER" tab="路由模型" />
+      <TabPane key="RERANKER" tab="精排模型（Reranker）" />
+      <TabPane key="INTENT" tab="意图分类模型（BERT）" />
     </Tabs>
 
     <Table
@@ -376,7 +443,11 @@ const columns = computed(() => {
             ? '新增向量模型配置'
             : isRouterTab
               ? '新增路由模型配置'
-              : '新增对话模型配置'
+              : isRerankerTab
+                ? '新增精排模型配置'
+                : isIntentTab
+                  ? '新增意图分类模型配置'
+                  : '新增对话模型配置'
       "
       :confirm-loading="submitting"
       width="560px"
@@ -391,7 +462,11 @@ const columns = computed(() => {
                 ? '如：本地 BGE-M3'
                 : isRouterTab
                   ? '如：Qwen2.5-0.5B (域路由)'
-                  : '如：天翼云 DeepSeek-V4-Flash'
+                  : isRerankerTab
+                    ? '如：本地 BGE-Reranker-v2-M3'
+                    : isIntentTab
+                      ? '如：本地 BERT 意图分类服务'
+                      : '如：天翼云 DeepSeek-V4-Flash'
             "
           />
         </FormItem>
@@ -436,7 +511,7 @@ const columns = computed(() => {
           :help="
             editingId
               ? '留空则不修改现有 Key'
-              : isEmbeddingTab || isRouterTab
+              : isToolServiceTab
                 ? '本地部署无需 Key 可留空'
                 : ''
           "
@@ -444,7 +519,7 @@ const columns = computed(() => {
           <InputPassword
             v-model:value="form.apiKeyEnc"
             :placeholder="
-              isEmbeddingTab || isRouterTab
+              isToolServiceTab
                 ? '本地部署可留空'
                 : '输入 API Key（自动加密存储）'
             "
@@ -458,13 +533,17 @@ const columns = computed(() => {
                 ? '如 bge-m3 / nomic-embed-text / mxbai-embed-large'
                 : isRouterTab
                   ? '如 qwen2.5:0.5b / phi3-mini / gemma2:2b'
-                  : '如 DeepSeek-V4-Flash / gpt-4o'
+                  : isRerankerTab
+                    ? '如 bge-reranker-v2-m3 / bge-reranker-v2-large'
+                    : isIntentTab
+                      ? '如 bert-intent / chinese-roberta-wwm-ext'
+                      : '如 DeepSeek-V4-Flash / gpt-4o'
             "
           />
         </FormItem>
 
         <!-- 对话模型专属：温度 / Max Tokens / 超时 -->
-        <template v-if="!isEmbeddingTab && !isRouterTab">
+        <template v-if="!isToolServiceTab">
           <div style="display: flex; gap: 12px">
             <FormItem label="温度（0-2）" style="flex: 1">
               <InputNumber
@@ -494,49 +573,25 @@ const columns = computed(() => {
           </div>
         </template>
 
-        <!-- 向量模型：只需配置超时，温度/MaxTokens 对 Embedding 无意义 -->
-        <template v-else-if="isEmbeddingTab || isRouterTab">
+        <!-- 工具型服务（Embedding/Router/Reranker/Intent）：只需超时 -->
+        <template v-else>
           <FormItem
             label="超时（秒）"
-            help="向量化 HTTP 请求超时，大批量时可适当调大"
+            :help="
+              isIntentTab
+                ? 'BERT 意图分类要求快速响应，建议 ≤ 2s'
+                : isRouterTab
+                  ? '路由判断需快速响应，建议 ≤ 10s'
+                  : '服务 HTTP 请求超时，可根据 GPU 性能调整'
+            "
           >
             <InputNumber
               v-model:value="form.timeoutSec"
-              :min="5"
+              :min="1"
               :max="300"
               style="width: 160px"
             />
           </FormItem>
-        </template>
-
-        <!-- 路由模型：Max Tokens（输出极短）和超时（要求快速响应）-->
-        <template v-else>
-          <div style="display: flex; gap: 12px">
-            <FormItem
-              label="Max Tokens"
-              style="flex: 1"
-              help="路由模型只输出域 code，设 32 即可"
-            >
-              <InputNumber
-                v-model:value="form.maxTokens"
-                :min="1"
-                :max="256"
-                style="width: 100%"
-              />
-            </FormItem>
-            <FormItem
-              label="超时（秒）"
-              style="flex: 1"
-              help="路由判断需快速响应，建议 ≤ 10s"
-            >
-              <InputNumber
-                v-model:value="form.timeoutSec"
-                :min="1"
-                :max="30"
-                style="width: 100%"
-              />
-            </FormItem>
-          </div>
         </template>
 
         <FormItem label="启用状态">
