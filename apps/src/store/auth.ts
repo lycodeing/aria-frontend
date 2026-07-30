@@ -15,7 +15,9 @@ import { $t } from '#/locales';
 
 /**
  * 根据角色列表推断首页路径。
- * kf_staff（普通客服）应进入座席工作台，其他角色进入管理后台首页。
+ * - kf_staff 纯客服（不含其他高权角色）→ 座席工作台
+ * - kf_manager / super_admin → 管理后台分析页
+ * 此函数的返回值始终覆盖后端 homePath，避免后端返回旧值导致跳转 404。
  */
 function resolveHomePath(roles: string[]): string {
   if (
@@ -23,7 +25,8 @@ function resolveHomePath(roles: string[]): string {
     !roles.includes('super_admin') &&
     !roles.includes('kf_manager')
   ) {
-    return '/customerservice/chat';
+    // 纯客服角色进入座席工作台
+    return '/customerservice/agent';
   }
   return preferences.app.defaultHomePath;
 }
@@ -73,13 +76,12 @@ export const useAuthStore = defineStore('auth', () => {
           userInfo = { ...userInfo, roles: rolesFromLogin };
         }
 
-        // 根据角色推断首页，覆盖 userInfo.homePath（后端暂未返回 homePath）
-        if (!userInfo.homePath) {
-          userInfo = {
-            ...userInfo,
-            homePath: resolveHomePath(userInfo.roles ?? []),
-          };
-        }
+        // 根据角色推断首页，始终覆盖 userInfo.homePath，
+        // 避免后端返回指向已废弃路由的旧值（如 /customerservice/chat）
+        userInfo = {
+          ...userInfo,
+          homePath: resolveHomePath(userInfo.roles ?? []),
+        };
 
         userStore.setUserInfo(userInfo);
         // 非阻塞预加载系统配置，失败不影响登录流程
