@@ -242,7 +242,7 @@ watch(
 
 <template>
   <aside
-    class="relative flex h-full flex-col gap-3.5 overflow-hidden bg-white"
+    class="relative flex h-full w-full flex-col gap-3.5 overflow-hidden bg-white"
     style="scrollbar-color: #d4d8e3 transparent; scrollbar-width: thin"
   >
     <!-- 主内容：可滚动 -->
