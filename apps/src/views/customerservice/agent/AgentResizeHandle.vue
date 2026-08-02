@@ -27,13 +27,11 @@ function iconName(): string {
 </script>
 
 <template>
-  <ResizableHandle
-    class="group relative w-px !bg-[#e4e7ed] transition-colors hover:!bg-[#1a73e8]"
-  >
-    <!-- 拖拽热区：透明竖条，比视觉分隔线宽，便于抓取 -->
-    <div
-      class="absolute inset-y-0 -left-1.5 -right-1.5 cursor-col-resize"
-    ></div>
+  <!-- ResizableHandle 的 slot 仅在 withHandle 时渲染，因此把按钮作为兄弟节点叠加 -->
+  <div class="group relative flex">
+    <ResizableHandle
+      class="!w-px !bg-[#e4e7ed] transition-colors hover:!bg-[#1a73e8]"
+    />
     <!-- 折叠/展开按钮：hover handle 时显示 -->
     <button
       type="button"
@@ -43,5 +41,5 @@ function iconName(): string {
     >
       <Icon :icon="iconName()" class="text-[12px]" />
     </button>
-  </ResizableHandle>
+  </div>
 </template>
