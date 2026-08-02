@@ -267,7 +267,7 @@ watch(
   <!-- Active session chat -->
   <main
     v-if="activeSession && !closedView"
-    class="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[#f7f8fc]"
+    class="relative flex h-full min-w-0 w-full flex-1 flex-col overflow-hidden bg-[#f7f8fc]"
   >
     <!-- Header -->
     <header
@@ -655,7 +655,7 @@ watch(
   <!-- Closed session read-only view -->
   <main
     v-else-if="closedView"
-    class="flex min-w-0 flex-1 flex-col overflow-hidden bg-[#f7f8fc]"
+    class="flex h-full min-w-0 w-full flex-1 flex-col overflow-hidden bg-[#f7f8fc]"
   >
     <header class="flex h-16 shrink-0 items-center gap-3 bg-white px-5">
       <button
@@ -850,7 +850,7 @@ watch(
   <!-- Empty state: no active session -->
   <main
     v-else
-    class="flex min-w-0 flex-1 flex-col items-center justify-center bg-white"
+    class="flex h-full min-w-0 w-full flex-1 flex-col items-center justify-center bg-white"
   >
     <div
       class="flex h-20 w-20 items-center justify-center rounded-full bg-[#eef1f8]"
