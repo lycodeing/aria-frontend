@@ -35,7 +35,7 @@ function iconName(): string {
     <!-- 折叠/展开按钮：常驻显示，hover 高亮 -->
     <button
       type="button"
-      class="absolute left-1/2 top-1/2 z-10 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[#d4d8e3] bg-white text-[#52525b] shadow-md transition-all hover:border-[#1a73e8] hover:bg-[#e8f0ff] hover:text-[#1a73e8] focus-visible:outline-none"
+      class="absolute left-1/2 top-1/2 z-10 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-[#d4d8e3] bg-white text-[#9ca3af] shadow-md transition-colors duration-150 hover:border-[#1a73e8] hover:bg-[#e8f0ff] hover:text-[#1a73e8]"
       :title="collapsed ? '展开' : '收起'"
       @click.prevent="emit('toggle')"
     >
