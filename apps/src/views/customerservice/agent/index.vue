@@ -841,6 +841,8 @@ onMounted(async () => {
   }
 
   // 恢复左右栏折叠状态（需等 panel 挂载后调用命令式 API）
+  // reka-ui SplitterPanel 需要两轮 nextTick 才完成注册，单次可能 noop
+  await nextTick();
   await nextTick();
   if (leftCollapsed.value) leftPanelRef.value?.collapse();
   // 无会话时也折叠右侧栏，避免空会话仍占 20% 空白列
