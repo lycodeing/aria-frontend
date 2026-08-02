@@ -11,12 +11,15 @@ import type {
 } from '#/api/session';
 import type { QueueItem } from '#/composables/useSessionQueue';
 
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { Page } from '@vben/common-ui';
 import { useAccessStore, useUserStore } from '@vben/stores';
 
+import { ResizablePanel, ResizablePanelGroup } from '@vben-core/shadcn-ui';
+
 import { Icon } from '@iconify/vue';
+import { useStorage } from '@vueuse/core';
 import {
   Alert,
   Button,
@@ -46,6 +49,7 @@ import { useVisitorHistory } from '#/composables/useVisitorHistory';
 
 import AgentChatArea from './AgentChatArea.vue';
 import AgentLeftPanel from './AgentLeftPanel.vue';
+import AgentResizeHandle from './AgentResizeHandle.vue';
 import AgentRightPanel from './AgentRightPanel.vue';
 
 // ===== 当前座席身份 =====
@@ -541,6 +545,18 @@ watch(activeSession, (session, prevSession) => {
   }
 });
 
+// 右栏内容存在性驱动折叠：无内容自动收起，有内容尊重用户上次折叠状态
+watch(
+  () => !!(activeSession.value || closedView.value),
+  (hasContent) => {
+    if (!hasContent) {
+      rightPanelRef.value?.collapse();
+    } else if (rightCollapsed.value === false) {
+      rightPanelRef.value?.expand();
+    }
+  },
+);
+
 // 替换当前会话草稿（建议卡「替换」动作）
 function applySuggestion(content: string): void {
   if (activeSession.value) drafts.value.set(activeSession.value.id, content);
@@ -566,6 +582,12 @@ const msgInput = computed({
     if (activeSession.value) drafts.value.set(activeSession.value.id, v);
   },
 });
+// ===== 三栏可调宽 + 折叠 =====
+const leftPanelRef = ref<InstanceType<typeof ResizablePanel>>();
+const rightPanelRef = ref<InstanceType<typeof ResizablePanel>>();
+const leftCollapsed = useStorage('agent-left-collapsed', false);
+const rightCollapsed = useStorage('agent-right-collapsed', false);
+
 // ===== 转交 Modal =====
 const transferVisible = ref(false);
 const transferTarget = ref('');
@@ -817,6 +839,11 @@ onMounted(async () => {
     if (sessions.value[0]) sessions.value[0].active = true;
     activeSessions.forEach((item) => connectAgentSession(item.id));
   }
+
+  // 恢复左右栏折叠状态（需等 panel 挂载后调用命令式 API）
+  await nextTick();
+  if (leftCollapsed.value) leftPanelRef.value?.collapse();
+  if (rightCollapsed.value) rightPanelRef.value?.collapse();
 });
 
 // ===== 生命周期：unmount 时清理 typingTimers 防止定时器回调写已卸载组件 =====
@@ -846,95 +873,134 @@ onUnmounted(() => {
       </Alert>
 
       <!-- 三栏布局 -->
-      <div class="flex min-h-0 flex-1 gap-3 overflow-hidden">
-        <!-- 左栏 2/10 -->
-        <AgentLeftPanel
-          class="flex-[2] min-w-0"
-          :agent-online="agentOnline"
-          :concurrent="concurrent"
-          :max-concurrent="MAX_CONCURRENT"
-          :sse-connected="sseConnected"
-          :queue-state-tab="queueStateTab"
-          :ai-queue="aiQueue"
-          :waiting-queue="waitingQueue"
-          :queue-page="queuePage"
-          :queue-total-pages="queueTotalPages"
-          :queue-search="queueSearch"
-          :visible-paged-waiting-queue="visiblePagedWaitingQueue"
-          :visible-sessions="visibleSessions"
-          :sessions="sessions"
-          :closed-sessions="closedSessions"
-          :closed-view="closedView"
-          :visitor-typing-map="visitorTypingMap"
-          @toggle-online="agentOnline = $event"
-          @update:queue-state-tab="queueStateTab = $event"
-          @update:queue-page="queuePage = $event"
-          @update:queue-search="queueSearch = $event"
-          @accept-queue="acceptQueue"
-          @switch-session="switchSession"
-          @view-closed="viewClosedSession"
-          @view-ai-session="viewAiSession"
-          @reconnect-queue="reconnectQueue"
+      <ResizablePanelGroup
+        direction="horizontal"
+        auto-save-id="agent-workspace-layout"
+        class="min-h-0 flex-1"
+      >
+        <!-- 左栏：会话队列 -->
+        <ResizablePanel
+          ref="leftPanelRef"
+          :default-size="20"
+          :min-size="12"
+          :max-size="30"
+          collapsible
+          @collapse="leftCollapsed = true"
+          @expand="leftCollapsed = false"
+        >
+          <AgentLeftPanel
+            :agent-online="agentOnline"
+            :concurrent="concurrent"
+            :max-concurrent="MAX_CONCURRENT"
+            :sse-connected="sseConnected"
+            :queue-state-tab="queueStateTab"
+            :ai-queue="aiQueue"
+            :waiting-queue="waitingQueue"
+            :queue-page="queuePage"
+            :queue-total-pages="queueTotalPages"
+            :queue-search="queueSearch"
+            :visible-paged-waiting-queue="visiblePagedWaitingQueue"
+            :visible-sessions="visibleSessions"
+            :sessions="sessions"
+            :closed-sessions="closedSessions"
+            :closed-view="closedView"
+            :visitor-typing-map="visitorTypingMap"
+            @toggle-online="agentOnline = $event"
+            @update:queue-state-tab="queueStateTab = $event"
+            @update:queue-page="queuePage = $event"
+            @update:queue-search="queueSearch = $event"
+            @accept-queue="acceptQueue"
+            @switch-session="switchSession"
+            @view-closed="viewClosedSession"
+            @view-ai-session="viewAiSession"
+            @reconnect-queue="reconnectQueue"
+          />
+        </ResizablePanel>
+
+        <AgentResizeHandle
+          direction="left"
+          :collapsed="leftCollapsed"
+          @toggle="
+            leftCollapsed ? leftPanelRef?.expand() : leftPanelRef?.collapse()
+          "
         />
 
-        <!-- 中栏 6/10 -->
-        <AgentChatArea
-          class="flex-[6] min-w-0"
-          :active-session="activeSession"
-          :closed-view="closedView"
-          :closed-view-loading="closedViewLoading"
-          :msg-filter="msgFilter"
-          :filtered-msgs="filteredMsgs"
-          :msg-input="msgInput"
-          :active-ws-status="activeWsStatus"
-          :ws-status-meta="wsStatusMeta"
-          :tool-expanded="toolExpanded"
-          :queue="waitingQueue"
-          :max-concurrent="MAX_CONCURRENT"
-          :concurrent="concurrent"
-          :visitor-typing="
-            activeSession
-              ? (visitorTypingMap[activeSession.id] ?? false)
-              : false
+        <!-- 中栏：聊天区 -->
+        <ResizablePanel :default-size="60" :min-size="35">
+          <AgentChatArea
+            :active-session="activeSession"
+            :closed-view="closedView"
+            :closed-view-loading="closedViewLoading"
+            :msg-filter="msgFilter"
+            :filtered-msgs="filteredMsgs"
+            :msg-input="msgInput"
+            :active-ws-status="activeWsStatus"
+            :ws-status-meta="wsStatusMeta"
+            :tool-expanded="toolExpanded"
+            :queue="waitingQueue"
+            :max-concurrent="MAX_CONCURRENT"
+            :concurrent="concurrent"
+            :visitor-typing="
+              activeSession
+                ? (visitorTypingMap[activeSession.id] ?? false)
+                : false
+            "
+            @update:msg-input="msgInput = $event"
+            @update:msg-filter="msgFilter = $event"
+            @send="sendAgent"
+            @toggle-tool="toggleTool"
+            @transfer="transferVisible = true"
+            @close-session="requestCloseSession"
+            @reconnect-session="reconnectActiveSession"
+            @exit-closed="closedView = null"
+            @takeover-ai="takeoverAiSession"
+            @copy-msg="copyMsgText"
+          />
+        </ResizablePanel>
+
+        <AgentResizeHandle
+          direction="right"
+          :collapsed="rightCollapsed"
+          @toggle="
+            rightCollapsed ? rightPanelRef?.expand() : rightPanelRef?.collapse()
           "
-          @update:msg-input="msgInput = $event"
-          @update:msg-filter="msgFilter = $event"
-          @send="sendAgent"
-          @toggle-tool="toggleTool"
-          @transfer="transferVisible = true"
-          @close-session="requestCloseSession"
-          @reconnect-session="reconnectActiveSession"
-          @exit-closed="closedView = null"
-          @takeover-ai="takeoverAiSession"
-          @copy-msg="copyMsgText"
         />
 
-        <!-- 右栏 2/10 -->
-        <AgentRightPanel
-          v-if="activeSession || closedView"
-          class="flex-[2] min-w-0"
-          :active-session="activeSession"
-          :closed-view="closedView"
-          :visitor-history-list="visitorHistoryList"
-          :visitor-history-loading="visitorHistoryLoading"
-          :reply-suggestions="replySuggestions"
-          :suggestions-loading="suggestionsLoading"
-          :suggestions-error="suggestionsError"
-          :summary-map="summaryMap"
-          @open-history-drawer="
-            activeSession &&
-            openHistoryDrawer(activeSession.name, activeSession.id)
-          "
-          @apply-suggestion="applySuggestion"
-          @insert-suggestion="insertSuggestion"
-          @refresh-suggestions="
-            activeSession && refreshSuggestionsNow(activeSession.id)
-          "
-          @refresh-suggestions-with-prompt="
-            activeSession && refreshSuggestionsNow(activeSession.id)
-          "
-        />
-      </div>
+        <!-- 右栏：会话信息 -->
+        <ResizablePanel
+          ref="rightPanelRef"
+          :default-size="20"
+          :min-size="12"
+          :max-size="30"
+          collapsible
+          @collapse="rightCollapsed = true"
+          @expand="rightCollapsed = false"
+        >
+          <AgentRightPanel
+            v-show="activeSession || closedView"
+            :active-session="activeSession"
+            :closed-view="closedView"
+            :visitor-history-list="visitorHistoryList"
+            :visitor-history-loading="visitorHistoryLoading"
+            :reply-suggestions="replySuggestions"
+            :suggestions-loading="suggestionsLoading"
+            :suggestions-error="suggestionsError"
+            :summary-map="summaryMap"
+            @open-history-drawer="
+              activeSession &&
+              openHistoryDrawer(activeSession.name, activeSession.id)
+            "
+            @apply-suggestion="applySuggestion"
+            @insert-suggestion="insertSuggestion"
+            @refresh-suggestions="
+              activeSession && refreshSuggestionsNow(activeSession.id)
+            "
+            @refresh-suggestions-with-prompt="
+              activeSession && refreshSuggestionsNow(activeSession.id)
+            "
+          />
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
 
     <!-- 转交坐席 Modal -->
