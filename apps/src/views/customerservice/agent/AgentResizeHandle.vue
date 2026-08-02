@@ -28,18 +28,18 @@ function iconName(): string {
 
 <template>
   <!-- ResizableHandle 的 slot 仅在 withHandle 时渲染，因此把按钮作为兄弟节点叠加 -->
-  <div class="group relative flex">
+  <div class="group relative flex w-3">
     <ResizableHandle
       class="!w-px !bg-[#e4e7ed] transition-colors hover:!bg-[#1a73e8]"
     />
-    <!-- 折叠/展开按钮：hover handle 时显示 -->
+    <!-- 折叠/展开按钮：常驻显示，hover 高亮 -->
     <button
       type="button"
-      class="absolute left-1/2 top-1/2 z-10 flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[#e4e7ed] bg-white text-[#52525b] opacity-0 shadow-sm transition-opacity hover:border-[#1a73e8] hover:text-[#1a73e8] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none"
+      class="absolute left-1/2 top-1/2 z-10 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[#d4d8e3] bg-white text-[#52525b] shadow-md transition-all hover:border-[#1a73e8] hover:bg-[#e8f0ff] hover:text-[#1a73e8] focus-visible:outline-none"
       :title="collapsed ? '展开' : '收起'"
       @click.prevent="emit('toggle')"
     >
-      <Icon :icon="iconName()" class="text-[12px]" />
+      <Icon :icon="iconName()" class="text-[16px]" />
     </button>
   </div>
 </template>
