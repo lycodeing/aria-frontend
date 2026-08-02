@@ -843,7 +843,18 @@ onMounted(async () => {
   // 恢复左右栏折叠状态（需等 panel 挂载后调用命令式 API）
   await nextTick();
   if (leftCollapsed.value) leftPanelRef.value?.collapse();
-  if (rightCollapsed.value) rightPanelRef.value?.collapse();
+  // 无会话时也折叠右侧栏，避免空会话仍占 20% 空白列
+  const hasRightContent = !!(activeSession.value || closedView.value);
+  if (rightCollapsed.value || !hasRightContent) rightPanelRef.value?.collapse();
+
+  // Sync collapse booleans with actual panel state in case auto-save
+  // and useStorage diverged (e.g. partial localStorage corruption)
+  if (!leftCollapsed.value && leftPanelRef.value?.getSize() === 0) {
+    leftCollapsed.value = true;
+  }
+  if (!rightCollapsed.value && rightPanelRef.value?.getSize() === 0) {
+    rightCollapsed.value = true;
+  }
 });
 
 // ===== 生命周期：unmount 时清理 typingTimers 防止定时器回调写已卸载组件 =====
