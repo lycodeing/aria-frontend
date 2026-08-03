@@ -31,6 +31,16 @@ const routes: RouteRecordRaw[] = [
           title: $t('page.dashboard.workspace'),
         },
       },
+      {
+        name: 'DashboardMyData',
+        path: '/dashboard/my-data',
+        component: () => import('#/views/dashboard/my-data/index.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_staff', 'kf_manager'],
+          icon: 'lucide:user-cog',
+          title: $t('page.dashboard.myData'),
+        },
+      },
     ],
   },
 ];

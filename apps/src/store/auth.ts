@@ -26,7 +26,7 @@ function resolveHomePath(roles: string[]): string {
     !roles.includes('kf_manager')
   ) {
     // 纯客服角色进入座席工作台
-    return '/customerservice/agent';
+    return '/session/agent';
   }
   return preferences.app.defaultHomePath;
 }

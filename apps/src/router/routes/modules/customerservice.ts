@@ -3,11 +3,13 @@ import type { RouteRecordRaw } from 'vue-router';
 import { $t } from '#/locales';
 
 /**
- * 智能客服模块路由。
+ * 客服管理模块路由。
  * meta.authority 控制路由级访问权限，防止非授权角色通过 URL 直接访问。
  *   - super_admin: 全部可访问
- *   - kf_manager:  对话、知识库、座席工作台
- *   - kf_staff:    仅对话
+ *   - kf_manager:  知识库、标签字典、快捷回复、业务时间、客服配置
+ *   - kf_staff:    仅座席工作台（见 session.ts）
+ *
+ * 注意：座席工作台 / 在线咨询已迁移至 session.ts；标签字典从 system.ts 迁入。
  */
 const routes: RouteRecordRaw[] = [
   {
@@ -20,16 +22,6 @@ const routes: RouteRecordRaw[] = [
     path: '/customerservice',
     children: [
       {
-        name: 'CustomerServiceChat',
-        path: '/customerservice/chat',
-        component: () => import('#/views/customerservice/chat/index.vue'),
-        meta: {
-          authority: ['super_admin', 'kf_manager', 'kf_staff'],
-          icon: 'lucide:message-circle',
-          title: $t('page.customerservice.chat'),
-        },
-      },
-      {
         name: 'CustomerServiceKnowledge',
         path: '/customerservice/knowledge',
         component: () => import('#/views/customerservice/knowledge/index.vue'),
@@ -40,13 +32,13 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
-        name: 'CustomerServiceAgent',
-        path: '/customerservice/agent',
-        component: () => import('#/views/customerservice/agent/index.vue'),
+        name: 'CustomerServiceTags',
+        path: '/customerservice/tags',
+        component: () => import('#/views/customerservice/tags/index.vue'),
         meta: {
           authority: ['super_admin', 'kf_manager'],
-          icon: 'lucide:headphones',
-          title: $t('page.customerservice.agent'),
+          icon: 'lucide:tag',
+          title: '标签字典',
         },
       },
       {

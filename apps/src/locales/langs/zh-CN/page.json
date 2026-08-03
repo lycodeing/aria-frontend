@@ -10,11 +10,16 @@
   "dashboard": {
     "title": "概览",
     "analytics": "分析页",
-    "workspace": "工作台"
+    "workspace": "工作台",
+    "myData": "我的数据"
+  },
+  "session": {
+    "title": "会话管理",
+    "agent": "座席工作台",
+    "history": "会话查询"
   },
   "customerservice": {
-    "title": "智能客服",
-    "chat": "在线咨询",
+    "title": "客服管理",
     "knowledge": "知识库",
     "agent": "座席工作台",
     "aiModels": "AI 模型配置"
