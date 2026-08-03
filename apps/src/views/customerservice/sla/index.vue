@@ -31,6 +31,8 @@ import {
   updateSlaPolicyApi,
 } from '#/api/sla/index';
 
+import SlaTabs from './components/SlaTabs.vue';
+
 // ===== 列表状态 =====
 const list = ref<SlaPolicyVO[]>([]);
 const loading = ref(false);
@@ -79,15 +81,11 @@ function emptyForm(): Omit<SlaPolicyVO, 'id'> {
       sseAlert: true,
       autoEscalate: false,
       escalateToUserId: undefined,
-      webhookIds: [],
     },
   };
 }
 
 const form = reactive<Omit<SlaPolicyVO, 'id'>>(emptyForm());
-
-/** webhook IDs 以逗号分隔字符串形式编辑，提交前解析为 number[] */
-const webhookIdsStr = ref('');
 
 function openCreate() {
   editingId.value = null;
@@ -96,7 +94,6 @@ function openCreate() {
   form.actions = { ...blank.actions };
   form.matchVisitorTags = [];
   form.matchTransferTags = [];
-  webhookIdsStr.value = '';
   modalOpen.value = true;
   loadOnlineAgents();
 }
@@ -110,7 +107,6 @@ function openEdit(row: SlaPolicyVO) {
     matchTransferTags: [...(rest.matchTransferTags ?? [])],
     actions: { ...rest.actions },
   });
-  webhookIdsStr.value = (row.actions?.webhookIds ?? []).join(', ');
   modalOpen.value = true;
   loadOnlineAgents();
 }
@@ -120,14 +116,6 @@ async function submit() {
     message.warning('请填写策略名称');
     return;
   }
-  // 将逗号分隔字符串解析为 number[]
-  form.actions.webhookIds = webhookIdsStr.value
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map(Number)
-    .filter((n) => !Number.isNaN(n));
-
   submitting.value = true;
   try {
     if (editingId.value === null) {
@@ -201,6 +189,8 @@ const columns = [
     <template #extra>
       <Button type="primary" @click="openCreate">+ 新增策略</Button>
     </template>
+
+    <SlaTabs />
 
     <Table
       :columns="columns"
@@ -422,17 +412,10 @@ const columns = [
             </Select>
           </FormItem>
 
-          <!-- Webhook ID 列表 -->
-          <FormItem
-            label="Webhook ID 列表"
-            help="多个 ID 以英文逗号分隔，如：1,2,3"
-          >
-            <Input
-              v-model:value="webhookIdsStr"
-              placeholder="1,2,3"
-              allow-clear
-            />
-          </FormItem>
+          <!-- 违规通知：由 Webhook 配置的事件范围自动匹配 -->
+          <div style="font-size: 13px; color: #999">
+            违规通知按 Webhook 配置的事件范围自动匹配
+          </div>
         </div>
       </Form>
     </Modal>
