@@ -5,9 +5,12 @@ import { computed, onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
+import { Icon } from '@iconify/vue';
 import {
   Alert,
   Button,
+  Drawer,
+  Empty,
   Form,
   FormItem,
   Input,
@@ -17,14 +20,12 @@ import {
   Modal,
   Select,
   SelectOption,
-  Space,
   Spin,
   Switch,
-  Table,
   TabPane,
   Tabs,
-  Tag,
   Textarea,
+  Tooltip,
 } from 'ant-design-vue';
 
 import {
@@ -40,35 +41,89 @@ import {
   updateAiModelApi,
 } from '#/api/ai-model';
 
-// ===== TAB 切换（CHAT / EMBEDDING / ROUTER / RERANKER / INTENT） =====
-const activeTab = ref<'CHAT' | 'EMBEDDING' | 'INTENT' | 'RERANKER' | 'ROUTER'>('CHAT');
+// ===== TAB 配置 =====
+interface TabConfig {
+  badge: string;
+  desc: string;
+  key: string;
+  label: string;
+}
+
+const TAB_LIST: TabConfig[] = [
+  { key: 'CHAT', label: '对话模型', desc: '大语言模型对话生成', badge: 'LLM' },
+  {
+    key: 'EMBEDDING',
+    label: '向量模型',
+    desc: '文本向量化编码',
+    badge: 'EMB',
+  },
+  {
+    key: 'ROUTER',
+    label: '路由模型',
+    desc: '领域路由分类',
+    badge: 'RT',
+  },
+  {
+    key: 'RERANKER',
+    label: '精排模型',
+    desc: '检索结果重排序',
+    badge: 'RR',
+  },
+  {
+    key: 'INTENT',
+    label: '意图分类',
+    desc: 'BERT 意图识别',
+    badge: 'INT',
+  },
+];
+
+const activeTab = ref<string>('CHAT');
 
 function onTabChange(key: number | string) {
-  activeTab.value = key as 'CHAT' | 'EMBEDDING' | 'INTENT' | 'RERANKER' | 'ROUTER';
+  activeTab.value = key as string;
   loadList();
 }
 
-/** 当前 TAB 是向量模型 */
 const isEmbeddingTab = computed(() => activeTab.value === 'EMBEDDING');
-/** 当前 TAB 是路由小模型 */
 const isRouterTab = computed(() => activeTab.value === 'ROUTER');
-/** 当前 TAB 是精排模型 */
 const isRerankerTab = computed(() => activeTab.value === 'RERANKER');
-/** 当前 TAB 是意图分类模型 */
 const isIntentTab = computed(() => activeTab.value === 'INTENT');
-/** 工具型服务（无温度/MaxTokens）：EMBEDDING / ROUTER / RERANKER / INTENT */
 const isToolServiceTab = computed(
-  () => isEmbeddingTab.value || isRouterTab.value || isRerankerTab.value || isIntentTab.value,
+  () =>
+    isEmbeddingTab.value ||
+    isRouterTab.value ||
+    isRerankerTab.value ||
+    isIntentTab.value,
+);
+
+const DEFAULT_TAB: TabConfig = {
+  badge: 'LLM',
+  desc: '大语言模型对话生成',
+  key: 'CHAT',
+  label: '对话模型',
+};
+const currentTabMeta = computed(
+  () => TAB_LIST.find((t) => t.key === activeTab.value) ?? DEFAULT_TAB,
 );
 
 // ===== 列表状态 =====
 const list = ref<AiModelConfigItem[]>([]);
 const loading = ref(false);
+const searchKeyword = ref('');
 
 async function loadList() {
   loading.value = true;
   try {
-    const res = await listAiModelsApi(0, 50, activeTab.value);
+    const res = await listAiModelsApi(
+      0,
+      50,
+      activeTab.value as
+        | 'CHAT'
+        | 'EMBEDDING'
+        | 'INTENT'
+        | 'RERANKER'
+        | 'ROUTER',
+    );
     list.value = res?.items ?? [];
   } catch {
     message.error('加载列表失败');
@@ -77,14 +132,44 @@ async function loadList() {
   }
 }
 
-// ===== 新增/编辑弹窗 =====
-const modalOpen = ref(false);
+// 前端搜索过滤
+const filteredList = computed(() => {
+  const kw = searchKeyword.value.trim().toLowerCase();
+  if (!kw) return list.value;
+  return list.value.filter(
+    (m) =>
+      (m.name ?? '').toLowerCase().includes(kw) ||
+      (m.modelName ?? '').toLowerCase().includes(kw) ||
+      (m.provider ?? '').toLowerCase().includes(kw),
+  );
+});
+
+// ===== 统计 =====
+const stats = computed(() => ({
+  total: list.value.length,
+  enabled: list.value.filter((m) => m.isEnabled).length,
+  disabled: list.value.filter((m) => !m.isEnabled).length,
+  default: list.value.filter((m) => m.isDefault).length,
+}));
+
+// ===== 供应商标签颜色 =====
+const PROVIDER_COLOR: Record<string, string> = {
+  CTYUN: 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400',
+  OPENAI:
+    'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400',
+  CUSTOM: 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400',
+};
+function providerClass(p?: string): string {
+  return PROVIDER_COLOR[p ?? ''] ?? PROVIDER_COLOR.CUSTOM ?? '';
+}
+
+// ===== Drawer =====
+const drawerOpen = ref(false);
 const editingId = ref<null | number>(null);
 const submitting = ref(false);
 
-/** 根据当前 TAB 返回合适的表单默认值 */
 const emptyForm = (): Partial<AiModelConfigItem> => {
-  if (isEmbeddingTab.value) {
+  if (isEmbeddingTab.value)
     return {
       name: '',
       provider: 'CUSTOM',
@@ -99,8 +184,7 @@ const emptyForm = (): Partial<AiModelConfigItem> => {
       isEnabled: true,
       remark: '',
     };
-  }
-  if (isRouterTab.value) {
+  if (isRouterTab.value)
     return {
       name: '',
       provider: 'CUSTOM',
@@ -115,8 +199,7 @@ const emptyForm = (): Partial<AiModelConfigItem> => {
       isEnabled: true,
       remark: '',
     };
-  }
-  if (isRerankerTab.value) {
+  if (isRerankerTab.value)
     return {
       name: '',
       provider: 'CUSTOM',
@@ -131,8 +214,7 @@ const emptyForm = (): Partial<AiModelConfigItem> => {
       isEnabled: true,
       remark: '',
     };
-  }
-  if (isIntentTab.value) {
+  if (isIntentTab.value)
     return {
       name: '',
       provider: 'CUSTOM',
@@ -147,7 +229,6 @@ const emptyForm = (): Partial<AiModelConfigItem> => {
       isEnabled: true,
       remark: '',
     };
-  }
   return {
     name: '',
     provider: 'CTYUN',
@@ -166,16 +247,21 @@ const emptyForm = (): Partial<AiModelConfigItem> => {
 
 const form = reactive<Partial<AiModelConfigItem>>(emptyForm());
 
+const drawerTitle = computed(() => {
+  if (editingId.value) return '编辑配置';
+  return `新增${currentTabMeta.value.label}配置`;
+});
+
 function openCreate() {
   editingId.value = null;
   Object.assign(form, emptyForm());
-  modalOpen.value = true;
+  drawerOpen.value = true;
 }
 
 function openEdit(row: AiModelConfigItem) {
   editingId.value = row.id;
   Object.assign(form, { ...row, apiKeyEnc: '' });
-  modalOpen.value = true;
+  drawerOpen.value = true;
 }
 
 function onProviderChange(v: unknown) {
@@ -192,7 +278,6 @@ async function submit() {
   submitting.value = true;
   try {
     const payload = { ...form };
-    // 新增时自动为非空 apiKey 加 PLAINTEXT: 前缀（编辑时留空则后端保留原值）
     if (
       !editingId.value &&
       payload.apiKeyEnc &&
@@ -208,7 +293,7 @@ async function submit() {
       await createAiModelApi(payload);
       message.success('创建成功');
     }
-    modalOpen.value = false;
+    drawerOpen.value = false;
     loadList();
   } catch (error: unknown) {
     const err = error as { response?: { data?: { msg?: string } } };
@@ -265,13 +350,13 @@ onMounted(loadList);
 // ===== 测试连接 =====
 const testingId = ref<null | number>(null);
 const testResult = ref<AiModelTestResult | null>(null);
-const testVisible = ref(false);
+const testModalVisible = ref(false);
 const testName = ref('');
 
 async function testConnection(row: AiModelConfigItem) {
   testingId.value = row.id;
   testResult.value = null;
-  testVisible.value = true;
+  testModalVisible.value = true;
   testName.value = row.name;
   try {
     const res = await testAiModelApi(row.id);
@@ -287,370 +372,518 @@ async function testConnection(row: AiModelConfigItem) {
     testingId.value = null;
   }
 }
-
-// ===== 表格列定义（三个 TAB 列结构略有不同） =====
-const chatColumns = [
-  { title: '名称', dataIndex: 'name', key: 'name' },
-  { title: '供应商', dataIndex: 'provider', key: 'provider', width: 100 },
-  { title: '协议', dataIndex: 'apiProtocol', key: 'apiProtocol', width: 210 },
-  { title: '模型', dataIndex: 'modelName', key: 'modelName' },
-  { title: '状态', key: 'status', width: 80 },
-  { title: '默认', key: 'isDefault', width: 70, align: 'center' as const },
-  { title: '操作', key: 'action', width: 240 },
-];
-
-const embeddingColumns = [
-  { title: '名称', dataIndex: 'name', key: 'name' },
-  { title: '供应商', dataIndex: 'provider', key: 'provider', width: 120 },
-  { title: 'Base URL', dataIndex: 'baseUrl', key: 'baseUrl' },
-  { title: '模型', dataIndex: 'modelName', key: 'modelName', width: 160 },
-  { title: '超时(s)', dataIndex: 'timeoutSec', key: 'timeoutSec', width: 80 },
-  { title: '状态', key: 'status', width: 80 },
-  { title: '默认', key: 'isDefault', width: 70, align: 'center' as const },
-  { title: '操作', key: 'action', width: 240 },
-];
-
-/** 路由小模型：只需关注 Base URL、模型名和超时，温度/MaxTokens 无意义 */
-const routerColumns = [
-  { title: '名称', dataIndex: 'name', key: 'name' },
-  { title: '供应商', dataIndex: 'provider', key: 'provider', width: 120 },
-  { title: 'Base URL', dataIndex: 'baseUrl', key: 'baseUrl' },
-  { title: '模型', dataIndex: 'modelName', key: 'modelName', width: 160 },
-  { title: '超时(s)', dataIndex: 'timeoutSec', key: 'timeoutSec', width: 80 },
-  { title: '状态', key: 'status', width: 80 },
-  { title: '默认', key: 'isDefault', width: 70, align: 'center' as const },
-  { title: '操作', key: 'action', width: 240 },
-];
-
-/** 精排模型：Base URL、模型名、超时 */
-const rerankerColumns = [
-  { title: '名称', dataIndex: 'name', key: 'name' },
-  { title: '供应商', dataIndex: 'provider', key: 'provider', width: 120 },
-  { title: 'Base URL', dataIndex: 'baseUrl', key: 'baseUrl' },
-  { title: '模型', dataIndex: 'modelName', key: 'modelName', width: 180 },
-  { title: '超时(s)', dataIndex: 'timeoutSec', key: 'timeoutSec', width: 80 },
-  { title: '状态', key: 'status', width: 80 },
-  { title: '默认', key: 'isDefault', width: 70, align: 'center' as const },
-  { title: '操作', key: 'action', width: 240 },
-];
-
-/** 意图分类模型：只需 Base URL 和超时，模型名可选 */
-const intentColumns = [
-  { title: '名称', dataIndex: 'name', key: 'name' },
-  { title: 'Base URL', dataIndex: 'baseUrl', key: 'baseUrl' },
-  { title: '模型', dataIndex: 'modelName', key: 'modelName', width: 180 },
-  { title: '超时(s)', dataIndex: 'timeoutSec', key: 'timeoutSec', width: 80 },
-  { title: '状态', key: 'status', width: 80 },
-  { title: '默认', key: 'isDefault', width: 70, align: 'center' as const },
-  { title: '操作', key: 'action', width: 240 },
-];
-
-const columns = computed(() => {
-  if (isEmbeddingTab.value) return embeddingColumns;
-  if (isRouterTab.value) return routerColumns;
-  if (isRerankerTab.value) return rerankerColumns;
-  if (isIntentTab.value) return intentColumns;
-  return chatColumns;
-});
 </script>
 
 <template>
   <Page>
-    <template #extra>
-      <Button type="primary" @click="openCreate">+ 新增配置</Button>
-    </template>
-
-    <!-- TAB 切换：对话模型 / 向量模型 / 路由模型 / 精排模型 / 意图分类模型 -->
-    <Tabs
-      :active-key="activeTab"
-      @change="onTabChange"
-      style="margin-bottom: 0"
-    >
-      <TabPane key="CHAT" tab="对话模型" />
-      <TabPane key="EMBEDDING" tab="向量模型（Embedding）" />
-      <TabPane key="ROUTER" tab="路由模型" />
-      <TabPane key="RERANKER" tab="精排模型（Reranker）" />
-      <TabPane key="INTENT" tab="意图分类模型（BERT）" />
-    </Tabs>
-
-    <Table
-      :columns="columns"
-      :data-source="list"
-      :loading="loading"
-      :pagination="false"
-      row-key="id"
-      bordered
-    >
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'status'">
-          <Tag :color="record.isEnabled ? 'green' : 'default'">
-            {{ record.isEnabled ? '启用' : '禁用' }}
-          </Tag>
-        </template>
-        <template v-else-if="column.key === 'isDefault'">
-          <span v-if="record.isDefault" style="font-size: 16px; color: #4f46e5"
-            >✓</span
-          >
-        </template>
-        <template v-else-if="column.key === 'action'">
-          <Space>
-            <Button
-              size="small"
-              :type="
-                (record as AiModelConfigItem).isEnabled ? 'default' : 'primary'
-              "
-              @click="toggleEnable(record as AiModelConfigItem)"
-            >
-              {{ (record as AiModelConfigItem).isEnabled ? '禁用' : '启用' }}
-            </Button>
-            <Button
-              size="small"
-              :disabled="(record as AiModelConfigItem).isDefault"
-              @click="setDefault(record as AiModelConfigItem)"
-            >
-              设为默认
-            </Button>
-            <Button size="small" @click="openEdit(record as AiModelConfigItem)">
-              编辑
-            </Button>
-            <Button
-              size="small"
-              :loading="testingId === (record as AiModelConfigItem).id"
-              @click="testConnection(record as AiModelConfigItem)"
-            >
-              测试连接
-            </Button>
-            <Button
-              size="small"
-              danger
-              :disabled="(record as AiModelConfigItem).isDefault"
-              @click="confirmDelete(record as AiModelConfigItem)"
-            >
-              删除
-            </Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
-
-    <!-- 新增/编辑弹窗 -->
-    <Modal
-      v-model:open="modalOpen"
-      :title="
-        editingId
-          ? '编辑配置'
-          : isEmbeddingTab
-            ? '新增向量模型配置'
-            : isRouterTab
-              ? '新增路由模型配置'
-              : isRerankerTab
-                ? '新增精排模型配置'
-                : isIntentTab
-                  ? '新增意图分类模型配置'
-                  : '新增对话模型配置'
-      "
-      :confirm-loading="submitting"
-      width="560px"
-      @ok="submit"
-    >
-      <Form layout="vertical" style="margin-top: 16px">
-        <FormItem label="配置名称" required>
-          <Input
-            v-model:value="form.name"
-            :placeholder="
-              isEmbeddingTab
-                ? '如：本地 BGE-M3'
-                : isRouterTab
-                  ? '如：Qwen2.5-0.5B (域路由)'
-                  : isRerankerTab
-                    ? '如：本地 BGE-Reranker-v2-M3'
-                    : isIntentTab
-                      ? '如：本地 BERT 意图分类服务'
-                      : '如：天翼云 DeepSeek-V4-Flash'
-            "
-          />
-        </FormItem>
-        <div style="display: flex; gap: 12px">
-          <FormItem label="供应商" required style="flex: 1">
-            <Select v-model:value="form.provider" @change="onProviderChange">
-              <SelectOption
-                v-for="p in PROVIDERS"
-                :key="p.value"
-                :value="p.value"
-              >
-                {{ p.label }}
-              </SelectOption>
-            </Select>
-          </FormItem>
-          <FormItem label="API 协议" required style="flex: 1">
-            <Select v-model:value="form.apiProtocol">
-              <SelectOption
-                v-for="p in PROTOCOLS"
-                :key="p.value"
-                :value="p.value"
-              >
-                {{ p.label }}
-              </SelectOption>
-            </Select>
-          </FormItem>
-        </div>
-        <FormItem label="API Base URL" required>
-          <Input
-            v-model:value="form.baseUrl"
-            :placeholder="
-              isEmbeddingTab
-                ? 'http://localhost:8000'
-                : isRouterTab
-                  ? 'http://localhost:11434/v1'
-                  : 'https://api.openai.com/v1'
-            "
-          />
-        </FormItem>
-        <FormItem
-          label="API Key"
-          :help="
-            editingId
-              ? '留空则不修改现有 Key'
-              : isToolServiceTab
-                ? '本地部署无需 Key 可留空'
-                : ''
-          "
+    <!-- 顶部统计卡片行 -->
+    <div class="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div
+        class="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm"
+      >
+        <div
+          class="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-sm font-bold text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
         >
-          <InputPassword
-            v-model:value="form.apiKeyEnc"
-            :placeholder="
-              isToolServiceTab
-                ? '本地部署可留空'
-                : '输入 API Key（自动加密存储）'
-            "
-          />
-        </FormItem>
-        <FormItem label="模型名称" required>
-          <Input
-            v-model:value="form.modelName"
-            :placeholder="
-              isEmbeddingTab
-                ? '如 bge-m3 / nomic-embed-text / mxbai-embed-large'
-                : isRouterTab
-                  ? '如 qwen2.5:0.5b / phi3-mini / gemma2:2b'
-                  : isRerankerTab
-                    ? '如 bge-reranker-v2-m3 / bge-reranker-v2-large'
-                    : isIntentTab
-                      ? '如 bert-intent / chinese-roberta-wwm-ext'
-                      : '如 DeepSeek-V4-Flash / gpt-4o'
-            "
-          />
-        </FormItem>
-
-        <!-- 对话模型专属：温度 / Max Tokens / 超时 -->
-        <template v-if="!isToolServiceTab">
-          <div style="display: flex; gap: 12px">
-            <FormItem label="温度（0-2）" style="flex: 1">
-              <InputNumber
-                v-model:value="form.temperature"
-                :min="0"
-                :max="2"
-                :step="0.1"
-                style="width: 100%"
-              />
-            </FormItem>
-            <FormItem label="Max Tokens" style="flex: 1">
-              <InputNumber
-                v-model:value="form.maxTokens"
-                :min="1"
-                :max="32000"
-                style="width: 100%"
-              />
-            </FormItem>
-            <FormItem label="超时（秒）" style="flex: 1">
-              <InputNumber
-                v-model:value="form.timeoutSec"
-                :min="5"
-                :max="300"
-                style="width: 100%"
-              />
-            </FormItem>
+          {{ currentTabMeta.badge }}
+        </div>
+        <div>
+          <div class="text-xs text-muted-foreground">
+            {{ currentTabMeta.label }}
           </div>
-        </template>
-
-        <!-- 工具型服务（Embedding/Router/Reranker/Intent）：只需超时 -->
-        <template v-else>
-          <FormItem
-            label="超时（秒）"
-            :help="
-              isIntentTab
-                ? 'BERT 意图分类要求快速响应，建议 ≤ 2s'
-                : isRouterTab
-                  ? '路由判断需快速响应，建议 ≤ 10s'
-                  : '服务 HTTP 请求超时，可根据 GPU 性能调整'
-            "
+          <div class="text-xl font-bold leading-tight tabular-nums">
+            {{ stats.total }}
+          </div>
+        </div>
+      </div>
+      <div
+        class="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm"
+      >
+        <div
+          class="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 dark:bg-emerald-900/30"
+        >
+          <Icon icon="lucide:check-circle" class="text-lg text-emerald-500" />
+        </div>
+        <div>
+          <div class="text-xs text-muted-foreground">启用中</div>
+          <div
+            class="text-xl font-bold leading-tight text-emerald-600 tabular-nums dark:text-emerald-400"
           >
-            <InputNumber
-              v-model:value="form.timeoutSec"
-              :min="1"
-              :max="300"
-              style="width: 160px"
+            {{ stats.enabled }}
+          </div>
+        </div>
+      </div>
+      <div
+        class="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm"
+      >
+        <div
+          class="flex h-10 w-10 items-center justify-center rounded-lg bg-red-50 dark:bg-red-900/30"
+        >
+          <Icon icon="lucide:pause-circle" class="text-lg text-red-400" />
+        </div>
+        <div>
+          <div class="text-xs text-muted-foreground">已禁用</div>
+          <div
+            class="text-xl font-bold leading-tight text-red-500 tabular-nums dark:text-red-400"
+          >
+            {{ stats.disabled }}
+          </div>
+        </div>
+      </div>
+      <div
+        class="flex items-center gap-3 rounded-xl border bg-card p-4 shadow-sm"
+      >
+        <div
+          class="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-50 dark:bg-violet-900/30"
+        >
+          <Icon icon="lucide:star" class="text-lg text-violet-500" />
+        </div>
+        <div>
+          <div class="text-xs text-muted-foreground">默认模型</div>
+          <div
+            class="text-xl font-bold leading-tight text-violet-600 tabular-nums dark:text-violet-400"
+          >
+            {{ stats.default }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab + 搜索 + 新增 -->
+    <div
+      class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3"
+    >
+      <Tabs
+        :active-key="activeTab"
+        size="small"
+        style="margin-bottom: -8px"
+        @change="onTabChange"
+      >
+        <TabPane v-for="t in TAB_LIST" :key="t.key" :tab="t.label" />
+      </Tabs>
+      <div class="flex items-center gap-2">
+        <Input
+          v-model:value="searchKeyword"
+          allow-clear
+          placeholder="搜索名称 / 模型 / 供应商"
+          style="width: 200px"
+        >
+          <template #prefix>
+            <Icon icon="lucide:search" class="text-muted-foreground" />
+          </template>
+        </Input>
+        <Button type="primary" @click="openCreate">
+          <template #icon><Icon icon="lucide:plus" /></template>
+          新增配置
+        </Button>
+      </div>
+    </div>
+
+    <!-- 模型卡片网格 -->
+    <Spin :spinning="loading">
+      <Empty
+        v-if="filteredList.length === 0"
+        description="暂无模型配置"
+        style="padding: 60px 0"
+      />
+      <div v-else class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div
+          v-for="item in filteredList"
+          :key="item.id"
+          class="group relative flex flex-col rounded-xl border bg-card p-4 shadow-sm transition hover:shadow-md"
+          :class="{
+            'border-violet-300 ring-1 ring-violet-200 dark:border-violet-700 dark:ring-violet-800':
+              item.isDefault,
+            'opacity-60': !item.isEnabled,
+          }"
+        >
+          <!-- 默认标记 -->
+          <div
+            v-if="item.isDefault"
+            class="absolute -right-px -top-px rounded-bl-lg rounded-tr-xl bg-violet-500 px-2 py-0.5 text-[10px] font-medium text-white"
+          >
+            默认
+          </div>
+
+          <!-- 头部：名称 + 开关 -->
+          <div class="mb-3 flex items-start justify-between">
+            <div class="min-w-0 flex-1 pr-2">
+              <div class="flex items-center gap-2">
+                <Icon
+                  :icon="
+                    item.isEnabled
+                      ? 'lucide:circle-check'
+                      : 'lucide:circle-minus'
+                  "
+                  :class="
+                    item.isEnabled
+                      ? 'text-emerald-500'
+                      : 'text-muted-foreground'
+                  "
+                  style="font-size: 14px"
+                />
+                <span class="truncate font-semibold">{{ item.name }}</span>
+              </div>
+              <div
+                class="mt-0.5 truncate font-mono text-xs text-muted-foreground"
+              >
+                {{ item.modelName }}
+              </div>
+            </div>
+            <Switch
+              :checked="item.isEnabled"
+              size="small"
+              @change="toggleEnable(item)"
             />
-          </FormItem>
-        </template>
+          </div>
 
-        <FormItem label="启用状态">
-          <Switch
-            v-model:checked="form.isEnabled"
-            checked-children="启用"
-            un-checked-children="禁用"
-          />
-          <span class="ml-2 text-xs opacity-50"
-            >禁用后该模型不参与对话和路由</span
-          >
-        </FormItem>
+          <!-- 标签行 -->
+          <div class="mb-3 flex flex-wrap items-center gap-1.5">
+            <span
+              class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium"
+              :class="providerClass(item.provider)"
+            >
+              {{ item.provider }}
+            </span>
+            <span
+              v-if="item.apiProtocol"
+              class="inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+            >
+              {{ item.apiProtocol }}
+            </span>
+            <span
+              v-if="item.timeoutSec"
+              class="inline-flex items-center gap-0.5 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+            >
+              <Icon icon="lucide:clock" style="font-size: 10px" />
+              {{ item.timeoutSec }}s
+            </span>
+          </div>
 
-        <FormItem label="备注">
-          <Textarea
-            v-model:value="form.remark"
-            :rows="2"
-            placeholder="可选备注"
-          />
-        </FormItem>
-      </Form>
-    </Modal>
+          <!-- 信息行 -->
+          <div class="mb-3 space-y-1 border-t pt-2 text-xs">
+            <div class="flex items-center gap-1.5 text-muted-foreground">
+              <Icon
+                icon="lucide:link"
+                style="font-size: 12px"
+                class="shrink-0"
+              />
+              <span class="truncate font-mono">{{ item.baseUrl }}</span>
+            </div>
+            <div
+              v-if="!isToolServiceTab && item.temperature !== undefined"
+              class="flex items-center gap-1.5 text-muted-foreground"
+            >
+              <Icon
+                icon="lucide:thermometer"
+                style="font-size: 12px"
+                class="shrink-0"
+              />
+              <span>温度 {{ item.temperature }}</span>
+              <span class="mx-1 text-border">|</span>
+              <Icon
+                icon="lucide:hash"
+                style="font-size: 12px"
+                class="shrink-0"
+              />
+              <span>{{ item.maxTokens }} tokens</span>
+            </div>
+          </div>
 
-    <!-- 测试连接结果 Modal -->
+          <!-- 底部操作 -->
+          <div class="mt-auto flex items-center justify-between border-t pt-2">
+            <span
+              v-if="item.remark"
+              class="truncate text-xs text-muted-foreground"
+            >
+              {{ item.remark }}
+            </span>
+            <span v-else></span>
+            <div class="flex items-center gap-1">
+              <Tooltip title="测试连接">
+                <Button
+                  type="text"
+                  size="small"
+                  class="text-amber-500 hover:text-amber-600"
+                  @click="testConnection(item)"
+                >
+                  <template #icon>
+                    <Icon
+                      :icon="
+                        testingId === item.id
+                          ? 'lucide:loader-circle'
+                          : 'lucide:plug-zap'
+                      "
+                      :class="testingId === item.id ? 'animate-spin' : ''"
+                    />
+                  </template>
+                </Button>
+              </Tooltip>
+              <Tooltip title="设为默认">
+                <Button
+                  type="text"
+                  size="small"
+                  :disabled="item.isDefault"
+                  class="text-violet-500 hover:text-violet-600"
+                  @click="setDefault(item)"
+                >
+                  <template #icon><Icon icon="lucide:star" /></template>
+                </Button>
+              </Tooltip>
+              <Tooltip title="编辑">
+                <Button
+                  type="text"
+                  size="small"
+                  class="text-slate-500 hover:text-slate-700"
+                  @click="openEdit(item)"
+                >
+                  <template #icon><Icon icon="lucide:pencil" /></template>
+                </Button>
+              </Tooltip>
+              <Tooltip title="删除">
+                <Button
+                  type="text"
+                  size="small"
+                  :disabled="item.isDefault"
+                  danger
+                  @click="confirmDelete(item)"
+                >
+                  <template #icon><Icon icon="lucide:trash-2" /></template>
+                </Button>
+              </Tooltip>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Spin>
+
+    <!-- 测试连接结果弹窗 -->
     <Modal
-      v-model:open="testVisible"
+      :open="testModalVisible"
       :title="`测试连接 — ${testName}`"
       :footer="null"
       width="440px"
+      @cancel="testModalVisible = false"
     >
       <div
-        style="
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          min-height: 80px;
-          padding: 16px 0;
-        "
+        class="flex min-h-[80px] items-center justify-center"
+        style="padding: 16px 0"
       >
-        <Spin v-if="testingId !== null" tip="连接测试中，请稍候…" />
-        <div v-else-if="testResult" style="width: 100%">
+        <Spin v-if="testingId !== null" tip="连接测试中，请稍候..." />
+        <div v-else-if="testResult" class="w-full">
           <Alert
             :type="testResult.success ? 'success' : 'error'"
             :message="testResult.success ? '连接成功' : '连接失败'"
             :description="testResult.message"
             show-icon
           />
-          <p
-            style="
-              margin-top: 10px;
-              font-size: 12px;
-              color: #888;
-              text-align: right;
-            "
-          >
+          <p class="mt-2 text-right text-xs text-muted-foreground">
             延迟：{{ testResult.latencyMs }} ms
           </p>
         </div>
       </div>
     </Modal>
+
+    <!-- Drawer 编辑 -->
+    <Drawer
+      :open="drawerOpen"
+      :title="drawerTitle"
+      :width="560"
+      @close="drawerOpen = false"
+    >
+      <Form layout="vertical" class="space-y-1">
+        <!-- 基本信息 -->
+        <div class="mb-4">
+          <div class="mb-3 flex items-center gap-2">
+            <span class="h-4 w-[3px] rounded bg-primary"></span>
+            <span class="text-sm font-semibold">基本信息</span>
+          </div>
+          <FormItem label="配置名称" required>
+            <Input
+              v-model:value="form.name"
+              :placeholder="
+                isEmbeddingTab
+                  ? '如：本地 BGE-M3'
+                  : isRouterTab
+                    ? '如：Qwen2.5-0.5B (域路由)'
+                    : isRerankerTab
+                      ? '如：本地 BGE-Reranker-v2-M3'
+                      : isIntentTab
+                        ? '如：本地 BERT 意图分类服务'
+                        : '如：天翼云 DeepSeek-V4-Flash'
+              "
+            />
+          </FormItem>
+          <div class="flex gap-3">
+            <FormItem label="供应商" required class="flex-1">
+              <Select v-model:value="form.provider" @change="onProviderChange">
+                <SelectOption
+                  v-for="p in PROVIDERS"
+                  :key="p.value"
+                  :value="p.value"
+                >
+                  {{ p.label }}
+                </SelectOption>
+              </Select>
+            </FormItem>
+            <FormItem label="API 协议" required class="flex-1">
+              <Select v-model:value="form.apiProtocol">
+                <SelectOption
+                  v-for="p in PROTOCOLS"
+                  :key="p.value"
+                  :value="p.value"
+                >
+                  {{ p.label }}
+                </SelectOption>
+              </Select>
+            </FormItem>
+          </div>
+        </div>
+
+        <!-- 连接配置 -->
+        <div class="mb-4">
+          <div class="mb-3 flex items-center gap-2">
+            <span class="h-4 w-[3px] rounded bg-emerald-500"></span>
+            <span class="text-sm font-semibold">连接配置</span>
+          </div>
+          <FormItem label="API Base URL" required>
+            <Input
+              v-model:value="form.baseUrl"
+              :placeholder="
+                isEmbeddingTab
+                  ? 'http://localhost:8000'
+                  : isRouterTab
+                    ? 'http://localhost:11434/v1'
+                    : 'https://api.openai.com/v1'
+              "
+            />
+          </FormItem>
+          <FormItem
+            label="API Key"
+            :help="
+              editingId
+                ? '留空则不修改现有 Key'
+                : isToolServiceTab
+                  ? '本地部署无需 Key 可留空'
+                  : ''
+            "
+          >
+            <InputPassword
+              v-model:value="form.apiKeyEnc"
+              :placeholder="
+                isToolServiceTab
+                  ? '本地部署可留空'
+                  : '输入 API Key（自动加密存储）'
+              "
+            />
+          </FormItem>
+          <FormItem label="模型名称" required>
+            <Input
+              v-model:value="form.modelName"
+              :placeholder="
+                isEmbeddingTab
+                  ? '如 bge-m3 / nomic-embed-text / mxbai-embed-large'
+                  : isRouterTab
+                    ? '如 qwen2.5:0.5b / phi3-mini / gemma2:2b'
+                    : isRerankerTab
+                      ? '如 bge-reranker-v2-m3 / bge-reranker-v2-large'
+                      : isIntentTab
+                        ? '如 bert-intent / chinese-roberta-wwm-ext'
+                        : '如 DeepSeek-V4-Flash / gpt-4o'
+              "
+            />
+          </FormItem>
+        </div>
+
+        <!-- 参数设置 -->
+        <div class="mb-4">
+          <div class="mb-3 flex items-center gap-2">
+            <span class="h-4 w-[3px] rounded bg-amber-500"></span>
+            <span class="text-sm font-semibold">参数设置</span>
+          </div>
+          <template v-if="!isToolServiceTab">
+            <div class="flex gap-3">
+              <FormItem label="温度（0-2）" class="flex-1">
+                <InputNumber
+                  v-model:value="form.temperature"
+                  :min="0"
+                  :max="2"
+                  :step="0.1"
+                  style="width: 100%"
+                />
+              </FormItem>
+              <FormItem label="Max Tokens" class="flex-1">
+                <InputNumber
+                  v-model:value="form.maxTokens"
+                  :min="1"
+                  :max="32000"
+                  style="width: 100%"
+                />
+              </FormItem>
+              <FormItem label="超时（秒）" class="flex-1">
+                <InputNumber
+                  v-model:value="form.timeoutSec"
+                  :min="5"
+                  :max="300"
+                  style="width: 100%"
+                />
+              </FormItem>
+            </div>
+          </template>
+          <template v-else>
+            <FormItem
+              label="超时（秒）"
+              :help="
+                isIntentTab
+                  ? 'BERT 意图分类要求快速响应，建议 ≤ 2s'
+                  : isRouterTab
+                    ? '路由判断需快速响应，建议 ≤ 10s'
+                    : '服务 HTTP 请求超时，可根据 GPU 性能调整'
+              "
+            >
+              <InputNumber
+                v-model:value="form.timeoutSec"
+                :min="1"
+                :max="300"
+                style="width: 160px"
+              />
+            </FormItem>
+          </template>
+        </div>
+
+        <!-- 其他 -->
+        <div>
+          <div class="mb-3 flex items-center gap-2">
+            <span class="h-4 w-[3px] rounded bg-slate-400"></span>
+            <span class="text-sm font-semibold">其他</span>
+          </div>
+          <FormItem label="启用状态">
+            <Switch
+              v-model:checked="form.isEnabled"
+              checked-children="启用"
+              un-checked-children="禁用"
+            />
+            <span class="ml-2 text-xs opacity-50">
+              禁用后该模型不参与对话和路由
+            </span>
+          </FormItem>
+          <FormItem label="备注">
+            <Textarea
+              v-model:value="form.remark"
+              :rows="2"
+              placeholder="可选备注"
+            />
+          </FormItem>
+        </div>
+      </Form>
+
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <Button @click="drawerOpen = false">取消</Button>
+          <Button type="primary" :loading="submitting" @click="submit">
+            保存
+          </Button>
+        </div>
+      </template>
+    </Drawer>
   </Page>
 </template>
