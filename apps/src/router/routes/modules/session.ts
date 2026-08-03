@@ -38,36 +38,6 @@ const routes: RouteRecordRaw[] = [
           title: $t('page.session.history'),
         },
       },
-      {
-        name: 'SessionSla',
-        path: '/session/sla',
-        component: () => import('#/views/session/sla/index.vue'),
-        meta: {
-          authority: ['super_admin', 'kf_manager'],
-          icon: 'lucide:alarm-clock',
-          title: 'SLA 管理',
-        },
-      },
-      {
-        name: 'SessionWebhooks',
-        path: '/session/webhooks',
-        component: () => import('#/views/session/sla/webhook.vue'),
-        meta: {
-          authority: ['super_admin', 'kf_manager'],
-          icon: 'lucide:at-sign',
-          title: '通知配置',
-        },
-      },
-      {
-        name: 'SessionBreaches',
-        path: '/session/breaches',
-        component: () => import('#/views/session/sla/breaches.vue'),
-        meta: {
-          authority: ['super_admin', 'kf_manager'],
-          icon: 'lucide:alert-triangle',
-          title: 'SLA 违规记录',
-        },
-      },
     ],
   },
 ];

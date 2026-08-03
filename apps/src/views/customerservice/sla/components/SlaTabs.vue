@@ -18,12 +18,14 @@ const route = useRoute();
 const router = useRouter();
 
 const tabItems = [
-  { key: '/session/sla', label: 'SLA 策略' },
-  { key: '/session/breaches', label: '违规记录' },
+  { key: '/customerservice/sla', label: 'SLA 策略' },
+  { key: '/customerservice/sla/breaches', label: '违规记录' },
 ];
 
 const activeKey = computed(() =>
-  tabItems.some((t) => t.key === route.path) ? route.path : '/session/sla',
+  tabItems.some((t) => t.key === route.path)
+    ? route.path
+    : '/customerservice/sla',
 );
 
 function onChange(key: number | string) {

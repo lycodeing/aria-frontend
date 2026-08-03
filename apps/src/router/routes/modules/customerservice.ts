@@ -75,6 +75,37 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        name: 'CustomerServiceSla',
+        path: '/customerservice/sla',
+        component: () => import('#/views/customerservice/sla/index.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_manager'],
+          icon: 'lucide:alarm-clock',
+          title: 'SLA 管理',
+        },
+      },
+      {
+        name: 'CustomerServiceWebhooks',
+        path: '/customerservice/webhooks',
+        component: () => import('#/views/customerservice/sla/webhook.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_manager'],
+          icon: 'lucide:at-sign',
+          title: '通知配置',
+        },
+      },
+      {
+        name: 'CustomerServiceBreaches',
+        path: '/customerservice/sla/breaches',
+        component: () => import('#/views/customerservice/sla/breaches.vue'),
+        meta: {
+          authority: ['super_admin', 'kf_manager'],
+          icon: 'lucide:alert-triangle',
+          title: 'SLA 违规记录',
+          hideInMenu: true,
+        },
+      },
+      {
         name: 'CustomerServiceDIT',
         path: '/customerservice/dit',
         meta: {
