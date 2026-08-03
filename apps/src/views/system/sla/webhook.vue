@@ -57,6 +57,7 @@ interface FormState {
   customHeadersJson: string;
   messageTemplate: string;
   isEnabled: boolean;
+  scopes: string[];
 }
 
 const emptyForm = (): FormState => ({
@@ -67,6 +68,7 @@ const emptyForm = (): FormState => ({
   customHeadersJson: '{}',
   messageTemplate: '',
   isEnabled: true,
+  scopes: ['SLA_BREACH'], // 默认只订阅 SLA 违规，与后端默认一致
 });
 
 const form = reactive<FormState>(emptyForm());
@@ -100,6 +102,7 @@ function openEdit(row: WebhookVO) {
     customHeadersJson: headersJson,
     messageTemplate: row.messageTemplate ?? '',
     isEnabled: row.isEnabled === 1,
+    scopes: row.scopes && row.scopes.length > 0 ? row.scopes : ['SLA_BREACH'],
   });
   modalOpen.value = true;
 }
@@ -121,6 +124,7 @@ function buildPayload(): Omit<WebhookVO, 'id'> {
     customHeaders: showCustomHeaders.value ? customHeaders : undefined,
     messageTemplate: form.messageTemplate || undefined,
     isEnabled: form.isEnabled ? 1 : 0,
+    scopes: form.scopes,
   };
 }
 
@@ -132,6 +136,12 @@ async function submit() {
   if (!form.url) {
     message.warning('请填写 Webhook URL');
     return;
+  }
+  if (form.scopes.length === 0) {
+    // 空数组 = 不订阅任何事件，后端允许保存；仅提示、不阻断
+    message.warning(
+      '未选择任何事件范围，该 Webhook 不会收到任何推送（如需保存请继续）',
+    );
   }
   submitting.value = true;
   try {
@@ -187,11 +197,30 @@ async function testWebhook(row: WebhookVO) {
   }
 }
 
+// ===== 事件范围 =====
+// 事件范围选项（值=后端枚举名，label=展示名）
+const scopeOptions = [
+  { value: 'SLA_BREACH', label: 'SLA违规告警' },
+  { value: 'SESSION_CREATED', label: '新会话' },
+  { value: 'SESSION_TRANSFERRED', label: '转人工' },
+  { value: 'SESSION_CLOSED', label: '会话关闭' },
+  { value: 'CSAT_RATED', label: '客户评价' },
+];
+
+const scopeLabelMap: Record<string, string> = {
+  SLA_BREACH: 'SLA违规',
+  SESSION_CREATED: '新会话',
+  SESSION_TRANSFERRED: '转人工',
+  SESSION_CLOSED: '会话关闭',
+  CSAT_RATED: '客户评价',
+};
+
 // ===== 表格列定义 =====
 const columns = [
   { title: '名称', dataIndex: 'name', key: 'name' },
   { title: '类型', key: 'type', width: 100 },
   { title: 'URL', key: 'url', ellipsis: true },
+  { title: '事件范围', key: 'scopes', width: 200 },
   { title: '状态', key: 'status', width: 90 },
   { title: '操作', key: 'action', width: 220 },
 ];
@@ -242,6 +271,22 @@ onMounted(loadList);
                 : (record as WebhookVO).url
             }}
           </span>
+        </template>
+        <template v-else-if="column.key === 'scopes'">
+          <Space wrap>
+            <Tag
+              v-for="s in (record as WebhookVO).scopes ?? []"
+              :key="s"
+              color="processing"
+            >
+              {{ scopeLabelMap[s] ?? s }}
+            </Tag>
+            <span
+              v-if="!(record as WebhookVO).scopes?.length"
+              style="color: rgb(0 0 0 / 45%)"
+              >未订阅</span
+            >
+          </Space>
         </template>
         <template v-else-if="column.key === 'status'">
           <Tag
@@ -323,6 +368,27 @@ onMounted(loadList);
             :rows="4"
             placeholder="{&quot;Authorization&quot;: &quot;Bearer token&quot;, &quot;X-Custom&quot;: &quot;value&quot;}"
           />
+        </FormItem>
+        <FormItem label="事件范围" required>
+          <Select
+            v-model:value="form.scopes"
+            mode="multiple"
+            style="width: 100%"
+            placeholder="请选择订阅的事件范围"
+          >
+            <SelectOption
+              v-for="opt in scopeOptions"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ opt.label }}
+            </SelectOption>
+          </Select>
+          <div
+            style="margin-top: 4px; font-size: 12px; color: rgb(0 0 0 / 45%)"
+          >
+            选择该 Webhook 订阅的事件，未选择任何事件将不会收到推送
+          </div>
         </FormItem>
         <FormItem label="消息模板">
           <Textarea
