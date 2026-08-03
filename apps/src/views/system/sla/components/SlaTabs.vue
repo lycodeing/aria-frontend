@@ -5,22 +5,21 @@ import { useRoute, useRouter } from 'vue-router';
 import { TabPane, Tabs } from 'ant-design-vue';
 
 /**
- * SLA 管理子页签导航：SLA 策略 / Webhook 配置 / 违规记录。
+ * SLA 管理子页签导航：SLA 策略 / 违规记录。
  *
- * <p>三个子页面共用此组件，通过路由路径切换；当前路由不在三者内时回退到策略页。
- * 路由配置中 webhooks/breaches 均为 hideInMenu（作为本页内 tab 展示），
- * 此组件即它们的唯一菜单入口。
+ * <p>Webhook 配置已独立为系统级菜单，不再作为 SLA 子页签。
  */
 const route = useRoute();
 const router = useRouter();
 
 const tabItems = [
   { key: '/system/sla', label: 'SLA 策略' },
-  { key: '/system/sla/webhooks', label: 'Webhook 配置' },
   { key: '/system/sla/breaches', label: '违规记录' },
 ];
 
-const activeKey = ref(route.path);
+const activeKey = ref(
+  tabItems.some((t) => t.key === route.path) ? route.path : '/system/sla',
+);
 
 watch(
   () => route.path,
