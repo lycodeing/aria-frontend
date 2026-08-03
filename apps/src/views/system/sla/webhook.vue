@@ -29,6 +29,8 @@ import {
   updateWebhookApi,
 } from '#/api/webhook/index';
 
+import SlaTabs from './components/SlaTabs.vue';
+
 // ===== 列表状态 =====
 const list = ref<WebhookVO[]>([]);
 const loading = ref(false);
@@ -240,6 +242,8 @@ onMounted(loadList);
     <template #extra>
       <Button type="primary" @click="openCreate">+ 新增 Webhook</Button>
     </template>
+
+    <SlaTabs />
 
     <Table
       :columns="columns"

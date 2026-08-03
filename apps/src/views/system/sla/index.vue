@@ -31,6 +31,8 @@ import {
   updateSlaPolicyApi,
 } from '#/api/sla/index';
 
+import SlaTabs from './components/SlaTabs.vue';
+
 // ===== 列表状态 =====
 const list = ref<SlaPolicyVO[]>([]);
 const loading = ref(false);
@@ -187,6 +189,8 @@ const columns = [
     <template #extra>
       <Button type="primary" @click="openCreate">+ 新增策略</Button>
     </template>
+
+    <SlaTabs />
 
     <Table
       :columns="columns"
