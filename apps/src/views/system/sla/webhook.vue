@@ -102,7 +102,7 @@ function openEdit(row: WebhookVO) {
     customHeadersJson: headersJson,
     messageTemplate: row.messageTemplate ?? '',
     isEnabled: row.isEnabled === 1,
-    scopes: row.scopes && row.scopes.length > 0 ? row.scopes : ['SLA_BREACH'],
+    scopes: row.scopes ?? ['SLA_BREACH'],
   });
   modalOpen.value = true;
 }

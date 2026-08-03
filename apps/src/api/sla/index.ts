@@ -6,7 +6,6 @@ export interface SlaBreachActions {
   sseAlert: boolean;
   autoEscalate: boolean;
   escalateToUserId?: string;
-  webhookIds?: number[];
 }
 
 export interface SlaPolicyVO {
