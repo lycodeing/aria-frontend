@@ -19,7 +19,7 @@ const router = useRouter();
 
 const tabItems = [
   { key: '/session/sla', label: 'SLA 策略' },
-  { key: '/session/sla/breaches', label: '违规记录' },
+  { key: '/session/breaches', label: '违规记录' },
 ];
 
 const activeKey = computed(() =>
