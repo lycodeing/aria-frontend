@@ -150,6 +150,20 @@ function acceptBtnGradient(waitMin: string): string {
   return 'linear-gradient(90deg, #3b82f6, #06b6d4)';
 }
 
+/** 等待卡片容器样式（按优先级给予不同底色与强调边框，提升视觉区分度） */
+function cardClass(waitMin: string): string {
+  const base =
+    'relative cursor-pointer overflow-hidden rounded-xl p-3 transition-all duration-200 border hover:-translate-y-0.5 hover:scale-[1.01] hover:shadow-lg';
+  const p = getPriority(waitMin);
+  if (p === 'urgent') {
+    return `${base} bg-red-50/70 border-red-200 shadow-red-100/80 hover:shadow-red-200/70 dark:bg-red-950/25 dark:border-red-900/70`;
+  }
+  if (p === 'medium') {
+    return `${base} bg-amber-50/50 border-amber-200/70 shadow-sm hover:shadow-amber-200/60 dark:bg-amber-950/15 dark:border-amber-900/50`;
+  }
+  return `${base} bg-white border-slate-200/70 shadow-sm dark:bg-slate-800 dark:border-slate-700`;
+}
+
 /** 按优先级分组排序后的等待队列 */
 function groupedWaitingQueue(
   items: QueueItem[],
@@ -399,7 +413,7 @@ function groupedWaitingQueue(
             >
               <!-- 分组标题 -->
               <div
-                class="mb-1.5 mt-1 flex items-center gap-1.5 px-1 text-[10px] font-semibold text-slate-400"
+                class="mb-2 mt-1 flex items-center gap-1.5 rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400"
               >
                 <span
                   class="h-1.5 w-1.5 rounded-full"
@@ -411,15 +425,15 @@ function groupedWaitingQueue(
                 }}</span>
               </div>
               <!-- 分组内卡片 -->
-              <div class="mb-3 space-y-2">
+              <div class="mb-3 space-y-2.5">
                 <div
                   v-for="item in group.items"
                   :key="item.id"
-                  class="relative cursor-pointer overflow-hidden rounded-xl bg-white p-3 transition-all duration-200 hover:-translate-y-px hover:shadow-md dark:bg-slate-800"
+                  :class="cardClass(item.waitMin)"
                 >
                   <!-- 左侧优先级色条 -->
                   <div
-                    class="absolute left-0 top-0 bottom-0 w-[3px]"
+                    class="absolute left-0 top-0 bottom-0 w-[4px]"
                     :class="{
                       'bg-red-500': getPriority(item.waitMin) === 'urgent',
                       'bg-amber-500': getPriority(item.waitMin) === 'medium',
@@ -431,7 +445,7 @@ function groupedWaitingQueue(
                     <!-- 头像 + 状态点 -->
                     <div class="relative shrink-0">
                       <div
-                        class="flex h-9 w-9 items-center justify-center rounded-lg text-[14px] font-medium text-white"
+                        class="flex h-9 w-9 items-center justify-center rounded-lg text-[14px] font-medium text-white shadow-sm ring-2 ring-white dark:ring-slate-800"
                         :style="{ background: item.color }"
                       >
                         {{ item.name[0] }}
