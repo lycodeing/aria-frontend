@@ -47,7 +47,10 @@ export async function createSystemConfigApi(
 
 export async function updateSystemConfigApi(
   id: number | string,
-  data: Pick<SystemConfigRequest, 'configValue'> & { description?: string },
+  data: Pick<SystemConfigRequest, 'configValue'> & {
+    description?: string;
+    isEnabled?: boolean;
+  },
 ): Promise<void> {
   return authClient.put(`/admin/system-config/${id}`, data);
 }

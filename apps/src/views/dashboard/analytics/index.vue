@@ -1,5 +1,4 @@
 <script lang="ts" setup>
-import type { AnalysisOverviewItem } from '@vben/common-ui';
 import type { TabOption } from '@vben/types';
 
 import type {
@@ -21,19 +20,9 @@ import type {
   TimeRange,
 } from '#/api/dashboard';
 
-import { computed, markRaw, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
-import {
-  AnalysisChartCard,
-  AnalysisChartsTabs,
-  AnalysisOverview,
-} from '@vben/common-ui';
-import {
-  SvgBellIcon,
-  SvgCakeIcon,
-  SvgCardIcon,
-  SvgDownloadIcon,
-} from '@vben/icons';
+import { AnalysisChartCard, AnalysisChartsTabs } from '@vben/common-ui';
 
 import { Icon } from '@iconify/vue';
 import { message } from 'ant-design-vue';
@@ -55,6 +44,7 @@ import {
 } from '#/api/dashboard';
 
 import AnalyticsEfficiencyTrends from './analytics-efficiency-trends.vue';
+import AnalyticsKpiCard from './analytics-kpi-card.vue';
 import AnalyticsTrends from './analytics-trends.vue';
 import AnalyticsVisitsData from './analytics-visits-data.vue';
 import AnalyticsVisitsSales from './analytics-visits-sales.vue';
@@ -72,38 +62,8 @@ import PendingTicketsCard from './pending-tickets-card.vue';
 // ─── 时间范围 ─────────────────────────────────────────────────────────────────
 const selectedRange = ref<TimeRange>('month');
 
-// ─── 概览卡片（响应式，初始空数据，API 返回后更新） ────────────────────────────
-// icon 用 markRaw 避免 Vue 深度代理 Component 对象，防止 "reactive Component" 警告
-const overviewItems = ref<AnalysisOverviewItem[]>([
-  {
-    icon: markRaw(SvgCardIcon),
-    title: '今日会话量',
-    totalTitle: '总会话量',
-    totalValue: 0,
-    value: 0,
-  },
-  {
-    icon: markRaw(SvgCakeIcon),
-    title: '活跃会话',
-    totalTitle: '等待接入',
-    totalValue: 0,
-    value: 0,
-  },
-  {
-    icon: markRaw(SvgDownloadIcon),
-    title: '总消息数',
-    totalTitle: 'AI 回复',
-    totalValue: 0,
-    value: 0,
-  },
-  {
-    icon: markRaw(SvgBellIcon),
-    title: '总用户数',
-    totalTitle: '人工回复',
-    totalValue: 0,
-    value: 0,
-  },
-]);
+// ─── 概览数据（响应式，初始空数据，API 返回后更新） ────────────────────────────
+const overviewData = ref<DashboardOverviewData>();
 
 const chartTabs: TabOption[] = [
   { label: '会话趋势', value: 'trends' },
@@ -112,7 +72,6 @@ const chartTabs: TabOption[] = [
 ];
 
 // ─── 图表数据（响应式） ────────────────────────────────────────────────────────
-const overviewData = ref<DashboardOverviewData>();
 const conversationTrends = ref<ConversationTrendItem[]>([]);
 const messageTrends = ref<ConversationTrendItem[]>([]);
 const efficiencyTrends = ref<EfficiencyTrendItem[]>([]);
@@ -166,46 +125,24 @@ const csatByAgent = ref<CsatByAgentItem[]>([]);
 // ─── 请求竞态保护 ──────────────────────────────────────────────────────────────
 let latestRequestId = 0;
 
-function updateOverviewItems(data: DashboardOverviewData) {
-  // Number() 强制转换，防止 API 返回字符串数字（如 "64"）传入 VbenCountToAnimator；
-  // ?? 0 兜底 undefined/null，useTransition 要求 endVal 必须是 number。
-  // markRaw 防止 Vue 深度代理 Component 对象，避免 "reactive Component" 警告。
-  overviewItems.value = [
-    {
-      icon: markRaw(SvgCardIcon),
-      title: '今日会话量',
-      totalTitle: '总会话量',
-      totalValue: Number(data.totalConversationCount ?? 0),
-      value: Number(data.todayConversationCount ?? 0),
-    },
-    {
-      icon: markRaw(SvgCakeIcon),
-      title: '活跃会话',
-      totalTitle: '等待接入',
-      totalValue: Number(data.waitingConversationCount ?? 0),
-      value: Number(data.activeConversationCount ?? 0),
-    },
-    {
-      icon: markRaw(SvgDownloadIcon),
-      title: '总消息数',
-      totalTitle: 'AI 回复',
-      totalValue: Number(data.aiMessageCount ?? 0),
-      value: Number(data.totalMessageCount ?? 0),
-    },
-    {
-      icon: markRaw(SvgBellIcon),
-      title: '总用户数',
-      totalTitle: '人工回复',
-      totalValue: Number(data.agentMessageCount ?? 0),
-      value: Number(data.totalUserCount ?? 0),
-    },
-  ];
-}
+// ─── sparkline 微趋势数据（从月度趋势提取，供 KPI 卡片底部展示） ────────────────
+// 使用 num() 兜底，避免 API 缺字段时算出 NaN 让柱形高度塌陷。
+const conversationSparkline = computed(() =>
+  conversationTrends.value.map((i) => num(i.humanCount) + num(i.aiCount)),
+);
+const messageSparkline = computed(() =>
+  messageTrends.value.map((i) => num(i.humanCount) + num(i.aiCount)),
+);
 
 // ─── SLA 违规率格式化 ──────────────────────────────────────────────────────────
 function formatRate(rate?: number): string {
   if (rate === null || rate === undefined) return '0.0';
   return (rate * 100).toFixed(1);
+}
+
+// ─── 安全数值转换（防止 API 返回字符串数字传入 VbenCountToAnimator） ────────────
+function num(val: null | number | undefined): number {
+  return Number(val ?? 0);
 }
 
 async function fetchTrendData(range: TimeRange) {
@@ -222,11 +159,11 @@ async function fetchTrendData(range: TimeRange) {
     messageTrends.value = msgTrends;
     efficiencyTrends.value = effTrends;
     overviewData.value = overview;
-    updateOverviewItems(overview);
     // CSAT 趋势随同一时间范围刷新
     csatTrend.value = await getCsatTrendApi(range);
-  } catch {
+  } catch (error) {
     if (id !== latestRequestId) return;
+    console.warn('[analytics] fetchTrendData failed', error);
     message.error('数据加载失败，请重试');
     conversationTrends.value = [];
     messageTrends.value = [];
@@ -253,7 +190,8 @@ onMounted(async () => {
   // 复杂度分布：独立加载，失败不影响其他快照（卡片回退占位数据）
   try {
     complexityData.value = await getComplexityDistributionApi();
-  } catch {
+  } catch (error) {
+    console.warn('[analytics] complexity distribution failed', error);
     complexityData.value = [];
   }
 
@@ -265,7 +203,8 @@ onMounted(async () => {
     ]);
     csatDistribution.value = distribution;
     csatByAgent.value = byAgent;
-  } catch {
+  } catch (error) {
+    console.warn('[analytics] csat snapshots failed', error);
     /* 保留默认值，卡片显示空态 */
   }
 
@@ -285,92 +224,123 @@ onMounted(async () => {
 
 <template>
   <div class="p-6">
-    <!-- 顶部：标题 + 时间范围选择器 -->
+    <!-- 顶部：标题 + 时间范围选择器 + 操作按钮 -->
     <div class="mb-4 flex items-center justify-between">
-      <span class="text-lg font-semibold">分析概览</span>
-      <DashboardTimeRangeSelector v-model="selectedRange" />
-    </div>
-
-    <!-- 概览指标卡片 -->
-    <AnalysisOverview :items="overviewItems" />
-
-    <!-- SLA 违规统计区块 -->
-    <div class="mt-5">
-      <div class="mb-3 flex items-center gap-2">
-        <Icon
-          icon="lucide:shield-alert"
-          class="text-lg"
-          style="color: #ef4444"
-        />
-        <span class="text-base font-semibold">SLA 违规统计</span>
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-semibold">分析概览</span>
+        <span
+          class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600"
+        >
+          <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+          实时
+        </span>
       </div>
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <!-- 今日 SLA 违规次数 -->
-        <div
-          class="flex items-center gap-4 rounded-xl border bg-card p-4 text-card-foreground shadow-sm"
+      <div class="flex items-center gap-2">
+        <DashboardTimeRangeSelector v-model="selectedRange" />
+        <span
+          class="cursor-pointer rounded-lg border px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-accent"
+          @click="fetchTrendData(selectedRange)"
         >
-          <div
-            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
-            style="background: #fef2f2"
-          >
-            <Icon
-              icon="lucide:alarm-clock-off"
-              class="text-xl"
-              style="color: #ef4444"
-            />
-          </div>
-          <div class="min-w-0">
-            <p class="text-xs text-muted-foreground">今日SLA违规</p>
-            <p class="text-2xl font-semibold leading-none tabular-nums">
-              {{ overviewData?.slaBreachCount ?? 0 }}
-              <span class="ml-1 text-sm font-normal text-muted-foreground"
-                >次</span
-              >
-            </p>
-          </div>
-        </div>
-        <!-- SLA 违规率 -->
-        <div
-          class="flex items-center gap-4 rounded-xl border bg-card p-4 text-card-foreground shadow-sm"
-        >
-          <div
-            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
-            style="background: #fff7ed"
-          >
-            <Icon
-              icon="lucide:percent"
-              class="text-xl"
-              style="color: #f97316"
-            />
-          </div>
-          <div class="min-w-0">
-            <p class="text-xs text-muted-foreground">SLA违规率</p>
-            <p class="text-2xl font-semibold leading-none tabular-nums">
-              {{ formatRate(overviewData?.slaBreachRate) }}
-              <span class="ml-1 text-sm font-normal text-muted-foreground"
-                >%</span
-              >
-            </p>
-          </div>
-        </div>
+          <Icon icon="lucide:refresh-cw" class="mr-1 inline" />
+          刷新
+        </span>
       </div>
     </div>
 
-    <!-- CSAT 满意度评价区块 -->
-    <div class="mt-5">
-      <div class="mb-3 flex items-center gap-2">
-        <Icon icon="lucide:star" class="text-lg" style="color: #4f46e5" />
-        <span class="text-base font-semibold">满意度评价 (CSAT)</span>
-      </div>
-
-      <!-- 概览指标卡 -->
-      <CsatStatCards
-        :avg-score="csatOverview.csatAvgScore"
-        :rated-count="csatOverview.csatRatedCount"
-        :response-rate="csatOverview.csatResponseRate"
+    <!-- ① KPI 概览卡片（内嵌 sparkline 微趋势） -->
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <AnalyticsKpiCard
+        title="今日会话量"
+        total-title="总会话量"
+        :total-value="num(overviewData?.totalConversationCount)"
+        :trend="conversationSparkline"
+        :value="num(overviewData?.todayConversationCount)"
+        color="primary"
       />
+      <AnalyticsKpiCard
+        title="活跃会话"
+        total-title="等待接入"
+        :total-value="num(overviewData?.waitingConversationCount)"
+        :value="num(overviewData?.activeConversationCount)"
+        color="success"
+      />
+      <AnalyticsKpiCard
+        title="总消息数"
+        total-title="AI 回复"
+        :total-value="num(overviewData?.aiMessageCount)"
+        :trend="messageSparkline"
+        :value="num(overviewData?.totalMessageCount)"
+        color="purple"
+      />
+      <AnalyticsKpiCard
+        title="总用户数"
+        total-title="人工回复"
+        :total-value="num(overviewData?.agentMessageCount)"
+        :value="num(overviewData?.totalUserCount)"
+        color="amber"
+      />
+    </div>
 
-      <!-- 趋势 + 分布 + 分坐席 -->
+    <!-- ② 服务质量（SLA + CSAT 合并） -->
+    <div class="mt-5">
+      <div class="mb-3 flex items-center gap-2">
+        <span class="h-4 w-1 rounded bg-primary"></span>
+        <span class="text-base font-semibold">服务质量</span>
+      </div>
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <!-- SLA 违规统计 -->
+        <div
+          class="rounded-xl border bg-card p-4 text-card-foreground shadow-sm"
+        >
+          <div class="mb-3 flex items-center justify-between">
+            <span class="text-sm font-semibold">SLA 违规统计</span>
+            <span
+              class="rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600"
+              >需关注</span
+            >
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="rounded-lg bg-red-50 p-3">
+              <p class="text-xs text-muted-foreground">今日违规</p>
+              <p
+                class="text-xl font-bold leading-tight tabular-nums text-red-600"
+              >
+                {{ overviewData?.slaBreachCount ?? 0 }}
+                <span class="text-sm font-normal">次</span>
+              </p>
+            </div>
+            <div class="rounded-lg bg-orange-50 p-3">
+              <p class="text-xs text-muted-foreground">违规率</p>
+              <p
+                class="text-xl font-bold leading-tight tabular-nums text-orange-600"
+              >
+                {{ formatRate(overviewData?.slaBreachRate) }}
+                <span class="text-sm font-normal">%</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- CSAT 满意度评价 -->
+        <div
+          class="rounded-xl border bg-card p-4 text-card-foreground shadow-sm"
+        >
+          <div class="mb-3 flex items-center justify-between">
+            <span class="text-sm font-semibold">满意度评价 (CSAT)</span>
+            <span
+              class="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600"
+              >良好</span
+            >
+          </div>
+          <CsatStatCards
+            :avg-score="csatOverview.csatAvgScore"
+            :rated-count="csatOverview.csatRatedCount"
+            :response-rate="csatOverview.csatResponseRate"
+          />
+        </div>
+      </div>
+
+      <!-- CSAT 趋势 + 分布 + 分坐席 -->
       <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
         <AnalysisChartCard class="shadow-sm" title="评分趋势">
           <CsatTrendCard :data="csatTrend" />
@@ -384,23 +354,18 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 中间行：待处理列表 + 平均处理时长 + 复杂度趋势（设计稿版） -->
-    <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-      <PendingTicketsCard :items="recentSessions" />
-      <AvgHandleTimeCard
-        :seconds="Number(overviewData?.avgHandleSeconds ?? 0)"
-      />
-      <ComplexityTrendCard :distribution="complexityRows" />
-    </div>
-
-    <!-- 趋势图 Tab -->
+    <!-- ③ 趋势分析（上移至核心位置） -->
     <AnalysisChartsTabs :tabs="chartTabs" class="mt-5 shadow-sm">
       <template #trends>
         <AnalyticsTrends :data="conversationTrends" />
       </template>
       <template #visits>
         <AnalyticsVisits
-          :counts="messageTrends.map((item) => item.aiCount + item.humanCount)"
+          :counts="
+            messageTrends.map(
+              (item) => num(item.aiCount) + num(item.humanCount),
+            )
+          "
           :months="messageTrends.map((item) => item.month)"
         />
       </template>
@@ -409,7 +374,22 @@ onMounted(async () => {
       </template>
     </AnalysisChartsTabs>
 
-    <!-- 底部三图卡片（不受时间范围影响） -->
+    <!-- ④ 分析洞察（待处理 + 处理时长 + 复杂度） -->
+    <div class="mt-5">
+      <div class="mb-3 flex items-center gap-2">
+        <span class="h-4 w-1 rounded bg-violet-500"></span>
+        <span class="text-base font-semibold">分析洞察</span>
+      </div>
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <PendingTicketsCard :items="recentSessions" />
+        <AvgHandleTimeCard
+          :seconds="Number(overviewData?.avgHandleSeconds ?? 0)"
+        />
+        <ComplexityTrendCard :distribution="complexityRows" />
+      </div>
+    </div>
+
+    <!-- ⑤ 分布图表 -->
     <div class="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
       <AnalysisChartCard class="shadow-sm" title="指标雷达">
         <AnalyticsVisitsData :data="overviewData" />

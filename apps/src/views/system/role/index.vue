@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
@@ -13,8 +13,10 @@ import {
   message,
   Modal,
   Space,
+  Switch,
   Table,
   Tag,
+  Tooltip,
   Tree,
 } from 'ant-design-vue';
 
@@ -29,9 +31,44 @@ interface RoleVO {
   status: string;
 }
 
+// 菜单树节点（后端返回或本地映射后）
+interface MenuTreeNode {
+  key: number;
+  title: string;
+  menuType: string;
+  children?: MenuTreeNode[];
+}
+
+// 后端菜单原始形态（嵌套）
+interface ApiMenuNode {
+  id: number;
+  menuName: string;
+  menuType: string;
+  children?: ApiMenuNode[];
+}
+
 const roles = ref<RoleVO[]>([]);
 const loading = ref(false);
 const keyword = ref('');
+
+// 统计信息：从 roles 数据计算
+const stats = computed(() => {
+  const total = roles.value.length;
+  const active = roles.value.filter((r) => r.status === 'active').length;
+  const inactive = total - active;
+  return { total, active, inactive };
+});
+
+/** 从后端错误对象提取可读文案 */
+function pickErrMsg(err: unknown, fallback: string): string {
+  const anyErr = err as any;
+  return (
+    anyErr?.response?.data?.msg ??
+    anyErr?.response?.data?.message ??
+    anyErr?.message ??
+    fallback
+  );
+}
 
 async function loadRoles() {
   loading.value = true;
@@ -40,31 +77,10 @@ async function loadRoles() {
       params: { keyword: keyword.value || undefined, size: 50 },
     });
     roles.value = res.items ?? [];
-  } catch {
-    // 演示数据
-    roles.value = [
-      {
-        id: 10,
-        roleKey: 'super_admin',
-        roleName: '超级管理员',
-        isSystem: true,
-        status: 'active',
-      },
-      {
-        id: 11,
-        roleKey: 'kf_manager',
-        roleName: '客服管理员',
-        isSystem: false,
-        status: 'active',
-      },
-      {
-        id: 12,
-        roleKey: 'kf_staff',
-        roleName: '普通客服',
-        isSystem: false,
-        status: 'active',
-      },
-    ];
+  } catch (error) {
+    console.warn('[role] loadRoles failed', error);
+    roles.value = [];
+    message.error(pickErrMsg(error, '角色列表加载失败'));
   } finally {
     loading.value = false;
   }
@@ -73,12 +89,11 @@ async function loadRoles() {
 onMounted(loadRoles);
 
 const columns = [
-  { title: 'ID', dataIndex: 'id', width: 70 },
-  { title: '角色标识', dataIndex: 'roleKey', width: 160 },
+  { title: '角色标识', dataIndex: 'roleKey', key: 'roleKey', width: 180 },
   { title: '角色名称', dataIndex: 'roleName', width: 140 },
-  { title: '类型', key: 'type', width: 90 },
-  { title: '状态', dataIndex: 'status', key: 'status', width: 90 },
-  { title: '操作', key: 'action', width: 200 },
+  { title: '类型', key: 'type', width: 100 },
+  { title: '状态', dataIndex: 'status', key: 'status', width: 100 },
+  { title: '操作', key: 'action', width: 130 },
 ];
 
 // ===== 创建角色 =====
@@ -86,17 +101,25 @@ const createVisible = ref(false);
 const createRef = ref();
 const createForm = ref({ roleKey: '', roleName: '' });
 
+function openCreate() {
+  createForm.value = { roleKey: '', roleName: '' };
+  createVisible.value = true;
+}
+
 async function submitCreate() {
   try {
     await createRef.value?.validate();
-    await authClient
-      .post('/roles', { ...createForm.value, isSystem: false })
-      .catch(() => null);
+  } catch {
+    return; // 校验失败
+  }
+  try {
+    await authClient.post('/roles', { ...createForm.value, isSystem: false });
     message.success(`角色 ${createForm.value.roleName} 创建成功`);
     createVisible.value = false;
     loadRoles();
-  } catch {
-    /* 校验失败 */
+  } catch (error) {
+    console.warn('[role] create failed', error);
+    message.error(pickErrMsg(error, '角色创建失败'));
   }
 }
 
@@ -115,31 +138,42 @@ function openEditRole(role: RoleVO) {
 async function submitEdit() {
   try {
     await editRef.value?.validate();
-    if (!editingRole.value) return;
+  } catch {
+    return;
+  }
+  if (!editingRole.value) return;
+  try {
     await authClient.put(`/roles/${editingRole.value.id}`, editForm.value);
     message.success(`角色 ${editForm.value.roleName} 已更新`);
     editVisible.value = false;
     loadRoles();
-  } catch {
-    /* 校验或接口失败 */
+  } catch (error) {
+    console.warn('[role] update failed', error);
+    message.error(pickErrMsg(error, '角色更新失败'));
   }
 }
 
-async function toggleRoleStatus(role: RoleVO) {
-  const newStatus = role.status === 'active' ? 'inactive' : 'active';
-  await authClient
-    .put(`/roles/${role.id}`, { roleName: role.roleName, status: newStatus })
-    .catch(() => null);
-  role.status = newStatus;
-  message.success(
-    `角色 ${role.roleName} 已${newStatus === 'active' ? '启用' : '停用'}`,
-  );
+async function toggleRoleStatus(role: RoleVO, checked: boolean) {
+  const newStatus = checked ? 'active' : 'inactive';
+  try {
+    await authClient.put(`/roles/${role.id}`, {
+      roleName: role.roleName,
+      status: newStatus,
+    });
+    role.status = newStatus;
+    message.success(
+      `角色 ${role.roleName} 已${newStatus === 'active' ? '启用' : '停用'}`,
+    );
+  } catch (error) {
+    console.warn('[role] toggle status failed', error);
+    message.error(pickErrMsg(error, '状态切换失败'));
+  }
 }
 
 // ===== 分配菜单抽屉 =====
 const menuDrawerVisible = ref(false);
 const currentRole = ref<null | RoleVO>(null);
-const menuTree = ref<any[]>([]);
+const menuTree = ref<MenuTreeNode[]>([]);
 const checkedMenuIds = ref<number[]>([]);
 const menuLoading = ref(false);
 
@@ -153,14 +187,15 @@ async function openMenuDrawer(role: RoleVO) {
       authClient.get(`/roles/${role.id}/menus`),
     ]);
     menuTree.value = mapApiTree(allMenus ?? []);
-    if (menuTree.value.length === 0) {
-      menuTree.value = buildTree(demoMenus, 0);
-    }
-    checkedMenuIds.value = roleMenuIds ?? [];
-  } catch {
-    menuTree.value = buildTree(demoMenus, 0);
-    checkedMenuIds.value =
-      role.id === 10 ? demoMenus.map((m: any) => m.id) : [100, 101];
+    // 后端可能返回 {menuIds:[...]} 或裸数组两种形态，统一归一化，
+    // 避免对象被当成空数组导致抽屉内全部未勾选、误存清空菜单权限。
+    const raw = Array.isArray(roleMenuIds) ? roleMenuIds : roleMenuIds?.menuIds;
+    checkedMenuIds.value = Array.isArray(raw) ? raw : [];
+  } catch (error) {
+    console.warn('[role] load menu tree failed', error);
+    menuTree.value = [];
+    checkedMenuIds.value = [];
+    message.error(pickErrMsg(error, '菜单权限加载失败'));
   } finally {
     menuLoading.value = false;
   }
@@ -168,13 +203,17 @@ async function openMenuDrawer(role: RoleVO) {
 
 async function saveMenus() {
   if (!currentRole.value) return;
-  await authClient
-    .put(`/roles/${currentRole.value.id}/menus`, {
+  const role = currentRole.value;
+  try {
+    await authClient.put(`/roles/${role.id}/menus`, {
       menuIds: checkedMenuIds.value,
-    })
-    .catch(() => null);
-  message.success(`${currentRole.value.roleName} 菜单权限已保存`);
-  menuDrawerVisible.value = false;
+    });
+    message.success(`${role.roleName} 菜单权限已保存`);
+    menuDrawerVisible.value = false;
+  } catch (error) {
+    console.warn('[role] save menus failed', error);
+    message.error(pickErrMsg(error, '菜单权限保存失败'));
+  }
 }
 
 // ===== 删除角色 =====
@@ -187,81 +226,86 @@ function deleteRole(role: RoleVO) {
     title: `确认删除角色 ${role.roleName}？`,
     okType: 'danger',
     onOk: async () => {
-      await authClient.delete(`/roles/${role.id}`).catch(() => null);
-      message.success('角色已删除');
-      loadRoles();
+      try {
+        await authClient.delete(`/roles/${role.id}`);
+        message.success('角色已删除');
+        loadRoles();
+      } catch (error) {
+        console.warn('[role] delete failed', error);
+        message.error(pickErrMsg(error, '角色删除失败'));
+      }
     },
   });
 }
 
-// ===== 菜单树构建 =====
-const demoMenus = [
-  { id: 100, parentId: 0, menuName: '智能客服', menuType: 'DIRECTORY' },
-  { id: 101, parentId: 100, menuName: '对话', menuType: 'MENU' },
-  { id: 102, parentId: 100, menuName: '知识库', menuType: 'MENU' },
-  { id: 103, parentId: 100, menuName: '座席工作台', menuType: 'MENU' },
-  { id: 110, parentId: 102, menuName: '上传文档', menuType: 'BUTTON' },
-  { id: 111, parentId: 102, menuName: '审核文档', menuType: 'BUTTON' },
-  { id: 112, parentId: 102, menuName: '下线文档', menuType: 'BUTTON' },
-  { id: 200, parentId: 0, menuName: '系统管理', menuType: 'DIRECTORY' },
-  { id: 201, parentId: 200, menuName: '用户管理', menuType: 'MENU' },
-  { id: 202, parentId: 200, menuName: '角色管理', menuType: 'MENU' },
-];
+// 菜单类型 -> 标签文字 + 颜色
+const MENU_TYPE_META: Record<string, { color: string; label: string }> = {
+  BUTTON: { label: '按钮', color: 'amber' },
+  DIRECTORY: { label: '目录', color: 'blue' },
+  MENU: { label: '菜单', color: 'green' },
+};
 
 /** 将后端已嵌套的菜单树映射为 Ant Design Tree 格式 */
-function mapApiTree(nodes: any[]): any[] {
+function mapApiTree(nodes: ApiMenuNode[]): MenuTreeNode[] {
   if (!nodes) return [];
   return nodes.map((m) => {
-    const icon =
-      m.menuType === 'BUTTON' ? '🔘' : m.menuType === 'MENU' ? '📄' : '📁';
     const children =
       m.children && m.children.length > 0 ? mapApiTree(m.children) : undefined;
     return {
-      title: `${icon} ${m.menuName}`,
+      title: m.menuName,
       key: m.id,
+      menuType: m.menuType,
       children,
     };
   });
-}
-
-/** 从扁平数组构建 Ant Design Tree（demoMenus 回退用） */
-function buildTree(menus: any[], parentId: number): any[] {
-  return menus
-    .filter((m) => m.parentId === parentId)
-    .map((m) => ({
-      title: `${{ BUTTON: '🔘', MENU: '📄', DIRECTORY: '📁' }[m.menuType as 'BUTTON' | 'DIRECTORY' | 'MENU'] ?? '📁'} ${m.menuName}`,
-      key: m.id,
-      children: buildTree(menus, m.id),
-    }))
-    .map((n) => (n.children.length === 0 ? { ...n, children: undefined } : n));
-}
-
-function onTreeCheck(_: any, { checkedNodes }: any) {
-  checkedMenuIds.value = checkedNodes.map((n: any) => n.key);
 }
 </script>
 
 <template>
   <Page>
-    <template #extra>
-      <Button type="primary" @click="createVisible = true">
-        <template #icon><Icon icon="ant-design:plus-outlined" /></template
-        >新增角色
-      </Button>
-    </template>
+    <!-- 工具栏：统计 + 搜索 + 新增 -->
+    <div
+      class="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3"
+    >
+      <!-- 左侧：标题 + 统计胶囊 -->
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-semibold">角色管理</span>
+        <span class="h-4 w-px bg-border"></span>
+        <span
+          class="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+        >
+          共 {{ stats.total }}
+        </span>
+        <span
+          class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+        >
+          启用 {{ stats.active }}
+        </span>
+        <span
+          class="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-600 dark:bg-red-900/30 dark:text-red-400"
+        >
+          停用 {{ stats.inactive }}
+        </span>
+      </div>
 
-    <!-- 搜索 -->
-    <div class="mb-4 flex gap-3">
-      <Input
-        v-model:value="keyword"
-        placeholder="搜索角色名/标识..."
-        style="width: 260px"
-        allow-clear
-        @press-enter="loadRoles"
-      >
-        <template #prefix><Icon icon="ant-design:search-outlined" /></template>
-      </Input>
-      <Button @click="loadRoles">查询</Button>
+      <!-- 右侧：搜索 + 新增 -->
+      <div class="flex items-center gap-2">
+        <Input
+          v-model:value="keyword"
+          allow-clear
+          placeholder="搜索角色名/标识..."
+          style="width: 200px"
+          @press-enter="loadRoles"
+        >
+          <template #prefix>
+            <Icon icon="lucide:search" class="text-muted-foreground" />
+          </template>
+        </Input>
+        <Button type="primary" @click="openCreate">
+          <template #icon><Icon icon="lucide:plus" /></template>
+          新增角色
+        </Button>
+      </div>
     </div>
 
     <!-- 角色表格 -->
@@ -273,67 +317,78 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
       :pagination="false"
     >
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'type'">
+        <!-- 角色标识：monospace -->
+        <template v-if="column.key === 'roleKey'">
+          <code class="font-mono text-xs">{{ record.roleKey }}</code>
+        </template>
+
+        <!-- 类型 -->
+        <template v-else-if="column.key === 'type'">
           <Tag :color="record.isSystem ? 'purple' : 'default'">
             {{ record.isSystem ? '系统内置' : '自定义' }}
           </Tag>
         </template>
-        <template v-if="column.key === 'status'">
-          <Tag :color="record.status === 'active' ? 'success' : 'error'">
-            {{ record.status === 'active' ? '正常' : '停用' }}
-          </Tag>
+
+        <!-- 状态：行内 Switch 开关 -->
+        <template v-else-if="column.key === 'status'">
+          <Switch
+            :checked="record.status === 'active'"
+            :disabled="record.isSystem"
+            checked-children="启用"
+            un-checked-children="停用"
+            @change="
+              (checked: any) => toggleRoleStatus(record as RoleVO, !!checked)
+            "
+          />
         </template>
-        <template v-if="column.key === 'action'">
-          <Space>
-            <Button
-              size="small"
-              type="link"
-              @click="openEditRole(record as RoleVO)"
-            >
-              编辑
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              :disabled="record.isSystem"
-              @click="toggleRoleStatus(record as RoleVO)"
-            >
-              {{ record.status === 'active' ? '停用' : '启用' }}
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              @click="openMenuDrawer(record as RoleVO)"
-            >
-              分配菜单
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              danger
-              :disabled="record.isSystem"
-              @click="deleteRole(record as RoleVO)"
-            >
-              删除
-            </Button>
+
+        <!-- 操作：图标按钮 -->
+        <template v-else-if="column.key === 'action'">
+          <Space size="small">
+            <Tooltip title="编辑">
+              <Button
+                type="text"
+                size="small"
+                class="text-slate-500 hover:text-slate-700"
+                @click="openEditRole(record as RoleVO)"
+              >
+                <template #icon><Icon icon="lucide:pencil" /></template>
+              </Button>
+            </Tooltip>
+            <Tooltip title="分配菜单">
+              <Button
+                type="text"
+                size="small"
+                class="text-blue-500 hover:text-blue-600"
+                @click="openMenuDrawer(record as RoleVO)"
+              >
+                <template #icon><Icon icon="lucide:list-tree" /></template>
+              </Button>
+            </Tooltip>
+            <Tooltip title="删除">
+              <Button
+                type="text"
+                size="small"
+                class="text-red-400 hover:text-red-600"
+                :disabled="record.isSystem"
+                @click="deleteRole(record as RoleVO)"
+              >
+                <template #icon><Icon icon="lucide:trash-2" /></template>
+              </Button>
+            </Tooltip>
           </Space>
         </template>
       </template>
     </Table>
 
-    <!-- 新增角色弹窗 -->
-    <Modal
+    <!-- 新增角色 Drawer -->
+    <Drawer
       v-model:open="createVisible"
       title="新增角色"
-      ok-text="创建"
-      @ok="submitCreate"
+      placement="right"
+      :width="480"
     >
-      <Form
-        ref="createRef"
-        :model="createForm"
-        :label-col="{ span: 6 }"
-        class="mt-4"
-      >
+      <Form ref="createRef" :model="createForm" layout="vertical">
         <FormItem
           label="角色标识"
           name="roleKey"
@@ -355,21 +410,22 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
           />
         </FormItem>
       </Form>
-    </Modal>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <Button @click="createVisible = false">取消</Button>
+          <Button type="primary" @click="submitCreate">创建</Button>
+        </div>
+      </template>
+    </Drawer>
 
-    <!-- 编辑角色弹窗 -->
-    <Modal
+    <!-- 编辑角色 Drawer -->
+    <Drawer
       v-model:open="editVisible"
       title="编辑角色"
-      ok-text="保存"
-      @ok="submitEdit"
+      placement="right"
+      :width="480"
     >
-      <Form
-        ref="editRef"
-        :model="editForm"
-        :label-col="{ span: 6 }"
-        class="mt-4"
-      >
+      <Form ref="editRef" :model="editForm" layout="vertical">
         <FormItem label="角色标识" name="roleKey">
           <Input :value="editingRole?.roleKey" disabled />
         </FormItem>
@@ -384,14 +440,20 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
           />
         </FormItem>
       </Form>
-    </Modal>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <Button @click="editVisible = false">取消</Button>
+          <Button type="primary" @click="submitEdit">保存</Button>
+        </div>
+      </template>
+    </Drawer>
 
     <!-- 菜单分配抽屉 -->
     <Drawer
       v-model:open="menuDrawerVisible"
       :title="`分配菜单 — ${currentRole?.roleName}`"
       placement="right"
-      :width="400"
+      :width="480"
     >
       <div
         v-if="menuLoading"
@@ -401,16 +463,36 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
       </div>
       <Tree
         v-else
+        v-model:checked-keys="checkedMenuIds"
         :tree-data="menuTree"
         checkable
         default-expand-all
-        :checked-keys="checkedMenuIds"
-        @check="onTreeCheck"
-      />
+      >
+        <template #title="{ title, menuType }">
+          <span class="inline-flex items-center gap-1.5">
+            <span
+              class="inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium leading-tight"
+              :class="{
+                'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400':
+                  menuType === 'DIRECTORY',
+                'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400':
+                  menuType === 'MENU',
+                'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400':
+                  menuType === 'BUTTON',
+              }"
+            >
+              {{ MENU_TYPE_META[menuType]?.label ?? '目录' }}
+            </span>
+            <span>{{ title }}</span>
+          </span>
+        </template>
+      </Tree>
       <template #footer>
         <div class="flex gap-3 justify-end">
           <Button @click="menuDrawerVisible = false">取消</Button>
-          <Button type="primary" @click="saveMenus">保存权限</Button>
+          <Button type="primary" :disabled="menuLoading" @click="saveMenus">
+            保存权限
+          </Button>
         </div>
       </template>
     </Drawer>

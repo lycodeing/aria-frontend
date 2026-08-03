@@ -6,6 +6,7 @@ import { IconPicker, Page } from '@vben/common-ui';
 import { Icon } from '@iconify/vue';
 import {
   Button,
+  Drawer,
   Form,
   FormItem,
   Input,
@@ -53,16 +54,85 @@ const list = ref<MenuVO[]>([]);
 const loading = ref(false);
 const expandedRowKeys = ref<number[]>([]);
 
-// 递归收集所有节点 id 用于展开
+// ===== 搜索与过滤 =====
+const searchKeyword = ref('');
+const filterType = ref<string>('');
+
+// 递归收集所有节点 id
 function collectIds(items: MenuVO[]): number[] {
   return items.flatMap((m) => [m.id, ...collectIds(m.children ?? [])]);
 }
+
+// 只收集一级节点 id（默认只展开顶层，减少首屏 DOM 量）
+function collectFirstLevelIds(items: MenuVO[]): number[] {
+  return items.map((m) => m.id);
+}
+
+// 递归统计各类型数量
+function countByType(items: MenuVO[]): {
+  button: number;
+  directory: number;
+  menu: number;
+} {
+  let directory = 0;
+  let menu = 0;
+  let button = 0;
+  function walk(nodes: MenuVO[]) {
+    for (const n of nodes) {
+      if (n.menuType === 'DIRECTORY') directory++;
+      else if (n.menuType === 'MENU') menu++;
+      else if (n.menuType === 'BUTTON') button++;
+      if (n.children?.length) walk(n.children);
+    }
+  }
+  walk(items);
+  return { directory, menu, button };
+}
+
+const typeStats = computed(() => countByType(list.value));
+
+// 前端搜索过滤树：保留匹配节点及其父链
+function filterTree(items: MenuVO[], keyword: string, type: string): MenuVO[] {
+  const kw = keyword.trim().toLowerCase();
+  function walk(nodes: MenuVO[]): MenuVO[] {
+    const result: MenuVO[] = [];
+    for (const n of nodes) {
+      // 类型过滤
+      if (type && n.menuType !== type) {
+        if (n.children?.length) {
+          const filtered = walk(n.children);
+          if (filtered.length > 0) {
+            result.push({ ...n, children: filtered });
+          }
+        }
+        continue;
+      }
+      // 关键词匹配
+      const nameMatch =
+        !kw ||
+        n.menuName.toLowerCase().includes(kw) ||
+        (n.menuKey ?? '').toLowerCase().includes(kw) ||
+        (n.path ?? '').toLowerCase().includes(kw);
+      const childrenFiltered = n.children?.length ? walk(n.children) : [];
+      if (nameMatch || childrenFiltered.length > 0) {
+        result.push({ ...n, children: childrenFiltered });
+      }
+    }
+    return result;
+  }
+  return walk(items);
+}
+
+const filteredList = computed(() =>
+  filterTree(list.value, searchKeyword.value, filterType.value),
+);
 
 async function loadList() {
   loading.value = true;
   try {
     list.value = ((await getAllMenuTreeApi()) as any) ?? [];
-    expandedRowKeys.value = collectIds(list.value);
+    // 默认只展开一级节点，替代原来的全展开
+    expandedRowKeys.value = collectFirstLevelIds(list.value);
   } catch {
     message.error('加载失败');
   } finally {
@@ -70,8 +140,17 @@ async function loadList() {
   }
 }
 
-// ===== 弹窗 =====
-const modalOpen = ref(false);
+function expandAll() {
+  // 展开当前可见（过滤后）节点，避免筛选态下"展开全部"无可见效果
+  expandedRowKeys.value = collectIds(filteredList.value);
+}
+
+function collapseAll() {
+  expandedRowKeys.value = [];
+}
+
+// ===== Drawer 弹窗 =====
+const drawerOpen = ref(false);
 const editingId = ref<null | number>(null);
 const submitting = ref(false);
 
@@ -97,12 +176,12 @@ const form = reactive<any>(emptyForm());
 function openCreate(parentId = 0) {
   editingId.value = null;
   Object.assign(form, emptyForm(), { parentId });
-  modalOpen.value = true;
+  drawerOpen.value = true;
 }
 function openEdit(row: MenuVO) {
   editingId.value = row.id;
   Object.assign(form, { ...row });
-  modalOpen.value = true;
+  drawerOpen.value = true;
 }
 async function submit() {
   if (!form.menuName || !form.menuKey) {
@@ -118,7 +197,7 @@ async function submit() {
       await createMenuApi({ ...form });
       message.success('创建成功');
     }
-    modalOpen.value = false;
+    drawerOpen.value = false;
     loadList();
   } catch (error: any) {
     message.error(error?.response?.data?.msg ?? '操作失败');
@@ -180,9 +259,9 @@ function onExpand(expanded: boolean, record: MenuVO) {
 }
 
 const columns = [
-  { title: '菜单名称', key: 'name', width: 220 },
+  { title: '菜单名称', key: 'name', width: 240 },
   { title: '类型', key: 'type', width: 72 },
-  { title: '路由路径', key: 'path', width: 220 },
+  { title: '路由路径', key: 'path', width: 200 },
   { title: '权限/组件', key: 'perm' },
   {
     title: '排序',
@@ -202,16 +281,73 @@ onMounted(loadList);
 
 <template>
   <Page>
-    <template #extra>
-      <Button type="primary" @click="openCreate()">
-        <template #icon><Icon icon="lucide:plus" /></template>
-        新增菜单
-      </Button>
-    </template>
+    <!-- 工具栏：统计 + 搜索 + 操作 -->
+    <div
+      class="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3"
+    >
+      <!-- 左侧：紧凑统计胶囊 -->
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-semibold">菜单管理</span>
+        <span class="h-4 w-px bg-border"></span>
+        <span
+          class="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+        >
+          目录 {{ typeStats.directory }}
+        </span>
+        <span
+          class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+        >
+          菜单 {{ typeStats.menu }}
+        </span>
+        <span
+          class="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-600 dark:bg-amber-900/30 dark:text-amber-400"
+        >
+          按钮 {{ typeStats.button }}
+        </span>
+      </div>
+
+      <!-- 右侧：搜索 + 筛选 + 操作 -->
+      <div class="flex items-center gap-2">
+        <Input
+          v-model:value="searchKeyword"
+          allow-clear
+          placeholder="搜索名称 / 路由 / 标识"
+          style="width: 200px"
+        >
+          <template #prefix>
+            <Icon icon="lucide:search" class="text-muted-foreground" />
+          </template>
+        </Input>
+        <Select
+          v-model:value="filterType"
+          allow-clear
+          placeholder="类型"
+          style="width: 100px"
+        >
+          <SelectOption value="DIRECTORY">目录</SelectOption>
+          <SelectOption value="MENU">菜单</SelectOption>
+          <SelectOption value="BUTTON">按钮</SelectOption>
+        </Select>
+        <Tooltip title="展开全部">
+          <Button @click="expandAll">
+            <template #icon><Icon icon="lucide:chevrons-down" /></template>
+          </Button>
+        </Tooltip>
+        <Tooltip title="折叠全部">
+          <Button @click="collapseAll">
+            <template #icon><Icon icon="lucide:chevrons-up" /></template>
+          </Button>
+        </Tooltip>
+        <Button type="primary" @click="openCreate()">
+          <template #icon><Icon icon="lucide:plus" /></template>
+          新增菜单
+        </Button>
+      </div>
+    </div>
 
     <Table
       :columns="columns"
-      :data-source="list"
+      :data-source="filteredList"
       :loading="loading"
       row-key="id"
       :pagination="false"
@@ -220,7 +356,7 @@ onMounted(loadList);
       @expand="onExpand"
     >
       <template #bodyCell="{ column, record }">
-        <!-- 菜单名称：图标 + 名称 -->
+        <!-- 菜单名称：图标 + 名称 + 类型前缀 -->
         <template v-if="column.key === 'name'">
           <span class="flex items-center gap-1.5">
             <Icon
@@ -229,6 +365,17 @@ onMounted(loadList);
               class="shrink-0 opacity-60"
               :style="{ fontSize: '15px' }"
             />
+            <span
+              v-if="record.menuType === 'DIRECTORY'"
+              class="font-mono text-xs text-blue-500"
+              >D</span
+            >
+            <span
+              v-else-if="record.menuType === 'MENU'"
+              class="font-mono text-xs text-emerald-500"
+              >M</span
+            >
+            <span v-else class="font-mono text-xs text-amber-500">B</span>
             <span class="font-medium">{{ record.menuName }}</span>
           </span>
         </template>
@@ -265,7 +412,7 @@ onMounted(loadList);
           <template v-else-if="record.component">
             <Tooltip :title="record.component" placement="topLeft">
               <span
-                class="max-w-[200px] truncate font-mono text-xs opacity-50 block"
+                class="block max-w-[200px] truncate font-mono text-xs opacity-50"
               >
                 {{ record.component }}
               </span>
@@ -357,113 +504,165 @@ onMounted(loadList);
       </template>
     </Table>
 
-    <!-- 新增/编辑弹窗 -->
-    <Modal
-      v-model:open="modalOpen"
+    <!-- 新增/编辑 Drawer -->
+    <Drawer
+      :open="drawerOpen"
       :title="editingId ? '编辑菜单' : '新增菜单'"
-      :confirm-loading="submitting"
-      width="580px"
-      @ok="submit"
+      width="720"
+      @close="drawerOpen = false"
     >
-      <Form layout="vertical" class="mt-4 space-y-1">
-        <div class="flex gap-3">
-          <FormItem label="类型" required class="flex-1">
-            <Select v-model:value="form.menuType">
-              <SelectOption value="DIRECTORY">目录</SelectOption>
-              <SelectOption value="MENU">菜单</SelectOption>
-              <SelectOption value="BUTTON">按钮/接口</SelectOption>
-            </Select>
-          </FormItem>
-          <FormItem label="上级菜单" class="flex-1">
-            <TreeSelect
-              v-model:value="form.parentId"
-              :tree-data="parentOptions"
-              :tree-default-expand-all="true"
-              placeholder="请选择上级菜单"
-              style="width: 100%"
-            />
-          </FormItem>
-        </div>
-        <div class="flex gap-3">
-          <FormItem label="菜单名称" required class="flex-1">
-            <Input v-model:value="form.menuName" placeholder="如：用户管理" />
-          </FormItem>
-          <FormItem label="路由标识（name）" required class="flex-1">
-            <Input v-model:value="form.menuKey" placeholder="如：SystemUser" />
-          </FormItem>
-        </div>
-        <template v-if="form.menuType !== 'BUTTON'">
-          <div class="flex gap-3">
-            <FormItem label="路由路径" class="flex-1">
-              <Input v-model:value="form.path" placeholder="/system/user" />
-            </FormItem>
-            <FormItem label="组件路径" class="flex-1">
-              <Input
-                v-model:value="form.component"
-                placeholder="system/user/index"
-              />
-            </FormItem>
+      <Form layout="vertical" class="space-y-1">
+        <!-- 分区：基本信息 -->
+        <div class="mb-4">
+          <div class="mb-3 flex items-center gap-2">
+            <span class="h-4 w-1 rounded bg-primary"></span>
+            <span class="text-sm font-semibold">基本信息</span>
           </div>
           <div class="flex gap-3">
-            <FormItem label="图标" class="flex-1">
-              <IconPicker v-model="form.icon" prefix="lucide" />
+            <FormItem label="类型" required class="flex-1">
+              <Select v-model:value="form.menuType">
+                <SelectOption value="DIRECTORY">目录</SelectOption>
+                <SelectOption value="MENU">菜单</SelectOption>
+                <SelectOption value="BUTTON">按钮/接口</SelectOption>
+              </Select>
             </FormItem>
-            <FormItem label="排序" class="w-24">
-              <InputNumber
-                v-model:value="form.sortOrder"
-                :min="0"
+            <FormItem label="上级菜单" class="flex-1">
+              <TreeSelect
+                v-model:value="form.parentId"
+                :tree-data="parentOptions"
+                :tree-default-expand-all="true"
+                placeholder="请选择上级菜单"
                 style="width: 100%"
               />
             </FormItem>
           </div>
-          <div class="flex gap-6">
-            <FormItem label="是否显示">
-              <Switch
-                v-model:checked="form.isVisible"
-                checked-children="显示"
-                un-checked-children="隐藏"
-              />
+          <div class="flex gap-3">
+            <FormItem label="菜单名称" required class="flex-1">
+              <Input v-model:value="form.menuName" placeholder="如：用户管理" />
             </FormItem>
-            <FormItem label="是否缓存">
-              <Switch
-                v-model:checked="form.isCache"
-                checked-children="缓存"
-                un-checked-children="不缓存"
-              />
-            </FormItem>
-            <FormItem label="外链跳转">
-              <Switch
-                v-model:checked="form.isExternal"
-                checked-children="外链"
-                un-checked-children="内部"
+            <FormItem label="路由标识（name）" required class="flex-1">
+              <Input
+                v-model:value="form.menuKey"
+                placeholder="如：SystemUser"
               />
             </FormItem>
           </div>
-          <FormItem v-if="form.isExternal" label="重定向路径">
-            <Input
-              v-model:value="form.redirect"
-              placeholder="外链地址，如 https://example.com"
-            />
-          </FormItem>
+        </div>
+
+        <!-- 分区：路由配置（BUTTON 类型隐藏） -->
+        <template v-if="form.menuType !== 'BUTTON'">
+          <div class="mb-4">
+            <div class="mb-3 flex items-center gap-2">
+              <span class="h-4 w-1 rounded bg-emerald-500"></span>
+              <span class="text-sm font-semibold">路由配置</span>
+            </div>
+            <div class="flex gap-3">
+              <FormItem label="路由路径" class="flex-1">
+                <Input v-model:value="form.path" placeholder="/system/user" />
+              </FormItem>
+              <FormItem label="组件路径" class="flex-1">
+                <Input
+                  v-model:value="form.component"
+                  placeholder="system/user/index"
+                />
+              </FormItem>
+            </div>
+            <div class="flex gap-3">
+              <FormItem label="图标" class="flex-1">
+                <IconPicker v-model="form.icon" prefix="lucide" />
+              </FormItem>
+              <FormItem label="排序" class="w-24">
+                <InputNumber
+                  v-model:value="form.sortOrder"
+                  :min="0"
+                  style="width: 100%"
+                />
+              </FormItem>
+            </div>
+          </div>
+
+          <!-- 分区：状态控制 -->
+          <div class="mb-4">
+            <div class="mb-3 flex items-center gap-2">
+              <span class="h-4 w-1 rounded bg-amber-500"></span>
+              <span class="text-sm font-semibold">状态控制</span>
+            </div>
+            <div class="flex gap-6">
+              <FormItem label="是否显示">
+                <Switch
+                  v-model:checked="form.isVisible"
+                  checked-children="显示"
+                  un-checked-children="隐藏"
+                />
+              </FormItem>
+              <FormItem label="是否缓存">
+                <Switch
+                  v-model:checked="form.isCache"
+                  checked-children="缓存"
+                  un-checked-children="不缓存"
+                />
+              </FormItem>
+              <FormItem label="外链跳转">
+                <Switch
+                  v-model:checked="form.isExternal"
+                  checked-children="外链"
+                  un-checked-children="内部"
+                />
+              </FormItem>
+            </div>
+            <FormItem v-if="form.isExternal" label="重定向路径">
+              <Input
+                v-model:value="form.redirect"
+                placeholder="外链地址，如 https://example.com"
+              />
+            </FormItem>
+          </div>
         </template>
+
+        <!-- BUTTON 类型：权限标识 -->
         <template v-else>
-          <FormItem label="权限标识">
-            <Input
-              v-model:value="form.permissionKey"
-              placeholder="如：system:user:create"
-            />
-          </FormItem>
+          <div class="mb-4">
+            <div class="mb-3 flex items-center gap-2">
+              <span class="h-4 w-1 rounded bg-amber-500"></span>
+              <span class="text-sm font-semibold">权限配置</span>
+            </div>
+            <FormItem label="权限标识">
+              <Input
+                v-model:value="form.permissionKey"
+                placeholder="如：system:user:create"
+              />
+            </FormItem>
+          </div>
         </template>
-        <FormItem label="状态">
-          <Select v-model:value="form.status" style="width: 160px">
-            <SelectOption value="active">启用</SelectOption>
-            <SelectOption value="inactive">禁用</SelectOption>
-          </Select>
-        </FormItem>
-        <FormItem label="备注">
-          <Input v-model:value="form.remark" placeholder="可选备注" />
-        </FormItem>
+
+        <!-- 通用：状态 + 备注 -->
+        <div>
+          <div class="mb-3 flex items-center gap-2">
+            <span class="h-4 w-1 rounded bg-slate-400"></span>
+            <span class="text-sm font-semibold">其他</span>
+          </div>
+          <div class="flex gap-3">
+            <FormItem label="状态" class="w-40">
+              <Select v-model:value="form.status">
+                <SelectOption value="active">启用</SelectOption>
+                <SelectOption value="inactive">禁用</SelectOption>
+              </Select>
+            </FormItem>
+            <FormItem label="备注" class="flex-1">
+              <Input v-model:value="form.remark" placeholder="可选备注" />
+            </FormItem>
+          </div>
+        </div>
       </Form>
-    </Modal>
+
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <Button @click="drawerOpen = false">取消</Button>
+          <Button type="primary" :loading="submitting" @click="submit">
+            保存
+          </Button>
+        </div>
+      </template>
+    </Drawer>
   </Page>
 </template>

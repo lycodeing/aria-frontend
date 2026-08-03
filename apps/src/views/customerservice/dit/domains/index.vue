@@ -11,11 +11,10 @@ import { computed, onMounted, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
+import { Icon } from '@iconify/vue';
 import {
   Button,
   Card,
-  Descriptions,
-  DescriptionsItem,
   Drawer,
   Form,
   FormItem,
@@ -25,12 +24,7 @@ import {
   Modal,
   Select,
   SelectOption,
-  Space,
   Switch,
-  Table,
-  TabPane,
-  Tabs,
-  Tag,
   Textarea,
 } from 'ant-design-vue';
 
@@ -62,7 +56,10 @@ const allTools = ref<ToolDTO[]>([]);
 
 const selectedDomainId = ref<null | number>(null);
 const selectedIntentId = ref<null | number>(null);
-const activeTab = ref('basic');
+
+const selectedDomain = computed(
+  () => domains.value.find((d) => d.id === selectedDomainId.value) || null,
+);
 
 const selectedIntent = computed(
   () => intents.value.find((i) => i.id === selectedIntentId.value) || null,
@@ -109,42 +106,6 @@ const intentForm = ref<Partial<IntentDTO>>({});
 const slotForm = ref<Partial<SlotDTO>>({});
 const bindingForm = ref<Partial<BindingDTO>>({});
 
-// ---- 表格列定义 ----
-const slotColumns = [
-  { title: '槽位名', dataIndex: 'slotName', key: 'slotName' },
-  { title: '类型', dataIndex: 'slotType', key: 'slotType', width: 80 },
-  {
-    title: '必填',
-    dataIndex: 'required',
-    key: 'required',
-    width: 70,
-  },
-  {
-    title: '解析策略',
-    dataIndex: 'resolveStrategy',
-    key: 'resolveStrategy',
-    width: 180,
-  },
-  { title: '操作', key: 'actions', width: 120 },
-];
-
-const bindingColumns = [
-  { title: '工具', key: 'toolId' },
-  {
-    title: '模式',
-    dataIndex: 'executionMode',
-    key: 'executionMode',
-    width: 120,
-  },
-  {
-    title: '顺序',
-    dataIndex: 'executionOrder',
-    key: 'executionOrder',
-    width: 70,
-  },
-  { title: '操作', key: 'actions', width: 80 },
-];
-
 // ---- 加载 ----
 onMounted(async () => {
   await loadDomains();
@@ -167,6 +128,8 @@ async function selectDomain(id: null | number | undefined) {
   if (!id) return;
   selectedDomainId.value = id;
   selectedIntentId.value = null;
+  slots.value = [];
+  bindings.value = [];
   try {
     intents.value = await listIntentsApi(id);
   } catch {
@@ -177,7 +140,6 @@ async function selectDomain(id: null | number | undefined) {
 async function selectIntent(id: null | number | undefined) {
   if (!id) return;
   selectedIntentId.value = id;
-  activeTab.value = 'basic';
   try {
     const [s, b] = await Promise.all([listSlotsApi(id), listBindingsApi(id)]);
     slots.value = s;
@@ -251,7 +213,10 @@ function confirmDeleteDomain(d: DomainDTO) {
         message.success('已删除');
         if (selectedDomainId.value === d.id) {
           selectedDomainId.value = null;
+          selectedIntentId.value = null;
           intents.value = [];
+          slots.value = [];
+          bindings.value = [];
         }
         await loadDomains();
       } catch {
@@ -297,7 +262,12 @@ function removeResolveStrategy(index: number) {
 // ---- 意图 CRUD ----
 function openCreateIntent() {
   editingIntent.value = null;
-  intentForm.value = { autoTransfer: false, skipRag: false, sortOrder: 0, keywordMatchMode: 'ANY_CONTAINS' };
+  intentForm.value = {
+    autoTransfer: false,
+    skipRag: false,
+    sortOrder: 0,
+    keywordMatchMode: 'ANY_CONTAINS',
+  };
   exampleQueriesList.value = [];
   keywordsList.value = [];
   intentDrawerVisible.value = true;
@@ -370,7 +340,11 @@ async function confirmDeleteIntent(i: IntentDTO) {
         if (!i.id) return;
         await deleteIntentApi(i.id);
         message.success('已删除');
-        if (selectedIntentId.value === i.id) selectedIntentId.value = null;
+        if (selectedIntentId.value === i.id) {
+          selectedIntentId.value = null;
+          slots.value = [];
+          bindings.value = [];
+        }
         intents.value = await listIntentsApi(domainId);
       } catch {
         message.error('删除失败，请重试');
@@ -507,249 +481,588 @@ function confirmDeleteBinding(b: BindingDTO) {
 
 <template>
   <Page auto-content-height>
-    <div class="flex h-full min-h-0 gap-4 overflow-hidden">
-      <!-- 左侧领域列表 -->
-      <Card
-        :bordered="false"
-        class="w-56 shrink-0 overflow-auto shadow-sm"
-        size="small"
-      >
-        <template #title>领域列表</template>
-        <template #extra>
-          <Button type="primary" size="small" @click="openCreateDomain">
-            + 新建
-          </Button>
-        </template>
-        <div
-          v-for="d in domains"
-          :key="d.id"
-          class="domain-item"
-          :class="[{ active: selectedDomainId === d.id }]"
-          @click="selectDomain(d.id)"
-        >
-          <span>{{ d.name }}</span>
-          <Space size="small" class="domain-actions">
-            <Button type="link" size="small" @click.stop="openEditDomain(d)"
-              >编辑</Button
-            >
-            <Button
-              type="link"
-              danger
-              size="small"
-              @click.stop="confirmDeleteDomain(d)"
-              >删除</Button
-            >
-          </Space>
+    <div class="flex h-full min-h-0 flex-col gap-3">
+      <!-- 页面标题 + 统计胶囊 -->
+      <div class="flex shrink-0 items-center justify-between">
+        <h1 class="text-lg font-bold text-foreground">领域与意图</h1>
+        <div class="flex gap-2">
+          <span
+            class="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
+          >
+            领域 {{ domains.length }}
+          </span>
+          <span
+            class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400"
+          >
+            意图 {{ intents.length }}
+          </span>
+          <span
+            class="inline-flex items-center gap-1 rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
+          >
+            槽位 {{ slots.length }}
+          </span>
         </div>
-      </Card>
+      </div>
 
-      <!-- 右侧详情 -->
-      <Card
-        :bordered="false"
-        class="flex-1 overflow-auto shadow-sm"
-        size="small"
+      <!-- 面包屑 -->
+      <div
+        class="flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-3.5 py-2 text-sm"
       >
-        <template #title>
-          <span v-if="selectedDomainId">意图列表</span>
-          <span v-else>请选择领域</span>
+        <span class="text-muted-foreground">领域管理</span>
+        <template v-if="selectedDomain">
+          <span class="text-muted-foreground/50">/</span>
+          <span class="font-semibold text-primary">{{
+            selectedDomain.name
+          }}</span>
         </template>
-        <template v-if="selectedDomainId" #extra>
-          <Button size="small" @click="openCreateIntent">+ 新建意图</Button>
+        <template v-if="selectedIntent">
+          <span class="text-muted-foreground/50">/</span>
+          <span class="font-semibold text-foreground">{{
+            selectedIntent.name
+          }}</span>
         </template>
+      </div>
 
-        <template v-if="selectedDomainId">
-          <!-- 意图列表 -->
-          <div class="intent-list">
+      <!-- 三栏布局 -->
+      <div class="flex min-h-0 flex-1 gap-3 overflow-hidden">
+        <!-- 第1栏：领域列表 -->
+        <Card
+          :bordered="false"
+          size="small"
+          class="flex h-full w-[220px] min-h-0 shrink-0 flex-col overflow-hidden shadow-sm"
+          :body-style="{
+            flex: '1 1 0%',
+            minHeight: '0',
+            overflowY: 'auto',
+            padding: '8px',
+          }"
+        >
+          <template #title>
+            <span class="text-sm font-semibold">领域</span>
+          </template>
+          <template #extra>
+            <Button type="primary" size="small" @click="openCreateDomain">
+              <Icon icon="lucide:plus" class="mr-0.5 h-3 w-3" />
+              新建
+            </Button>
+          </template>
+          <div
+            v-for="d in domains"
+            :key="d.id"
+            class="group mb-1 flex items-start justify-between rounded-lg border-l-[3px] px-3 py-2.5 transition-all"
+            :class="
+              selectedDomainId === d.id
+                ? 'border-l-blue-500 bg-blue-50 dark:border-l-blue-400 dark:bg-blue-900/20'
+                : 'cursor-pointer border-l-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50'
+            "
+            @click="selectDomain(d.id)"
+          >
+            <div class="min-w-0 flex-1">
+              <div
+                class="truncate text-[13px] font-semibold"
+                :class="
+                  selectedDomainId === d.id
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-foreground'
+                "
+              >
+                {{ d.name }}
+              </div>
+              <div
+                class="mt-0.5 truncate font-mono text-[11px] text-muted-foreground"
+              >
+                {{ d.code }}
+              </div>
+              <div class="mt-1.5 flex items-center gap-1">
+                <span
+                  class="rounded px-1.5 py-px text-[10px] font-medium"
+                  :class="
+                    d.enabled !== false
+                      ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400'
+                      : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                  "
+                >
+                  {{ d.enabled !== false ? '启用' : '停用' }}
+                </span>
+                <span
+                  v-if="selectedDomainId === d.id"
+                  class="rounded bg-slate-100 px-1.5 py-px text-[10px] text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                >
+                  {{ intents.length }} 意图
+                </span>
+              </div>
+            </div>
+            <div
+              class="flex flex-shrink-0 gap-0.5 transition-opacity"
+              :class="
+                selectedDomainId === d.id
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-100'
+              "
+            >
+              <button
+                type="button"
+                class="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300"
+                @click.stop="openEditDomain(d)"
+              >
+                <Icon icon="lucide:pencil" class="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                class="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:text-slate-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                @click.stop="confirmDeleteDomain(d)"
+              >
+                <Icon icon="lucide:trash-2" class="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+          <div
+            v-if="!domains.length"
+            class="py-10 text-center text-sm text-muted-foreground"
+          >
+            暂无领域
+          </div>
+        </Card>
+
+        <!-- 第2栏：意图列表 -->
+        <Card
+          :bordered="false"
+          size="small"
+          class="flex h-full w-[260px] min-h-0 shrink-0 flex-col overflow-hidden shadow-sm"
+          :body-style="{
+            flex: '1 1 0%',
+            minHeight: '0',
+            overflowY: 'auto',
+            padding: '8px',
+          }"
+        >
+          <template #title>
+            <span v-if="selectedDomainId" class="text-sm font-semibold">
+              意图
+              <span class="ml-1 text-xs font-normal text-muted-foreground">
+                {{ intents.length }}
+              </span>
+            </span>
+            <span v-else class="text-sm text-muted-foreground">请选择领域</span>
+          </template>
+          <template v-if="selectedDomainId" #extra>
+            <Button size="small" @click="openCreateIntent">
+              <Icon icon="lucide:plus" class="mr-0.5 h-3 w-3" />
+              新建
+            </Button>
+          </template>
+
+          <template v-if="selectedDomainId">
             <div
               v-for="i in intents"
               :key="i.id"
-              class="intent-item"
-              :class="[{ active: selectedIntentId === i.id }]"
+              class="group mb-1 cursor-pointer rounded-lg border-l-[3px] px-3 py-2.5 transition-all"
+              :class="
+                selectedIntentId === i.id
+                  ? 'border-l-blue-500 bg-blue-50 dark:border-l-blue-400 dark:bg-blue-900/20'
+                  : 'border-l-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50'
+              "
               @click="selectIntent(i.id)"
             >
-              <span
-                >{{ i.name }}
-                <small style="color: #999">({{ i.code }})</small></span
-              >
-              <Space size="small">
-                <Tag v-if="i.autoTransfer" color="orange">转人工</Tag>
-                <Tag v-if="i.skipRag" color="blue">跳过RAG</Tag>
-                <Button type="link" size="small" @click.stop="openEditIntent(i)"
-                  >编辑</Button
-                >
-                <Button
-                  type="link"
-                  danger
-                  size="small"
-                  @click.stop="confirmDeleteIntent(i)"
-                  >删除</Button
-                >
-              </Space>
-            </div>
-          </div>
-        </template>
-
-        <!-- 意图详情 Tabs -->
-        <template v-if="selectedIntentId && selectedIntent">
-          <Tabs v-model:active-key="activeTab" style="margin-top: 16px">
-            <!-- 基本信息 -->
-            <TabPane key="basic" tab="基本信息">
-              <Descriptions :column="2" bordered size="small">
-                <DescriptionsItem label="意图码">
-                  {{ selectedIntent.code }}
-                </DescriptionsItem>
-                <DescriptionsItem label="名称">
-                  {{ selectedIntent.name }}
-                </DescriptionsItem>
-                <DescriptionsItem label="自动转人工">
-                  <Tag
-                    :color="selectedIntent.autoTransfer ? 'orange' : 'default'"
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0 flex-1">
+                  <div
+                    class="truncate text-[13px] font-semibold"
+                    :class="
+                      selectedIntentId === i.id
+                        ? 'text-blue-600 dark:text-blue-400'
+                        : 'text-foreground'
+                    "
                   >
-                    {{ selectedIntent.autoTransfer ? '是' : '否' }}
-                  </Tag>
-                </DescriptionsItem>
-                <DescriptionsItem label="跳过RAG">
-                  <Tag :color="selectedIntent.skipRag ? 'blue' : 'default'">
-                    {{ selectedIntent.skipRag ? '是' : '否' }}
-                  </Tag>
-                </DescriptionsItem>
-                <DescriptionsItem label="描述" :span="2">
-                  {{ selectedIntent.description }}
-                </DescriptionsItem>
-                <DescriptionsItem label="示例句子" :span="2">
-                  <template v-if="selectedIntentExamples.length">
-                    <Space wrap>
-                      <Tag
-                        v-for="(ex, idx) in selectedIntentExamples"
-                        :key="idx"
-                        color="blue"
-                      >
-                        {{ ex }}
-                      </Tag>
-                    </Space>
-                  </template>
-                  <span v-else>-</span>
-                </DescriptionsItem>
-                <DescriptionsItem label="关键词规则" :span="2">
-                  <template v-if="selectedIntentKeywords.length">
-                    <Space wrap>
-                      <Tag
-                        v-for="(kw, idx) in selectedIntentKeywords"
-                        :key="idx"
-                        color="green"
-                      >
-                        {{ kw }}
-                      </Tag>
-                      <Tag color="default">{{ selectedIntent.keywordMatchMode || 'ANY_CONTAINS' }}</Tag>
-                    </Space>
-                  </template>
-                  <span v-else>未配置（仅 BERT + LLM 分类）</span>
-                </DescriptionsItem>
-              </Descriptions>
-            </TabPane>
+                    {{ i.name }}
+                  </div>
+                  <div
+                    class="mt-0.5 truncate font-mono text-[11px] text-muted-foreground"
+                  >
+                    {{ i.code }}
+                  </div>
+                </div>
+                <div
+                  class="flex flex-shrink-0 gap-0.5 transition-opacity"
+                  :class="
+                    selectedIntentId === i.id
+                      ? 'opacity-100'
+                      : 'opacity-0 group-hover:opacity-100'
+                  "
+                >
+                  <button
+                    type="button"
+                    class="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300"
+                    @click.stop="openEditIntent(i)"
+                  >
+                    <Icon icon="lucide:pencil" class="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    class="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:text-slate-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                    @click.stop="confirmDeleteIntent(i)"
+                  >
+                    <Icon icon="lucide:trash-2" class="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+              <!-- 标签行 -->
+              <div
+                v-if="i.autoTransfer || i.skipRag"
+                class="mt-1.5 flex flex-wrap gap-1"
+              >
+                <span
+                  v-if="i.autoTransfer"
+                  class="rounded bg-amber-50 px-1.5 py-px text-[10px] font-medium text-amber-600 dark:bg-amber-900/20 dark:text-amber-400"
+                >
+                  转人工
+                </span>
+                <span
+                  v-if="i.skipRag"
+                  class="rounded bg-blue-50 px-1.5 py-px text-[10px] font-medium text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
+                >
+                  跳过RAG
+                </span>
+              </div>
+              <!-- 统计行：仅选中意图显示真实计数 -->
+              <div
+                v-if="selectedIntentId === i.id"
+                class="mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground"
+              >
+                <span>槽位 {{ slots.length }}</span>
+                <span class="opacity-50">|</span>
+                <span>工具 {{ bindings.length }}</span>
+              </div>
+            </div>
+            <div
+              v-if="!intents.length"
+              class="py-10 text-center text-sm text-muted-foreground"
+            >
+              暂无意图
+            </div>
+          </template>
+          <div v-else class="py-10 text-center text-sm text-muted-foreground">
+            请先在左侧选择领域
+          </div>
+        </Card>
 
-            <!-- 槽位配置 -->
-            <TabPane key="slots" tab="槽位配置">
-              <Button
-                size="small"
-                style="margin-bottom: 8px"
-                @click="openCreateSlot"
+        <!-- 第3栏：意图详情 -->
+        <Card
+          :bordered="false"
+          size="small"
+          class="flex h-full min-w-0 flex-1 flex-col overflow-hidden shadow-sm"
+          :body-style="{
+            flex: '1 1 0%',
+            minHeight: '0',
+            overflowY: 'auto',
+            padding: '16px',
+          }"
+        >
+          <template #title>
+            <span v-if="selectedIntent" class="text-sm font-semibold"
+              >意图详情</span
+            >
+            <span v-else class="text-sm text-muted-foreground">请选择意图</span>
+          </template>
+          <template v-if="selectedIntent" #extra>
+            <Button
+              type="link"
+              size="small"
+              @click="openEditIntent(selectedIntent)"
+            >
+              <Icon icon="lucide:pencil" class="mr-0.5 h-3 w-3" />
+              编辑意图
+            </Button>
+          </template>
+
+          <template v-if="selectedIntent">
+            <!-- 意图头部卡片 -->
+            <div
+              class="mb-4 flex items-start justify-between gap-4 rounded-xl border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 p-4 dark:border-blue-900/30 dark:from-blue-900/20 dark:to-indigo-900/20"
+            >
+              <div class="min-w-0 flex-1">
+                <div class="text-lg font-bold text-foreground">
+                  {{ selectedIntent.name }}
+                </div>
+                <div class="mt-0.5 font-mono text-xs text-muted-foreground">
+                  {{ selectedIntent.code }}
+                </div>
+                <div class="mt-1.5 max-w-md text-xs text-muted-foreground">
+                  {{ selectedIntent.description }}
+                </div>
+                <div
+                  v-if="selectedIntent.autoTransfer || selectedIntent.skipRag"
+                  class="mt-2 flex flex-wrap gap-1"
+                >
+                  <span
+                    v-if="selectedIntent.autoTransfer"
+                    class="rounded bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:bg-amber-900/20 dark:text-amber-400"
+                  >
+                    转人工
+                  </span>
+                  <span
+                    v-if="selectedIntent.skipRag"
+                    class="rounded bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
+                  >
+                    跳过RAG
+                  </span>
+                </div>
+              </div>
+              <div class="flex flex-shrink-0 gap-2">
+                <Button size="small" @click="openCreateSlot">
+                  <Icon icon="lucide:plus" class="mr-0.5 h-3 w-3" />
+                  槽位
+                </Button>
+                <Button size="small" @click="openCreateBinding">
+                  <Icon icon="lucide:plus" class="mr-0.5 h-3 w-3" />
+                  工具
+                </Button>
+              </div>
+            </div>
+
+            <!-- 信息网格 -->
+            <div class="mb-4 grid grid-cols-4 gap-2">
+              <div class="rounded-lg border border-border bg-card px-3 py-2.5">
+                <div class="mb-0.5 text-[11px] text-muted-foreground">
+                  关键词匹配
+                </div>
+                <div class="text-sm font-semibold text-primary">
+                  {{ selectedIntent.keywordMatchMode || 'ANY_CONTAINS' }}
+                </div>
+              </div>
+              <div class="rounded-lg border border-border bg-card px-3 py-2.5">
+                <div class="mb-0.5 text-[11px] text-muted-foreground">
+                  兜底回复
+                </div>
+                <div
+                  class="text-sm font-semibold"
+                  :class="
+                    selectedIntent.fallbackReply
+                      ? 'text-foreground'
+                      : 'text-muted-foreground'
+                  "
+                >
+                  {{ selectedIntent.fallbackReply || '暂无' }}
+                </div>
+              </div>
+              <div class="rounded-lg border border-border bg-card px-3 py-2.5">
+                <div class="mb-0.5 text-[11px] text-muted-foreground">排序</div>
+                <div class="text-sm font-semibold text-foreground">
+                  {{ selectedIntent.sortOrder ?? 0 }}
+                </div>
+              </div>
+              <div class="rounded-lg border border-border bg-card px-3 py-2.5">
+                <div class="mb-0.5 text-[11px] text-muted-foreground">状态</div>
+                <div
+                  class="text-sm font-semibold"
+                  :class="
+                    selectedIntent.enabled !== false
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-muted-foreground'
+                  "
+                >
+                  {{ selectedIntent.enabled !== false ? '启用' : '禁用' }}
+                </div>
+              </div>
+            </div>
+
+            <!-- 关键词标签区 -->
+            <div class="mb-4">
+              <div
+                class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"
               >
-                + 添加槽位
-              </Button>
-              <Table
-                :data-source="slots"
-                :columns="slotColumns"
-                size="small"
-                :pagination="false"
-                row-key="id"
+                <span class="h-3 w-[3px] rounded bg-emerald-500"></span>
+                关键词规则 ({{ selectedIntentKeywords.length }})
+              </div>
+              <div class="flex flex-wrap gap-1.5">
+                <span
+                  v-for="(kw, idx) in selectedIntentKeywords"
+                  :key="idx"
+                  class="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400"
+                >
+                  {{ kw }}
+                </span>
+                <span
+                  class="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+                >
+                  {{ selectedIntent.keywordMatchMode || 'ANY_CONTAINS' }}
+                </span>
+                <span
+                  v-if="!selectedIntentKeywords.length"
+                  class="text-xs text-muted-foreground"
+                >
+                  未配置（仅 BERT + LLM 分类）
+                </span>
+              </div>
+            </div>
+
+            <!-- 示例句子区 -->
+            <div class="mb-4">
+              <div
+                class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"
               >
-                <template #bodyCell="{ column, record }">
-                  <template v-if="column.key === 'required'">
-                    <Tag :color="record.required ? 'error' : 'default'">
-                      {{ record.required ? '必填' : '可选' }}
-                    </Tag>
-                  </template>
-                  <template v-if="column.key === 'resolveStrategy'">
-                    <Space wrap>
-                      <Tag
-                        v-for="(s, idx) in parseResolveStrategy(
-                          record.resolveStrategy,
+                <span class="h-3 w-[3px] rounded bg-blue-500"></span>
+                示例句子 ({{ selectedIntentExamples.length }})
+              </div>
+              <div class="flex flex-wrap gap-1.5">
+                <span
+                  v-for="(ex, idx) in selectedIntentExamples"
+                  :key="idx"
+                  class="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400"
+                >
+                  {{ ex }}
+                </span>
+                <span
+                  v-if="!selectedIntentExamples.length"
+                  class="text-xs text-muted-foreground"
+                >
+                  暂无示例
+                </span>
+              </div>
+            </div>
+
+            <!-- 槽位 + 工具绑定 左右分栏 -->
+            <div class="grid grid-cols-2 gap-3">
+              <!-- 槽位配置卡片 -->
+              <div class="overflow-hidden rounded-lg border border-border">
+                <div
+                  class="flex items-center justify-between border-b border-border bg-slate-50/50 px-3.5 py-2.5 dark:bg-slate-800/30"
+                >
+                  <div class="flex items-center gap-1.5 text-sm font-semibold">
+                    <span class="h-3.5 w-[3px] rounded bg-blue-500"></span>
+                    槽位配置
+                    <span class="text-xs font-normal text-muted-foreground">
+                      ({{ slots.length }})
+                    </span>
+                  </div>
+                  <Button type="link" size="small" @click="openCreateSlot">
+                    <Icon icon="lucide:plus" class="mr-0.5 h-3 w-3" />
+                    添加
+                  </Button>
+                </div>
+                <div class="px-3.5">
+                  <div
+                    v-for="s in slots"
+                    :key="s.id"
+                    class="flex items-center gap-2 border-b border-border py-2 last:border-0"
+                  >
+                    <span class="min-w-[72px] font-mono text-xs font-semibold">
+                      {{ s.slotName }}
+                    </span>
+                    <span
+                      class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
+                    >
+                      {{ s.slotType || 'string' }}
+                    </span>
+                    <div class="flex flex-1 flex-wrap gap-1">
+                      <span
+                        v-for="(strat, idx) in parseResolveStrategy(
+                          s.resolveStrategy || '',
                         )"
                         :key="idx"
-                        color="purple"
+                        class="rounded bg-purple-50 px-1.5 py-0.5 text-[9px] text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
                       >
-                        {{ s }}
-                      </Tag>
-                    </Space>
-                  </template>
-                  <template v-if="column.key === 'actions'">
-                    <Space>
-                      <Button
-                        type="link"
-                        size="small"
-                        @click="openEditSlot(record as SlotDTO)"
-                        >编辑</Button
-                      >
-                      <Button
-                        type="link"
-                        danger
-                        size="small"
-                        @click="confirmDeleteSlot(record as SlotDTO)"
-                        >删除</Button
-                      >
-                    </Space>
-                  </template>
-                </template>
-              </Table>
-            </TabPane>
-
-            <!-- 工具绑定 -->
-            <TabPane key="tools" tab="工具绑定">
-              <Button
-                size="small"
-                style="margin-bottom: 8px"
-                @click="openCreateBinding"
-              >
-                + 绑定工具
-              </Button>
-              <Table
-                :data-source="bindings"
-                :columns="bindingColumns"
-                size="small"
-                :pagination="false"
-                row-key="id"
-              >
-                <template #bodyCell="{ column, record }">
-                  <template v-if="column.key === 'toolId'">
-                    {{ toolName(record.toolId) }}
-                  </template>
-                  <template v-if="column.key === 'executionMode'">
-                    <Tag
-                      :color="
-                        record.executionMode === 'REQUIRED'
-                          ? 'error'
-                          : 'processing'
+                        {{ strat }}
+                      </span>
+                    </div>
+                    <span
+                      class="rounded px-1.5 py-0.5 text-[10px]"
+                      :class="
+                        s.required
+                          ? 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400'
+                          : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
                       "
                     >
-                      {{ record.executionMode }}
-                    </Tag>
-                  </template>
-                  <template v-if="column.key === 'actions'">
-                    <Button
-                      type="link"
-                      danger
-                      size="small"
-                      @click="confirmDeleteBinding(record as BindingDTO)"
-                      >解除</Button
+                      {{ s.required ? '必填' : '可选' }}
+                    </span>
+                    <div class="flex gap-0.5">
+                      <button
+                        type="button"
+                        class="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-300"
+                        @click="openEditSlot(s)"
+                      >
+                        <Icon icon="lucide:pencil" class="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        class="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:text-slate-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                        @click="confirmDeleteSlot(s)"
+                      >
+                        <Icon icon="lucide:trash-2" class="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    v-if="!slots.length"
+                    class="py-6 text-center text-xs text-muted-foreground"
+                  >
+                    暂无槽位
+                  </div>
+                </div>
+              </div>
+
+              <!-- 工具绑定卡片 -->
+              <div class="overflow-hidden rounded-lg border border-border">
+                <div
+                  class="flex items-center justify-between border-b border-border bg-slate-50/50 px-3.5 py-2.5 dark:bg-slate-800/30"
+                >
+                  <div class="flex items-center gap-1.5 text-sm font-semibold">
+                    <span class="h-3.5 w-[3px] rounded bg-purple-500"></span>
+                    工具绑定
+                    <span class="text-xs font-normal text-muted-foreground">
+                      ({{ bindings.length }})
+                    </span>
+                  </div>
+                  <Button type="link" size="small" @click="openCreateBinding">
+                    <Icon icon="lucide:plus" class="mr-0.5 h-3 w-3" />
+                    绑定
+                  </Button>
+                </div>
+                <div class="px-3.5">
+                  <div
+                    v-for="b in bindings"
+                    :key="b.id"
+                    class="flex items-center gap-2 border-b border-border py-2 last:border-0"
+                  >
+                    <span class="flex-1 truncate text-xs font-semibold">
+                      {{ toolName(b.toolId) }}
+                    </span>
+                    <span
+                      class="rounded px-1.5 py-0.5 text-[10px]"
+                      :class="
+                        b.executionMode === 'REQUIRED'
+                          ? 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400'
+                          : 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
+                      "
                     >
-                  </template>
-                </template>
-              </Table>
-            </TabPane>
-          </Tabs>
-        </template>
-      </Card>
+                      {{ b.executionMode || 'OPTIONAL' }}
+                    </span>
+                    <span class="text-[10px] text-muted-foreground">
+                      顺序 {{ b.executionOrder ?? 0 }}
+                    </span>
+                    <button
+                      type="button"
+                      class="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:text-slate-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                      @click="confirmDeleteBinding(b)"
+                    >
+                      <Icon icon="lucide:x" class="h-3 w-3" />
+                    </button>
+                  </div>
+                  <div
+                    v-if="!bindings.length"
+                    class="py-6 text-center text-xs text-muted-foreground"
+                  >
+                    暂无绑定
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div v-else class="py-10 text-center text-sm text-muted-foreground">
+            {{ selectedDomainId ? '请选择意图查看详情' : '请先选择领域' }}
+          </div>
+        </Card>
+      </div>
     </div>
 
     <!-- 领域抽屉 -->
@@ -861,7 +1174,10 @@ function confirmDeleteBinding(b: BindingDTO) {
           </div>
         </FormItem>
         <FormItem label="关键词匹配模式">
-          <Select v-model:value="intentForm.keywordMatchMode" style="width: 100%">
+          <Select
+            v-model:value="intentForm.keywordMatchMode"
+            style="width: 100%"
+          >
             <SelectOption value="ANY_CONTAINS">
               ANY_CONTAINS — 任意关键词命中即触发（默认）
             </SelectOption>
@@ -1021,48 +1337,3 @@ function confirmDeleteBinding(b: BindingDTO) {
     </Drawer>
   </Page>
 </template>
-
-<style scoped>
-.domain-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.domain-item:hover,
-.domain-item.active {
-  background: #e6f7ff;
-}
-
-.domain-actions {
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.domain-item:hover .domain-actions {
-  opacity: 1;
-}
-
-.intent-list {
-  margin-bottom: 16px;
-}
-
-.intent-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  margin-bottom: 4px;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: background 0.15s;
-}
-
-.intent-item:hover,
-.intent-item.active {
-  background: #f0f5ff;
-}
-</style>

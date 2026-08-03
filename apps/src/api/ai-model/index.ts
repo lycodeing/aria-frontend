@@ -116,7 +116,8 @@ export async function deleteAiModelApi(id: number) {
 
 export interface AiModelTestResult {
   success: boolean;
-  latencyMs: number;
+  /** 延迟毫秒；失败或未知时可能缺省 */
+  latencyMs?: number;
   message: string;
 }
 

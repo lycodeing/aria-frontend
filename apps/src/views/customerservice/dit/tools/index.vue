@@ -5,9 +5,11 @@ import { computed, onMounted, ref } from 'vue';
 
 import { JsonViewer } from '@vben/common-ui';
 
+import { Icon } from '@iconify/vue';
 import {
   Button,
   Drawer,
+  Empty,
   Form,
   FormItem,
   Input,
@@ -16,11 +18,11 @@ import {
   Modal,
   Select,
   SelectOption,
-  Space,
+  Spin,
   Switch,
-  Table,
   Tag,
   Textarea,
+  Tooltip,
 } from 'ant-design-vue';
 
 import {
@@ -31,67 +33,50 @@ import {
   updateToolApi,
 } from '#/api/dit';
 
+// ---- 工具列表 ----
 const tools = ref<ToolDTO[]>([]);
-const drawerVisible = ref(false);
-const editingTool = ref<null | ToolDTO>(null);
-const form = ref<Partial<ToolDTO>>({});
-const saving = ref(false);
+const loading = ref(false);
+const selectedToolId = ref<null | number>(null);
 
-// ---- 参数 Schema 编辑器：简单/高级双模式 ----
+const selectedTool = computed(
+  () => tools.value.find((t) => t.id === selectedToolId.value) ?? null,
+);
+
+// ---- 搜索 + 筛选 ----
+const searchKeyword = ref('');
+const filterToolType = ref<string>('');
+const filterAuthType = ref<string>('');
+
+const filteredTools = computed(() => {
+  const kw = searchKeyword.value.trim().toLowerCase();
+  return tools.value.filter((t) => {
+    if (kw) {
+      const code = (t.code || '').toLowerCase();
+      const name = (t.name || '').toLowerCase();
+      if (!code.includes(kw) && !name.includes(kw)) return false;
+    }
+    if (filterToolType.value && t.toolType !== filterToolType.value)
+      return false;
+    if (filterAuthType.value && t.authType !== filterAuthType.value)
+      return false;
+    return true;
+  });
+});
+
+// ---- 统计概览 ----
+const stats = computed(() => ({
+  total: tools.value.length,
+  http: tools.value.filter((t) => t.toolType === 'HTTP').length,
+  builtin: tools.value.filter((t) => t.toolType === 'BUILTIN').length,
+  discover: tools.value.filter((t) => t.isDiscoverTool === true).length,
+}));
+
+// ---- 参数 Schema 解析（用于详情展示） ----
 interface ParamItem {
   name: string;
   type: string;
   description: string;
 }
-const paramList = ref<ParamItem[]>([]);
-const paramMode = ref<'advanced' | 'simple'>('simple');
-const paramSchemaRaw = ref('{}');
-const paramSchemaError = ref('');
-
-// 简单 → 高级：从列表生成 JSON
-function switchToAdvanced() {
-  try {
-    paramSchemaRaw.value = JSON.stringify(JSON.parse(buildParamSchema() || '{}'), null, 2);
-  } catch {
-    paramSchemaRaw.value = buildParamSchema();
-  }
-  paramSchemaError.value = '';
-  paramMode.value = 'advanced';
-}
-
-// 高级 → 简单：解析 JSON 回列表（解析失败则保留原列表）
-function switchToSimple() {
-  const parsed = parseParamSchema(paramSchemaRaw.value);
-  if (parsed.length > 0 || paramSchemaRaw.value.trim() === '{}' || paramSchemaRaw.value.trim() === '') {
-    paramList.value = parsed;
-  }
-  paramSchemaError.value = '';
-  paramMode.value = 'simple';
-}
-
-// 格式化 JSON
-function formatParamSchema() {
-  try {
-    paramSchemaRaw.value = JSON.stringify(JSON.parse(paramSchemaRaw.value), null, 2);
-    paramSchemaError.value = '';
-  } catch {
-    paramSchemaError.value = 'JSON 格式有误，无法格式化，请检查语法';
-  }
-}
-
-// 当前模式下获取最终 paramSchema 字符串
-const currentParamSchema = computed(() =>
-  paramMode.value === 'simple' ? buildParamSchema() : paramSchemaRaw.value,
-);
-
-function addParam() {
-  paramList.value.push({ name: '', type: 'string', description: '' });
-}
-
-function removeParam(index: number) {
-  paramList.value.splice(index, 1);
-}
-
 function parseParamSchema(raw: string): ParamItem[] {
   try {
     const obj = JSON.parse(raw || '{}');
@@ -106,17 +91,31 @@ function parseParamSchema(raw: string): ParamItem[] {
   }
 }
 
-function buildParamSchema(): string {
-  const obj: Record<string, { description: string; type: string }> = {};
-  for (const p of paramList.value) {
-    if (p.name.trim()) {
-      obj[p.name.trim()] = { type: p.type || 'string', description: p.description || '' };
-    }
+const selectedToolParams = computed(() =>
+  selectedTool.value
+    ? parseParamSchema(selectedTool.value.paramSchema || '')
+    : [],
+);
+
+// ---- 启用状态切换 ----
+const togglingIds = ref<Set<number>>(new Set());
+
+async function toggleEnabled(t: ToolDTO, newValue: boolean) {
+  if (!t.id) return;
+  togglingIds.value.add(t.id);
+  try {
+    await updateToolApi(t.id, { ...t, enabled: newValue });
+    const target = tools.value.find((x) => x.id === t.id);
+    if (target) target.enabled = newValue;
+    message.success(newValue ? '已启用' : '已禁用');
+  } catch {
+    message.error('切换失败，请重试');
+  } finally {
+    togglingIds.value.delete(t.id);
   }
-  return JSON.stringify(obj);
 }
 
-// ---- 测试调用 ----
+// ---- 测试调用弹窗 ----
 const testModalVisible = ref(false);
 const testingTool = ref<null | ToolDTO>(null);
 const testParamsJson = ref('{}');
@@ -126,30 +125,65 @@ const testParamError = ref('');
 
 const testResultJson = computed(() => {
   if (!testResult.value?.rawResponse) return {};
-  try { return JSON.parse(testResult.value.rawResponse); } catch { return testResult.value.rawResponse; }
+  try {
+    return JSON.parse(testResult.value.rawResponse);
+  } catch {
+    return testResult.value.rawResponse;
+  }
 });
 
 const testExtractedJson = computed(() => {
   if (!testResult.value?.extractedResult) return {};
-  try { return JSON.parse(testResult.value.extractedResult); } catch { return testResult.value.extractedResult; }
+  try {
+    return JSON.parse(testResult.value.extractedResult);
+  } catch {
+    return testResult.value.extractedResult;
+  }
 });
+
+/** 按 JSON Schema 声明的 type 返回一个合理的初始值，避免把 "" 硬塞进 number/boolean 字段导致服务端校验失败 */
+function defaultForType(type: unknown): unknown {
+  switch (type) {
+    case 'array': {
+      return [];
+    }
+    case 'boolean': {
+      return false;
+    }
+    case 'integer':
+    case 'number': {
+      return 0;
+    }
+    case 'object': {
+      return {};
+    }
+    // string 与未知 type 兜底为空字符串
+    default: {
+      return '';
+    }
+  }
+}
 
 function openTestModal(t: ToolDTO) {
   testingTool.value = t;
   testResult.value = null;
   testParamError.value = '';
-  // 根据 paramSchema 生成初始参数 JSON
   try {
-    const schema = JSON.parse(t.paramSchema || '{}');
-    const initParams: Record<string, string> = {};
-    for (const key of Object.keys(schema)) {
-      initParams[key] = '';
+    const schema = JSON.parse(t.paramSchema || '{}') as Record<string, any>;
+    const initParams: Record<string, unknown> = {};
+    for (const [key, spec] of Object.entries(schema)) {
+      initParams[key] = defaultForType(spec?.type);
     }
     testParamsJson.value = JSON.stringify(initParams, null, 2);
-  } catch {
+  } catch (error) {
+    console.warn('[dit-tools] parse paramSchema failed', error);
     testParamsJson.value = '{}';
   }
   testModalVisible.value = true;
+}
+
+function closeTestModal() {
+  testModalVisible.value = false;
 }
 
 async function runTest() {
@@ -166,35 +200,101 @@ async function runTest() {
   testResult.value = null;
   try {
     testResult.value = await testToolApi(testingTool.value.id, params);
-  } catch (e: any) {
-    message.error('调用失败：' + (e?.message || '未知错误'));
+  } catch (error: any) {
+    message.error(`调用失败：${error?.message || '未知错误'}`);
   } finally {
     testLoading.value = false;
   }
 }
 
-const columns = [
-  { title: '工具码', dataIndex: 'code', key: 'code' },
-  { title: '名称', dataIndex: 'name', key: 'name' },
-  { title: '类型', dataIndex: 'toolType', key: 'toolType', width: 90 },
-  { title: '方法', dataIndex: 'httpMethod', key: 'httpMethod', width: 80 },
-  { title: '认证', dataIndex: 'authType', key: 'authType', width: 90 },
-  {
-    title: '发现工具',
-    dataIndex: 'isDiscoverTool',
-    key: 'isDiscoverTool',
-    width: 90,
-  },
-  { title: '操作', key: 'actions', width: 120 },
-];
+// ---- 编辑 Drawer ----
+const drawerVisible = ref(false);
+const editingTool = ref<null | ToolDTO>(null);
+const form = ref<Partial<ToolDTO>>({});
+const saving = ref(false);
 
+// ---- 参数 Schema 编辑器 ----
+const paramList = ref<ParamItem[]>([]);
+const paramMode = ref<'advanced' | 'simple'>('simple');
+const paramSchemaRaw = ref('{}');
+const paramSchemaError = ref('');
+
+function buildParamSchema(): string {
+  const obj: Record<string, { description: string; type: string }> = {};
+  for (const p of paramList.value) {
+    if (p.name.trim()) {
+      obj[p.name.trim()] = {
+        type: p.type || 'string',
+        description: p.description || '',
+      };
+    }
+  }
+  return JSON.stringify(obj);
+}
+
+const currentParamSchema = computed(() =>
+  paramMode.value === 'simple' ? buildParamSchema() : paramSchemaRaw.value,
+);
+
+function switchToAdvanced() {
+  try {
+    paramSchemaRaw.value = JSON.stringify(
+      JSON.parse(buildParamSchema() || '{}'),
+      null,
+      2,
+    );
+  } catch {
+    paramSchemaRaw.value = buildParamSchema();
+  }
+  paramSchemaError.value = '';
+  paramMode.value = 'advanced';
+}
+
+function switchToSimple() {
+  const parsed = parseParamSchema(paramSchemaRaw.value);
+  if (
+    parsed.length > 0 ||
+    paramSchemaRaw.value.trim() === '{}' ||
+    paramSchemaRaw.value.trim() === ''
+  ) {
+    paramList.value = parsed;
+  }
+  paramSchemaError.value = '';
+  paramMode.value = 'simple';
+}
+
+function formatParamSchema() {
+  try {
+    paramSchemaRaw.value = JSON.stringify(
+      JSON.parse(paramSchemaRaw.value),
+      null,
+      2,
+    );
+    paramSchemaError.value = '';
+  } catch {
+    paramSchemaError.value = 'JSON 格式有误，无法格式化，请检查语法';
+  }
+}
+
+function addParam() {
+  paramList.value.push({ name: '', type: 'string', description: '' });
+}
+
+function removeParam(index: number) {
+  paramList.value.splice(index, 1);
+}
+
+// ---- CRUD ----
 onMounted(() => loadTools());
 
 async function loadTools() {
+  loading.value = true;
   try {
     tools.value = await listToolsApi();
   } catch {
     message.error('加载工具列表失败');
+  } finally {
+    loading.value = false;
   }
 }
 
@@ -251,62 +351,532 @@ async function save() {
 }
 
 function confirmDelete(t: ToolDTO) {
+  if (!t.id) {
+    message.error('工具 ID 缺失，无法删除');
+    return;
+  }
+  const toolId = t.id;
   Modal.confirm({
     title: `删除工具「${t.name}」？`,
     content: '删除后已绑定的意图工具将失效',
     okType: 'danger',
     async onOk() {
       try {
-        await deleteToolApi(t.id!);
+        await deleteToolApi(toolId);
         message.success('已删除');
+        if (selectedToolId.value === toolId) selectedToolId.value = null;
         await loadTools();
-      } catch {
+      } catch (error) {
+        console.warn('[dit-tools] delete failed', error);
         message.error('删除失败，请重试');
       }
     },
   });
 }
+
+function selectTool(t: ToolDTO) {
+  if (!t.id) return;
+  const id = t.id;
+  selectedToolId.value = selectedToolId.value === id ? null : id;
+}
 </script>
 
 <template>
-  <div style="padding: 16px">
+  <Page>
+    <!-- 顶部工具栏 -->
     <div
-      style="
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 16px;
-      "
+      class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3"
     >
-      <span style="font-size: 16px; font-weight: 600">工具注册中心</span>
-      <Button type="primary" @click="openCreate">+ 注册新工具</Button>
+      <div class="flex items-center gap-2">
+        <span class="text-base font-bold">工具注册中心</span>
+        <span class="h-5 w-px bg-border"></span>
+        <span
+          class="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+        >
+          共 {{ stats.total }}
+        </span>
+        <span
+          class="inline-flex items-center rounded-full bg-cyan-50 px-2.5 py-0.5 text-xs font-medium text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400"
+        >
+          HTTP {{ stats.http }}
+        </span>
+        <span
+          class="inline-flex items-center rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-600 dark:bg-violet-900/30 dark:text-violet-400"
+        >
+          BUILTIN {{ stats.builtin }}
+        </span>
+        <span
+          class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
+        >
+          发现工具 {{ stats.discover }}
+        </span>
+      </div>
+      <div class="flex items-center gap-2">
+        <Input
+          v-model:value="searchKeyword"
+          allow-clear
+          placeholder="搜索工具码 / 名称"
+          style="width: 200px"
+        >
+          <template #prefix>
+            <Icon icon="lucide:search" class="text-muted-foreground" />
+          </template>
+        </Input>
+        <Select
+          v-model:value="filterToolType"
+          allow-clear
+          placeholder="类型"
+          style="width: 110px"
+        >
+          <SelectOption value="HTTP">HTTP</SelectOption>
+          <SelectOption value="BUILTIN">BUILTIN</SelectOption>
+        </Select>
+        <Select
+          v-model:value="filterAuthType"
+          allow-clear
+          placeholder="认证"
+          style="width: 110px"
+        >
+          <SelectOption value="NONE">NONE</SelectOption>
+          <SelectOption value="BEARER">BEARER</SelectOption>
+          <SelectOption value="API_KEY">API_KEY</SelectOption>
+          <SelectOption value="BASIC">BASIC</SelectOption>
+        </Select>
+        <Button type="primary" @click="openCreate">
+          <template #icon><Icon icon="lucide:plus" /></template>
+          注册工具
+        </Button>
+      </div>
     </div>
 
-    <Table :data-source="tools" :columns="columns" row-key="id" size="middle">
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'toolType'">
-          <Tag :color="record.toolType === 'HTTP' ? 'blue' : 'purple'">
-            {{ record.toolType }}
-          </Tag>
-        </template>
-        <template v-if="column.key === 'isDiscoverTool'">
-          <Tag v-if="record.isDiscoverTool" color="green">发现工具</Tag>
-          <span v-else>-</span>
-        </template>
-        <template v-if="column.key === 'actions'">
-          <Space>
-            <Button type="link" size="small" @click="openEdit(record as ToolDTO)">编辑</Button>
-            <Button type="link" size="small" @click="openTestModal(record as ToolDTO)">测试</Button>
-            <Button type="link" danger size="small" @click="confirmDelete(record as ToolDTO)">删除</Button>
-          </Space>
-        </template>
-      </template>
-    </Table>
+    <!-- 主体：卡片网格 + 详情侧栏 -->
+    <div class="flex items-start gap-4">
+      <!-- 左侧：工具卡片网格 -->
+      <div class="min-w-0 flex-1">
+        <Spin :spinning="loading">
+          <Empty
+            v-if="filteredTools.length === 0"
+            description="暂无工具"
+            style="padding: 60px 0"
+          />
+          <div
+            v-else
+            class="grid gap-3"
+            style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr))"
+          >
+            <div
+              v-for="tool in filteredTools"
+              :key="tool.id"
+              class="relative flex cursor-pointer flex-col gap-2.5 rounded-xl border bg-card p-4 transition hover:border-blue-300 hover:shadow-md"
+              :class="{
+                'border-blue-500 ring-2 ring-blue-100 dark:ring-blue-900/30':
+                  selectedToolId === tool.id,
+                'opacity-55': !tool.enabled,
+              }"
+              @click="selectTool(tool)"
+            >
+              <!-- 发现工具角标 -->
+              <div
+                v-if="tool.isDiscoverTool"
+                class="absolute right-0 top-0 rounded-bl-lg rounded-tr-xl bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white"
+              >
+                发现工具
+              </div>
 
+              <!-- 头部：名称 + 开关 -->
+              <div class="flex items-start justify-between">
+                <div class="min-w-0 flex-1 pr-2">
+                  <div class="flex items-center gap-1.5">
+                    <Icon
+                      :icon="
+                        tool.enabled
+                          ? 'lucide:circle-check'
+                          : 'lucide:circle-minus'
+                      "
+                      :class="
+                        tool.enabled
+                          ? 'text-emerald-500'
+                          : 'text-muted-foreground'
+                      "
+                      style="font-size: 14px"
+                    />
+                    <span class="truncate font-semibold">{{ tool.name }}</span>
+                  </div>
+                  <div
+                    class="mt-0.5 truncate font-mono text-xs text-muted-foreground"
+                  >
+                    {{ tool.code }}
+                  </div>
+                </div>
+                <Switch
+                  :checked="tool.enabled"
+                  :loading="togglingIds.has(tool.id!)"
+                  size="small"
+                  @change="(v: unknown) => toggleEnabled(tool, !!v)"
+                  @click.stop
+                />
+              </div>
+
+              <!-- 描述 -->
+              <div
+                class="line-clamp-2 text-xs leading-relaxed text-muted-foreground"
+              >
+                {{ tool.description }}
+              </div>
+
+              <!-- 标签行 -->
+              <div class="flex flex-wrap items-center gap-1">
+                <span
+                  class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium"
+                  :class="
+                    tool.toolType === 'HTTP'
+                      ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                      : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'
+                  "
+                >
+                  {{ tool.toolType }}
+                </span>
+                <span
+                  v-if="tool.httpMethod"
+                  class="inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                >
+                  {{ tool.httpMethod }}
+                </span>
+                <span
+                  v-if="tool.authType && tool.authType !== 'NONE'"
+                  class="inline-flex items-center rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:bg-amber-900/30 dark:text-amber-400"
+                >
+                  {{ tool.authType }}
+                </span>
+                <span
+                  v-else
+                  class="inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                >
+                  无认证
+                </span>
+              </div>
+
+              <!-- URL -->
+              <div
+                v-if="tool.urlTemplate"
+                class="truncate rounded bg-slate-50 px-2 py-1 font-mono text-[11px] text-muted-foreground dark:bg-slate-800/50"
+              >
+                {{ tool.urlTemplate }}
+              </div>
+
+              <!-- 底部：元信息 + 操作 -->
+              <div
+                class="mt-auto flex items-center justify-between border-t pt-2"
+              >
+                <div
+                  class="flex items-center gap-2 text-[10px] text-muted-foreground"
+                >
+                  <span class="flex items-center gap-0.5">
+                    <Icon icon="lucide:clock" style="font-size: 10px" />
+                    {{ tool.timeoutMs ? `${tool.timeoutMs}ms` : '-' }}
+                  </span>
+                  <span>|</span>
+                  <span
+                    >{{
+                      parseParamSchema(tool.paramSchema || '').length
+                    }}
+                    参数</span
+                  >
+                </div>
+                <div class="flex items-center gap-0.5" @click.stop>
+                  <Tooltip title="测试调用">
+                    <Button
+                      type="text"
+                      size="small"
+                      class="text-amber-500 hover:text-amber-600"
+                      @click="openTestModal(tool)"
+                    >
+                      <template #icon>
+                        <Icon icon="lucide:plug-zap" />
+                      </template>
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title="编辑">
+                    <Button
+                      type="text"
+                      size="small"
+                      class="text-slate-500 hover:text-slate-700"
+                      @click="openEdit(tool)"
+                    >
+                      <template #icon>
+                        <Icon icon="lucide:pencil" />
+                      </template>
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title="删除">
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      @click="confirmDelete(tool)"
+                    >
+                      <template #icon>
+                        <Icon icon="lucide:trash-2" />
+                      </template>
+                    </Button>
+                  </Tooltip>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Spin>
+      </div>
+
+      <!-- 右侧：详情面板 -->
+      <div
+        v-if="selectedTool"
+        class="w-[420px] shrink-0 overflow-hidden rounded-xl border bg-card"
+      >
+        <!-- 面板头部 -->
+        <div
+          class="flex items-center justify-between bg-gradient-to-r from-blue-50 to-indigo-50 p-4 dark:from-blue-900/20 dark:to-indigo-900/20"
+        >
+          <div>
+            <div class="text-base font-bold">{{ selectedTool.name }}</div>
+            <div class="mt-0.5 font-mono text-xs text-muted-foreground">
+              {{ selectedTool.code }}
+            </div>
+          </div>
+          <div class="flex gap-1">
+            <Button size="small" @click="openEdit(selectedTool)">
+              <template #icon><Icon icon="lucide:pencil" /></template>
+              编辑
+            </Button>
+            <Button size="small" type="text" @click="selectedToolId = null">
+              <template #icon><Icon icon="lucide:x" /></template>
+            </Button>
+          </div>
+        </div>
+
+        <!-- 面板内容 -->
+        <div class="max-h-[600px] overflow-y-auto p-4">
+          <!-- 基本信息 -->
+          <div class="mb-3 space-y-1.5 text-xs">
+            <div class="flex items-center gap-2">
+              <span class="min-w-[60px] text-muted-foreground">类型</span>
+              <span
+                class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium"
+                :class="
+                  selectedTool.toolType === 'HTTP'
+                    ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                    : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'
+                "
+              >
+                {{ selectedTool.toolType }}
+              </span>
+              <span
+                v-if="selectedTool.httpMethod"
+                class="inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+              >
+                {{ selectedTool.httpMethod }}
+              </span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="min-w-[60px] text-muted-foreground">认证</span>
+              <span
+                class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium"
+                :class="
+                  selectedTool.authType === 'NONE'
+                    ? 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                    : 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400'
+                "
+              >
+                {{ selectedTool.authType }}
+              </span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="min-w-[60px] text-muted-foreground">超时</span>
+              <span class="font-medium">{{ selectedTool.timeoutMs }} ms</span>
+            </div>
+            <div v-if="selectedTool.urlTemplate" class="flex items-start gap-2">
+              <span class="min-w-[60px] text-muted-foreground">URL</span>
+              <span
+                class="break-all font-mono text-[11px] text-muted-foreground"
+              >
+                {{ selectedTool.urlTemplate }}
+              </span>
+            </div>
+            <div
+              v-if="selectedTool.responseJsonpath"
+              class="flex items-center gap-2"
+            >
+              <span class="min-w-[60px] text-muted-foreground">JSONPath</span>
+              <span class="font-mono text-[11px] text-blue-500">
+                {{ selectedTool.responseJsonpath }}
+              </span>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="min-w-[60px] text-muted-foreground">说明</span>
+              <span class="text-[11px] leading-relaxed">
+                {{ selectedTool.description }}
+              </span>
+            </div>
+          </div>
+
+          <!-- 参数 Schema -->
+          <div v-if="selectedToolParams.length > 0" class="mt-4 border-t pt-3">
+            <div
+              class="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground"
+            >
+              <span class="h-3 w-[3px] rounded bg-blue-500"></span>
+              参数 Schema ({{ selectedToolParams.length }})
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <div
+                v-for="p in selectedToolParams"
+                :key="p.name"
+                class="flex items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 dark:bg-slate-800/50"
+              >
+                <span class="min-w-[80px] font-mono text-[11px] font-semibold">
+                  {{ p.name }}
+                </span>
+                <span
+                  class="inline-flex items-center rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+                >
+                  {{ p.type }}
+                </span>
+                <span class="flex-1 text-[11px] text-muted-foreground">
+                  {{ p.description }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 快捷测试按钮 -->
+          <div class="mt-4 border-t pt-3">
+            <Button
+              block
+              type="primary"
+              ghost
+              @click="openTestModal(selectedTool)"
+            >
+              <template #icon><Icon icon="lucide:plug-zap" /></template>
+              测试调用
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 测试调用弹窗 -->
+    <Modal
+      :open="testModalVisible"
+      :title="`测试调用 — ${testingTool?.name ?? ''}`"
+      :footer="null"
+      width="760"
+      @cancel="closeTestModal"
+    >
+      <div class="flex flex-col gap-4">
+        <!-- 参数输入 -->
+        <div>
+          <div class="mb-1 flex items-center justify-between">
+            <span class="text-sm font-medium">请求参数 (JSON)</span>
+            <span class="text-xs text-muted-foreground">
+              key 为参数名，value 为参数值
+            </span>
+          </div>
+          <Textarea
+            v-model:value="testParamsJson"
+            :rows="6"
+            placeholder="{}"
+            style="font-family: monospace; font-size: 13px"
+          />
+          <p v-if="testParamError" class="mt-1 text-xs text-red-500">
+            {{ testParamError }}
+          </p>
+        </div>
+
+        <!-- JSONPath 提示 -->
+        <div
+          v-if="testingTool?.responseJsonpath"
+          class="rounded-lg bg-slate-50 px-3 py-2 text-xs text-muted-foreground dark:bg-slate-800/50"
+        >
+          JSONPath 提取路径：
+          <code
+            class="rounded bg-slate-200 px-1.5 py-0.5 font-mono text-blue-500 dark:bg-slate-700"
+          >
+            {{ testingTool.responseJsonpath }}
+          </code>
+        </div>
+
+        <Button type="primary" :loading="testLoading" @click="runTest">
+          <template #icon>
+            <Icon
+              :icon="testLoading ? 'lucide:loader-circle' : 'lucide:play'"
+              :class="testLoading ? 'animate-spin' : ''"
+            />
+          </template>
+          执行调用
+        </Button>
+
+        <!-- 结果区 -->
+        <template v-if="testResult">
+          <!-- 状态行 -->
+          <div class="flex items-center gap-3">
+            <Tag :color="testResult.status === 'SUCCESS' ? 'success' : 'error'">
+              {{ testResult.status }}
+            </Tag>
+            <Tag v-if="testResult.httpStatus" color="default">
+              HTTP {{ testResult.httpStatus }}
+            </Tag>
+            <span class="text-xs text-muted-foreground">
+              {{ testResult.durationMs }} ms
+            </span>
+          </div>
+
+          <!-- 错误信息 -->
+          <div
+            v-if="testResult.errorMsg"
+            class="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400"
+          >
+            {{ testResult.errorMsg }}
+          </div>
+
+          <!-- JSONPath 提取结果（树形预览） -->
+          <div
+            v-if="testResult.extractedResult && testingTool?.responseJsonpath"
+          >
+            <div class="mb-1 text-sm font-medium text-blue-600">
+              JSONPath 提取结果
+              <code class="ml-1 text-xs text-muted-foreground">
+                {{ testingTool.responseJsonpath }}
+              </code>
+            </div>
+            <div
+              class="max-h-[240px] overflow-y-auto rounded-lg border border-blue-200 bg-blue-50/50 p-3 dark:border-blue-800 dark:bg-blue-900/10"
+            >
+              <JsonViewer
+                :value="testExtractedJson"
+                :expand-depth="3"
+                copyable
+              />
+            </div>
+          </div>
+
+          <!-- 原始响应（树形预览） -->
+          <div v-if="testResult.rawResponse">
+            <div class="mb-1 text-sm font-medium">原始响应</div>
+            <div
+              class="max-h-[280px] overflow-y-auto rounded-lg border bg-slate-50 p-3 dark:bg-slate-800/50"
+            >
+              <JsonViewer :value="testResultJson" :expand-depth="2" copyable />
+            </div>
+          </div>
+        </template>
+      </div>
+    </Modal>
+
+    <!-- 编辑 Drawer -->
     <Drawer
-      v-model:open="drawerVisible"
+      :open="drawerVisible"
       :title="editingTool ? '编辑工具' : '注册新工具'"
-      width="560"
+      :width="560"
+      @close="drawerVisible = false"
     >
       <Form layout="vertical">
         <FormItem label="工具码" required>
@@ -349,7 +919,6 @@ function confirmDelete(t: ToolDTO) {
         </FormItem>
         <FormItem label="参数 Schema">
           <div class="flex flex-col gap-2">
-            <!-- 模式切换 -->
             <div class="flex items-center gap-2">
               <Button
                 :type="paramMode === 'simple' ? 'primary' : 'default'"
@@ -366,8 +935,6 @@ function confirmDelete(t: ToolDTO) {
                 高级模式
               </Button>
             </div>
-
-            <!-- 简单模式：逐行编辑 -->
             <div v-show="paramMode === 'simple'" class="flex flex-col gap-2">
               <div
                 v-for="(p, idx) in paramList"
@@ -391,27 +958,30 @@ function confirmDelete(t: ToolDTO) {
                   placeholder="参数说明"
                   class="flex-1"
                 />
-                <Button type="link" danger size="small" @click="removeParam(idx)">删除</Button>
+                <Button
+                  type="link"
+                  danger
+                  size="small"
+                  @click="removeParam(idx)"
+                >
+                  删除
+                </Button>
               </div>
               <Button size="small" @click="addParam">+ 添加参数</Button>
             </div>
-
-            <!-- 高级模式：直接编辑 JSON Schema -->
             <div v-show="paramMode === 'advanced'" class="flex flex-col gap-1">
               <div class="flex items-center justify-between">
-                <span style="font-size: 12px; color: #999">直接编辑 JSON Schema，支持嵌套结构</span>
+                <span class="text-xs text-muted-foreground">
+                  直接编辑 JSON Schema，支持嵌套结构
+                </span>
                 <Button size="small" @click="formatParamSchema">格式化</Button>
               </div>
               <Textarea
                 v-model:value="paramSchemaRaw"
                 :rows="8"
-                placeholder='{&#10;  "order_id": { "type": "string", "description": "订单号" },&#10;  "address": { "type": "object", "description": "地址信息" }&#10;}'
-                style="font-family: monospace; font-size: 12px; width: 100%"
+                style="width: 100%; font-family: monospace; font-size: 12px"
               />
-              <span
-                v-if="paramSchemaError"
-                style="font-size: 12px; color: #ff4d4f"
-              >
+              <span v-if="paramSchemaError" class="text-xs text-red-500">
                 {{ paramSchemaError }}
               </span>
             </div>
@@ -435,7 +1005,7 @@ function confirmDelete(t: ToolDTO) {
           <Textarea
             v-model:value="form.authConfig"
             :rows="2"
-            placeholder="{&quot;token_encrypted&quot;:&quot;your-token&quot;}"
+            placeholder="{ &quot;token_encrypted&quot;: &quot;your-token&quot; }"
           />
         </FormItem>
         <FormItem label="超时（毫秒）">
@@ -448,130 +1018,28 @@ function confirmDelete(t: ToolDTO) {
         </FormItem>
         <FormItem label="可作为发现工具">
           <Switch v-model:checked="form.isDiscoverTool" />
-          <span style="margin-left: 8px; font-size: 12px; color: #999">
+          <span class="ml-2 text-xs text-muted-foreground">
             启用后可用于槽位 DISCOVER 级候选项发现
           </span>
         </FormItem>
       </Form>
       <template #footer>
-        <Button @click="drawerVisible = false">取消</Button>
-        <Button
-          v-if="editingTool?.id"
-          style="margin-left: 8px"
-          @click="() => { drawerVisible = false; openTestModal(editingTool!) }"
-        >
-          测试调用
-        </Button>
-        <Button
-          type="primary"
-          style="margin-left: 8px"
-          :loading="saving"
-          @click="save"
-        >
-          保存
-        </Button>
+        <div class="flex justify-end gap-2">
+          <Button @click="drawerVisible = false">取消</Button>
+          <Button
+            v-if="editingTool?.id"
+            @click="
+              () => {
+                drawerVisible = false;
+                openTestModal(editingTool!);
+              }
+            "
+          >
+            测试调用
+          </Button>
+          <Button type="primary" :loading="saving" @click="save">保存</Button>
+        </div>
       </template>
     </Drawer>
-
-    <!-- 测试调用 Modal -->
-    <Modal
-      v-model:open="testModalVisible"
-      :title="`测试调用 — ${testingTool?.name ?? ''}`"
-      :footer="null"
-      width="720"
-      :body-style="{ padding: '20px 24px' }"
-    >
-      <div class="flex flex-col gap-4">
-        <!-- 参数输入 -->
-        <div>
-          <div class="mb-1 flex items-center justify-between">
-            <span class="text-sm font-medium">请求参数 (JSON)</span>
-            <span style="font-size: 12px; color: #999">key 为参数名，value 为参数值</span>
-          </div>
-          <Textarea
-            v-model:value="testParamsJson"
-            :rows="5"
-            placeholder="{}"
-            style="font-family: monospace; font-size: 13px"
-          />
-          <p v-if="testParamError" style="color: #ff4d4f; font-size: 12px; margin-top: 4px">
-            {{ testParamError }}
-          </p>
-        </div>
-
-        <!-- JSONPath 提示 -->
-        <div
-          v-if="testingTool?.responseJsonpath"
-          style="padding: 8px 12px; background: #f6f8fa; border-radius: 6px; font-size: 12px; color: #666"
-        >
-          当前配置的 JSONPath 提取路径：
-          <code style="background:#e8eaed; padding: 1px 6px; border-radius: 3px; color: #1677ff">
-            {{ testingTool.responseJsonpath }}
-          </code>
-        </div>
-
-        <Button type="primary" :loading="testLoading" @click="runTest">
-          ▶ 执行调用
-        </Button>
-
-        <!-- 结果区 -->
-        <template v-if="testResult">
-          <!-- 状态行 -->
-          <div class="flex items-center gap-3">
-            <Tag :color="testResult.status === 'SUCCESS' ? 'success' : 'error'">
-              {{ testResult.status }}
-            </Tag>
-            <Tag v-if="testResult.httpStatus" color="default">
-              HTTP {{ testResult.httpStatus }}
-            </Tag>
-            <span style="font-size: 12px; color: #999">{{ testResult.durationMs }} ms</span>
-          </div>
-
-          <!-- 错误信息 -->
-          <div
-            v-if="testResult.errorMsg"
-            style="padding: 10px 12px; background: #fff2f0; border: 1px solid #ffccc7; border-radius: 6px; font-size: 13px; color: #cf1322"
-          >
-            {{ testResult.errorMsg }}
-          </div>
-
-          <!-- JSONPath 提取结果 -->
-          <div v-if="testResult.extractedResult && testingTool?.responseJsonpath">
-            <div class="mb-1 text-sm font-medium" style="color: #1677ff">
-              ✅ JSONPath 提取结果 <code style="font-size:11px;color:#666">{{ testingTool.responseJsonpath }}</code>
-            </div>
-            <div
-              style="
-                padding: 10px 12px;
-                background: #f0f7ff;
-                border: 1px solid #91caff;
-                border-radius: 6px;
-                max-height: 320px;
-                overflow-y: auto;
-              "
-            >
-              <JsonViewer :value="testExtractedJson" :expand-depth="3" copyable />
-            </div>
-          </div>
-
-          <!-- 原始响应 -->
-          <div v-if="testResult.rawResponse">
-            <div class="mb-1 text-sm font-medium">原始响应</div>
-            <div
-              style="
-                padding: 10px 12px;
-                background: #fafafa;
-                border: 1px solid #f0f0f0;
-                border-radius: 6px;
-                max-height: 360px;
-                overflow-y: auto;
-              "
-            >
-              <JsonViewer :value="testResultJson" :expand-depth="2" copyable />
-            </div>
-          </div>
-        </template>
-      </div>
-    </Modal>
-  </div>
+  </Page>
 </template>

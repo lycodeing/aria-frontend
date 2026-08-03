@@ -5,26 +5,30 @@ import type {
   TimeRange,
 } from '#/api/business-hours';
 
-import { onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
 import {
+  Badge,
   Button,
+  DatePicker,
   Form,
   FormItem,
   Input,
   message,
   Modal,
+  RadioButton,
+  RadioGroup,
   Select,
   SelectOption,
   Space,
+  Spin,
   Switch,
   Table,
   TabPane,
   Tabs,
   Tag,
-  Textarea,
 } from 'ant-design-vue';
 
 import {
@@ -40,6 +44,13 @@ import {
 } from '#/api/business-hours';
 
 const DAY_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+const HOUR_MARKS = [0, 6, 12, 18, 24];
+
+// 时间字符串转小时数（"09:30" -> 9.5）
+function timeToHours(time: string): number {
+  const [h, m] = time.split(':').map(Number);
+  return (h || 0) + (m || 0) / 60;
+}
 
 // ===== tab =====
 const activeTab = ref('schedule');
@@ -48,6 +59,8 @@ const activeTab = ref('schedule');
 const scheduleList = ref<ScheduleItem[]>([]);
 const scheduleLoading = ref(false);
 const scheduleSaving = ref(false);
+// 排班视图模式：grid 网格视图 / table 表格视图
+const scheduleViewMode = ref<'grid' | 'table'>('grid');
 
 // Edit-schedule modal
 const scheduleModalOpen = ref(false);
@@ -104,6 +117,32 @@ const scheduleColumns = [
   { title: '服务时段', key: 'timeRanges' },
   { title: '操作', key: 'action', width: 100 },
 ];
+
+// ===== 营业状态 =====
+// 定时刷新当前时间，保证 computed 能响应
+const now = ref(new Date());
+let nowTimer: number | undefined;
+
+const currentTimeStr = computed(() => {
+  const n = now.value;
+  const pad = (x: number) => String(x).padStart(2, '0');
+  return `${pad(n.getHours())}:${pad(n.getMinutes())}`;
+});
+
+// 营业状态：根据当前时间与今日排班计算
+const businessStatus = computed(() => {
+  const n = now.value;
+  const dayOfWeek = n.getDay() === 0 ? 7 : n.getDay();
+  const today = scheduleList.value.find((s) => s.dayOfWeek === dayOfWeek);
+  if (!today || !today.isOpen) return { open: false, timeRanges: [] };
+  const currentHours = n.getHours() + n.getMinutes() / 60;
+  const inRange = today.timeRanges.some((r) => {
+    const start = timeToHours(r.start);
+    const end = timeToHours(r.end);
+    return currentHours >= start && currentHours <= end;
+  });
+  return { open: inRange, timeRanges: today.timeRanges };
+});
 
 // ===== 节假日 =====
 const holidayList = ref<HolidayItem[]>([]);
@@ -226,6 +265,9 @@ const holidayColumns = [
 const offlineMsg = ref('');
 const offlineLoading = ref(false);
 const offlineSaving = ref(false);
+// Textarea 组件 ref，用于操作光标位置
+const offlineTextareaRef = ref<HTMLTextAreaElement | null>(null);
+const offlineVariables = ['{nextOpenTime}', '{visitorName}'];
 
 async function loadOfflineReply() {
   offlineLoading.value = true;
@@ -250,18 +292,92 @@ async function saveOfflineReply() {
   }
 }
 
+// 将变量文本插入到 textarea 光标位置（无光标时追加到末尾）
+// 注：这里使用原生 <textarea>（而非 ant-design-vue 的 Textarea），
+// 避免依赖库内部的 resizableTextArea.textArea 私有结构，升级更安全。
+function insertVariable(variable: string) {
+  const textarea = offlineTextareaRef.value;
+  const msg = offlineMsg.value || '';
+  if (!textarea) {
+    offlineMsg.value = msg + variable;
+    return;
+  }
+  const start = textarea.selectionStart ?? msg.length;
+  const end = textarea.selectionEnd ?? msg.length;
+  offlineMsg.value = msg.slice(0, start) + variable + msg.slice(end);
+  nextTick(() => {
+    const newPos = start + variable.length;
+    textarea.focus();
+    textarea.setSelectionRange(newPos, newPos);
+  });
+}
+
 onMounted(() => {
   loadSchedule();
   loadHolidays();
   loadOfflineReply();
+  // 每 30 秒刷新当前时间，驱动营业状态横幅更新
+  nowTimer = window.setInterval(() => {
+    now.value = new Date();
+  }, 30_000);
+});
+
+onUnmounted(() => {
+  if (nowTimer) window.clearInterval(nowTimer);
 });
 </script>
 
 <template>
   <Page>
+    <!-- 营业状态横幅 -->
+    <div
+      class="mb-4 overflow-hidden rounded-lg p-4 text-white shadow-sm"
+      :class="
+        businessStatus.open
+          ? 'bg-gradient-to-r from-green-500 to-emerald-600'
+          : 'bg-gradient-to-r from-orange-500 to-red-500'
+      "
+    >
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="flex items-center gap-2 text-lg font-semibold">
+            <span
+              class="inline-block h-2.5 w-2.5 rounded-full bg-white"
+              :class="businessStatus.open ? 'animate-pulse' : ''"
+            ></span>
+            {{ businessStatus.open ? '营业中' : '非营业时间' }}
+          </div>
+          <div class="mt-1 text-sm opacity-90">
+            当前时间 {{ currentTimeStr }}
+          </div>
+        </div>
+        <div class="text-right">
+          <div class="text-sm opacity-90">今日服务时段</div>
+          <div class="mt-1 text-sm">
+            <span v-if="businessStatus.timeRanges.length === 0">—</span>
+            <span v-else>
+              {{
+                businessStatus.timeRanges
+                  .map((r) => `${r.start}-${r.end}`)
+                  .join(' / ')
+              }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <Tabs v-model:active-key="activeTab">
       <TabPane key="schedule" tab="每周排班">
-        <div style="margin-bottom: 12px; text-align: right">
+        <div class="mb-3 flex items-center justify-between" style="gap: 8px">
+          <RadioGroup
+            v-model:value="scheduleViewMode"
+            button-style="solid"
+            size="small"
+          >
+            <RadioButton value="grid">网格视图</RadioButton>
+            <RadioButton value="table">表格视图</RadioButton>
+          </RadioGroup>
           <Button
             type="primary"
             :loading="scheduleSaving"
@@ -270,7 +386,105 @@ onMounted(() => {
             保存排班
           </Button>
         </div>
+
+        <!-- 网格视图 -->
+        <Spin v-if="scheduleViewMode === 'grid'" :spinning="scheduleLoading">
+          <div class="overflow-hidden rounded border border-gray-200 bg-white">
+            <!-- 顶部小时刻度 -->
+            <div class="flex border-b border-gray-200 bg-gray-50">
+              <div class="w-32 shrink-0 border-r border-gray-200 p-2"></div>
+              <div class="relative h-7 flex-1">
+                <span
+                  v-for="h in HOUR_MARKS"
+                  :key="h"
+                  class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-xs text-gray-500"
+                  :style="{ left: `${(h / 24) * 100}%` }"
+                >
+                  {{ String(h).padStart(2, '0') }}:00
+                </span>
+              </div>
+              <div class="w-24 shrink-0 border-l border-gray-200"></div>
+            </div>
+
+            <!-- 每日时间轴 -->
+            <div
+              v-for="item in scheduleList"
+              :key="item.dayOfWeek"
+              class="flex border-b border-gray-200 last:border-b-0"
+            >
+              <!-- 星期 + 开关 -->
+              <div
+                class="flex w-32 shrink-0 flex-col items-center justify-center gap-1 border-r border-gray-200 p-2"
+              >
+                <span class="text-sm font-medium">{{
+                  DAY_NAMES[(item as ScheduleItem).dayOfWeek - 1]
+                }}</span>
+                <Switch
+                  v-model:checked="(item as ScheduleItem).isOpen"
+                  size="small"
+                  checked-children="班"
+                  un-checked-children="休"
+                />
+              </div>
+              <!-- 时间网格 -->
+              <div class="relative h-12 flex-1">
+                <!-- 小时网格线 -->
+                <div class="absolute inset-0 flex">
+                  <div
+                    v-for="h in 24"
+                    :key="h"
+                    class="flex-1 border-r border-gray-100 last:border-r-0"
+                  ></div>
+                </div>
+                <!-- 上班日：绿色时段条 -->
+                <template v-if="(item as ScheduleItem).isOpen">
+                  <div
+                    v-for="(r, i) in (item as ScheduleItem).timeRanges"
+                    :key="i"
+                    class="absolute top-1 bottom-1 flex items-center justify-center overflow-hidden rounded bg-green-500/85 text-xs text-white whitespace-nowrap"
+                    :style="{
+                      left: `${(timeToHours(r.start) / 24) * 100}%`,
+                      width: `${
+                        ((timeToHours(r.end) - timeToHours(r.start)) / 24) * 100
+                      }%`,
+                    }"
+                  >
+                    {{ r.start }}-{{ r.end }}
+                  </div>
+                  <div
+                    v-if="(item as ScheduleItem).timeRanges.length === 0"
+                    class="absolute inset-1 flex items-center justify-center rounded bg-green-100 text-xs text-green-700"
+                  >
+                    全天
+                  </div>
+                </template>
+                <!-- 休息日：红色背景 -->
+                <template v-else>
+                  <div
+                    class="absolute inset-1 flex items-center justify-center rounded bg-red-100 text-xs text-red-600"
+                  >
+                    休息
+                  </div>
+                </template>
+              </div>
+              <!-- 操作 -->
+              <div
+                class="flex w-24 shrink-0 items-center justify-center border-l border-gray-200 p-2"
+              >
+                <Button
+                  size="small"
+                  @click="openScheduleEdit(item as ScheduleItem)"
+                >
+                  编辑时段
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Spin>
+
+        <!-- 表格视图 -->
         <Table
+          v-else
           :columns="scheduleColumns"
           :data-source="scheduleList"
           :loading="scheduleLoading"
@@ -319,7 +533,16 @@ onMounted(() => {
           </template>
         </Table>
       </TabPane>
-      <TabPane key="holidays" tab="节假日管理">
+      <TabPane key="holidays">
+        <template #tab>
+          <span>节假日管理</span>
+          <Badge
+            :count="holidayList.length"
+            :overflow-count="99"
+            :offset="[8, -10]"
+            :number-style="{ backgroundColor: '#52c41a' }"
+          />
+        </template>
         <div
           style="
             display: flex;
@@ -392,12 +615,26 @@ onMounted(() => {
         <div style="max-width: 600px; padding: 16px 0">
           <Form layout="vertical">
             <FormItem label="离线自动回复内容" help="支持占位符 {nextOpenTime}">
-              <Textarea
-                v-model:value="offlineMsg"
+              <!-- 变量选择器 -->
+              <div class="mb-2 flex items-center gap-2">
+                <span class="text-xs text-gray-500">插入变量:</span>
+                <Button
+                  v-for="v in offlineVariables"
+                  :key="v"
+                  size="small"
+                  @click="insertVariable(v)"
+                >
+                  {{ v }}
+                </Button>
+              </div>
+              <textarea
+                ref="offlineTextareaRef"
+                v-model="offlineMsg"
                 :rows="5"
                 :disabled="offlineLoading"
                 placeholder="请输入非工作时间自动回复内容，支持占位符 {nextOpenTime}"
-              />
+                class="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+              ></textarea>
             </FormItem>
             <FormItem>
               <Button
@@ -457,7 +694,13 @@ onMounted(() => {
     >
       <Form layout="vertical" style="margin-top: 16px">
         <FormItem label="日期" required>
-          <Input v-model:value="holidayForm.date" placeholder="2026-01-01" />
+          <DatePicker
+            v-model:value="holidayForm.date"
+            value-format="YYYY-MM-DD"
+            format="YYYY-MM-DD"
+            placeholder="选择日期"
+            style="width: 100%"
+          />
         </FormItem>
         <FormItem label="类型" required>
           <Select v-model:value="holidayForm.type" style="width: 100%">
