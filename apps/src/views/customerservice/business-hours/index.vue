@@ -12,6 +12,7 @@ import { Page } from '@vben/common-ui';
 import {
   Badge,
   Button,
+  DatePicker,
   Form,
   FormItem,
   Input,
@@ -28,7 +29,6 @@ import {
   TabPane,
   Tabs,
   Tag,
-  Textarea,
 } from 'ant-design-vue';
 
 import {
@@ -266,7 +266,7 @@ const offlineMsg = ref('');
 const offlineLoading = ref(false);
 const offlineSaving = ref(false);
 // Textarea 组件 ref，用于操作光标位置
-const offlineTextareaRef = ref<any>(null);
+const offlineTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const offlineVariables = ['{nextOpenTime}', '{visitorName}'];
 
 async function loadOfflineReply() {
@@ -292,11 +292,11 @@ async function saveOfflineReply() {
   }
 }
 
-// 将变量文本插入到 Textarea 光标位置（无光标时追加到末尾）
+// 将变量文本插入到 textarea 光标位置（无光标时追加到末尾）
+// 注：这里使用原生 <textarea>（而非 ant-design-vue 的 Textarea），
+// 避免依赖库内部的 resizableTextArea.textArea 私有结构，升级更安全。
 function insertVariable(variable: string) {
-  const inst = offlineTextareaRef.value as any;
-  const textarea: HTMLTextAreaElement | undefined =
-    inst?.resizableTextArea?.textArea ?? inst?.input ?? undefined;
+  const textarea = offlineTextareaRef.value;
   const msg = offlineMsg.value || '';
   if (!textarea) {
     offlineMsg.value = msg + variable;
@@ -627,13 +627,14 @@ onUnmounted(() => {
                   {{ v }}
                 </Button>
               </div>
-              <Textarea
+              <textarea
                 ref="offlineTextareaRef"
-                v-model:value="offlineMsg"
+                v-model="offlineMsg"
                 :rows="5"
                 :disabled="offlineLoading"
                 placeholder="请输入非工作时间自动回复内容，支持占位符 {nextOpenTime}"
-              />
+                class="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+              ></textarea>
             </FormItem>
             <FormItem>
               <Button
@@ -693,7 +694,13 @@ onUnmounted(() => {
     >
       <Form layout="vertical" style="margin-top: 16px">
         <FormItem label="日期" required>
-          <Input v-model:value="holidayForm.date" placeholder="2026-01-01" />
+          <DatePicker
+            v-model:value="holidayForm.date"
+            value-format="YYYY-MM-DD"
+            format="YYYY-MM-DD"
+            placeholder="选择日期"
+            style="width: 100%"
+          />
         </FormItem>
         <FormItem label="类型" required>
           <Select v-model:value="holidayForm.type" style="width: 100%">

@@ -362,10 +362,12 @@ async function testConnection(row: AiModelConfigItem) {
     const res = await testAiModelApi(row.id);
     testResult.value = res as unknown as AiModelTestResult;
   } catch (error: unknown) {
+    console.warn('[ai-model] test connection failed', error);
     const err = error as { response?: { data?: { msg?: string } } };
+    // 失败时延迟未知，用 undefined 表示；模板中据此隐藏延迟行，
+    // 避免"延迟：0 ms"这类误导。
     testResult.value = {
       success: false,
-      latencyMs: 0,
       message: err?.response?.data?.msg ?? '请求失败，请检查网络或服务状态',
     };
   } finally {
@@ -676,7 +678,10 @@ async function testConnection(row: AiModelConfigItem) {
             :description="testResult.message"
             show-icon
           />
-          <p class="mt-2 text-right text-xs text-muted-foreground">
+          <p
+            v-if="testResult.latencyMs !== undefined"
+            class="mt-2 text-right text-xs text-muted-foreground"
+          >
             延迟：{{ testResult.latencyMs }} ms
           </p>
         </div>

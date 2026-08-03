@@ -141,7 +141,8 @@ async function loadList() {
 }
 
 function expandAll() {
-  expandedRowKeys.value = collectIds(list.value);
+  // 展开当前可见（过滤后）节点，避免筛选态下"展开全部"无可见效果
+  expandedRowKeys.value = collectIds(filteredList.value);
 }
 
 function collapseAll() {

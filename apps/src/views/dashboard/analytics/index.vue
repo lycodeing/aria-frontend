@@ -126,11 +126,12 @@ const csatByAgent = ref<CsatByAgentItem[]>([]);
 let latestRequestId = 0;
 
 // ─── sparkline 微趋势数据（从月度趋势提取，供 KPI 卡片底部展示） ────────────────
+// 使用 num() 兜底，避免 API 缺字段时算出 NaN 让柱形高度塌陷。
 const conversationSparkline = computed(() =>
-  conversationTrends.value.map((i) => i.humanCount + i.aiCount),
+  conversationTrends.value.map((i) => num(i.humanCount) + num(i.aiCount)),
 );
 const messageSparkline = computed(() =>
-  messageTrends.value.map((i) => i.humanCount + i.aiCount),
+  messageTrends.value.map((i) => num(i.humanCount) + num(i.aiCount)),
 );
 
 // ─── SLA 违规率格式化 ──────────────────────────────────────────────────────────
@@ -158,11 +159,11 @@ async function fetchTrendData(range: TimeRange) {
     messageTrends.value = msgTrends;
     efficiencyTrends.value = effTrends;
     overviewData.value = overview;
-    overviewData.value = overview;
     // CSAT 趋势随同一时间范围刷新
     csatTrend.value = await getCsatTrendApi(range);
-  } catch {
+  } catch (error) {
     if (id !== latestRequestId) return;
+    console.warn('[analytics] fetchTrendData failed', error);
     message.error('数据加载失败，请重试');
     conversationTrends.value = [];
     messageTrends.value = [];
@@ -189,7 +190,8 @@ onMounted(async () => {
   // 复杂度分布：独立加载，失败不影响其他快照（卡片回退占位数据）
   try {
     complexityData.value = await getComplexityDistributionApi();
-  } catch {
+  } catch (error) {
+    console.warn('[analytics] complexity distribution failed', error);
     complexityData.value = [];
   }
 
@@ -201,7 +203,8 @@ onMounted(async () => {
     ]);
     csatDistribution.value = distribution;
     csatByAgent.value = byAgent;
-  } catch {
+  } catch (error) {
+    console.warn('[analytics] csat snapshots failed', error);
     /* 保留默认值，卡片显示空态 */
   }
 
@@ -358,7 +361,11 @@ onMounted(async () => {
       </template>
       <template #visits>
         <AnalyticsVisits
-          :counts="messageTrends.map((item) => item.aiCount + item.humanCount)"
+          :counts="
+            messageTrends.map(
+              (item) => num(item.aiCount) + num(item.humanCount),
+            )
+          "
           :months="messageTrends.map((item) => item.month)"
         />
       </template>

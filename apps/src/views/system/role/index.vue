@@ -31,6 +31,22 @@ interface RoleVO {
   status: string;
 }
 
+// 菜单树节点（后端返回或本地映射后）
+interface MenuTreeNode {
+  key: number;
+  title: string;
+  menuType: string;
+  children?: MenuTreeNode[];
+}
+
+// 后端菜单原始形态（嵌套）
+interface ApiMenuNode {
+  id: number;
+  menuName: string;
+  menuType: string;
+  children?: ApiMenuNode[];
+}
+
 const roles = ref<RoleVO[]>([]);
 const loading = ref(false);
 const keyword = ref('');
@@ -43,6 +59,17 @@ const stats = computed(() => {
   return { total, active, inactive };
 });
 
+/** 从后端错误对象提取可读文案 */
+function pickErrMsg(err: unknown, fallback: string): string {
+  const anyErr = err as any;
+  return (
+    anyErr?.response?.data?.msg ??
+    anyErr?.response?.data?.message ??
+    anyErr?.message ??
+    fallback
+  );
+}
+
 async function loadRoles() {
   loading.value = true;
   try {
@@ -50,31 +77,10 @@ async function loadRoles() {
       params: { keyword: keyword.value || undefined, size: 50 },
     });
     roles.value = res.items ?? [];
-  } catch {
-    // 演示数据
-    roles.value = [
-      {
-        id: 10,
-        roleKey: 'super_admin',
-        roleName: '超级管理员',
-        isSystem: true,
-        status: 'active',
-      },
-      {
-        id: 11,
-        roleKey: 'kf_manager',
-        roleName: '客服管理员',
-        isSystem: false,
-        status: 'active',
-      },
-      {
-        id: 12,
-        roleKey: 'kf_staff',
-        roleName: '普通客服',
-        isSystem: false,
-        status: 'active',
-      },
-    ];
+  } catch (error) {
+    console.warn('[role] loadRoles failed', error);
+    roles.value = [];
+    message.error(pickErrMsg(error, '角色列表加载失败'));
   } finally {
     loading.value = false;
   }
@@ -103,14 +109,17 @@ function openCreate() {
 async function submitCreate() {
   try {
     await createRef.value?.validate();
-    await authClient
-      .post('/roles', { ...createForm.value, isSystem: false })
-      .catch(() => null);
+  } catch {
+    return; // 校验失败
+  }
+  try {
+    await authClient.post('/roles', { ...createForm.value, isSystem: false });
     message.success(`角色 ${createForm.value.roleName} 创建成功`);
     createVisible.value = false;
     loadRoles();
-  } catch {
-    /* 校验失败 */
+  } catch (error) {
+    console.warn('[role] create failed', error);
+    message.error(pickErrMsg(error, '角色创建失败'));
   }
 }
 
@@ -129,31 +138,42 @@ function openEditRole(role: RoleVO) {
 async function submitEdit() {
   try {
     await editRef.value?.validate();
-    if (!editingRole.value) return;
+  } catch {
+    return;
+  }
+  if (!editingRole.value) return;
+  try {
     await authClient.put(`/roles/${editingRole.value.id}`, editForm.value);
     message.success(`角色 ${editForm.value.roleName} 已更新`);
     editVisible.value = false;
     loadRoles();
-  } catch {
-    /* 校验或接口失败 */
+  } catch (error) {
+    console.warn('[role] update failed', error);
+    message.error(pickErrMsg(error, '角色更新失败'));
   }
 }
 
 async function toggleRoleStatus(role: RoleVO, checked: boolean) {
   const newStatus = checked ? 'active' : 'inactive';
-  await authClient
-    .put(`/roles/${role.id}`, { roleName: role.roleName, status: newStatus })
-    .catch(() => null);
-  role.status = newStatus;
-  message.success(
-    `角色 ${role.roleName} 已${newStatus === 'active' ? '启用' : '停用'}`,
-  );
+  try {
+    await authClient.put(`/roles/${role.id}`, {
+      roleName: role.roleName,
+      status: newStatus,
+    });
+    role.status = newStatus;
+    message.success(
+      `角色 ${role.roleName} 已${newStatus === 'active' ? '启用' : '停用'}`,
+    );
+  } catch (error) {
+    console.warn('[role] toggle status failed', error);
+    message.error(pickErrMsg(error, '状态切换失败'));
+  }
 }
 
 // ===== 分配菜单抽屉 =====
 const menuDrawerVisible = ref(false);
 const currentRole = ref<null | RoleVO>(null);
-const menuTree = ref<any[]>([]);
+const menuTree = ref<MenuTreeNode[]>([]);
 const checkedMenuIds = ref<number[]>([]);
 const menuLoading = ref(false);
 
@@ -167,14 +187,15 @@ async function openMenuDrawer(role: RoleVO) {
       authClient.get(`/roles/${role.id}/menus`),
     ]);
     menuTree.value = mapApiTree(allMenus ?? []);
-    if (menuTree.value.length === 0) {
-      menuTree.value = buildTree(demoMenus, 0);
-    }
-    checkedMenuIds.value = roleMenuIds ?? [];
-  } catch {
-    menuTree.value = buildTree(demoMenus, 0);
-    checkedMenuIds.value =
-      role.id === 10 ? demoMenus.map((m: any) => m.id) : [100, 101];
+    // 后端可能返回 {menuIds:[...]} 或裸数组两种形态，统一归一化，
+    // 避免对象被当成空数组导致抽屉内全部未勾选、误存清空菜单权限。
+    const raw = Array.isArray(roleMenuIds) ? roleMenuIds : roleMenuIds?.menuIds;
+    checkedMenuIds.value = Array.isArray(raw) ? raw : [];
+  } catch (error) {
+    console.warn('[role] load menu tree failed', error);
+    menuTree.value = [];
+    checkedMenuIds.value = [];
+    message.error(pickErrMsg(error, '菜单权限加载失败'));
   } finally {
     menuLoading.value = false;
   }
@@ -182,13 +203,17 @@ async function openMenuDrawer(role: RoleVO) {
 
 async function saveMenus() {
   if (!currentRole.value) return;
-  await authClient
-    .put(`/roles/${currentRole.value.id}/menus`, {
+  const role = currentRole.value;
+  try {
+    await authClient.put(`/roles/${role.id}/menus`, {
       menuIds: checkedMenuIds.value,
-    })
-    .catch(() => null);
-  message.success(`${currentRole.value.roleName} 菜单权限已保存`);
-  menuDrawerVisible.value = false;
+    });
+    message.success(`${role.roleName} 菜单权限已保存`);
+    menuDrawerVisible.value = false;
+  } catch (error) {
+    console.warn('[role] save menus failed', error);
+    message.error(pickErrMsg(error, '菜单权限保存失败'));
+  }
 }
 
 // ===== 删除角色 =====
@@ -201,26 +226,17 @@ function deleteRole(role: RoleVO) {
     title: `确认删除角色 ${role.roleName}？`,
     okType: 'danger',
     onOk: async () => {
-      await authClient.delete(`/roles/${role.id}`).catch(() => null);
-      message.success('角色已删除');
-      loadRoles();
+      try {
+        await authClient.delete(`/roles/${role.id}`);
+        message.success('角色已删除');
+        loadRoles();
+      } catch (error) {
+        console.warn('[role] delete failed', error);
+        message.error(pickErrMsg(error, '角色删除失败'));
+      }
     },
   });
 }
-
-// ===== 菜单树构建 =====
-const demoMenus = [
-  { id: 100, parentId: 0, menuName: '智能客服', menuType: 'DIRECTORY' },
-  { id: 101, parentId: 100, menuName: '对话', menuType: 'MENU' },
-  { id: 102, parentId: 100, menuName: '知识库', menuType: 'MENU' },
-  { id: 103, parentId: 100, menuName: '座席工作台', menuType: 'MENU' },
-  { id: 110, parentId: 102, menuName: '上传文档', menuType: 'BUTTON' },
-  { id: 111, parentId: 102, menuName: '审核文档', menuType: 'BUTTON' },
-  { id: 112, parentId: 102, menuName: '下线文档', menuType: 'BUTTON' },
-  { id: 200, parentId: 0, menuName: '系统管理', menuType: 'DIRECTORY' },
-  { id: 201, parentId: 200, menuName: '用户管理', menuType: 'MENU' },
-  { id: 202, parentId: 200, menuName: '角色管理', menuType: 'MENU' },
-];
 
 // 菜单类型 -> 标签文字 + 颜色
 const MENU_TYPE_META: Record<string, { color: string; label: string }> = {
@@ -230,7 +246,7 @@ const MENU_TYPE_META: Record<string, { color: string; label: string }> = {
 };
 
 /** 将后端已嵌套的菜单树映射为 Ant Design Tree 格式 */
-function mapApiTree(nodes: any[]): any[] {
+function mapApiTree(nodes: ApiMenuNode[]): MenuTreeNode[] {
   if (!nodes) return [];
   return nodes.map((m) => {
     const children =
@@ -242,25 +258,6 @@ function mapApiTree(nodes: any[]): any[] {
       children,
     };
   });
-}
-
-/** 从扁平数组构建 Ant Design Tree（demoMenus 回退用） */
-function buildTree(menus: any[], parentId: number): any[] {
-  return menus
-    .filter((m) => m.parentId === parentId)
-    .map((m) => {
-      const children = buildTree(menus, m.id);
-      return {
-        title: m.menuName,
-        key: m.id,
-        menuType: m.menuType,
-        children: children.length > 0 ? children : undefined,
-      };
-    });
-}
-
-function onTreeCheck(_: any, { checkedNodes }: any) {
-  checkedMenuIds.value = checkedNodes.map((n: any) => n.key);
 }
 </script>
 
@@ -466,11 +463,10 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
       </div>
       <Tree
         v-else
+        v-model:checked-keys="checkedMenuIds"
         :tree-data="menuTree"
         checkable
         default-expand-all
-        :checked-keys="checkedMenuIds"
-        @check="onTreeCheck"
       >
         <template #title="{ title, menuType }">
           <span class="inline-flex items-center gap-1.5">
@@ -494,7 +490,9 @@ function onTreeCheck(_: any, { checkedNodes }: any) {
       <template #footer>
         <div class="flex gap-3 justify-end">
           <Button @click="menuDrawerVisible = false">取消</Button>
-          <Button type="primary" @click="saveMenus">保存权限</Button>
+          <Button type="primary" :disabled="menuLoading" @click="saveMenus">
+            保存权限
+          </Button>
         </div>
       </template>
     </Drawer>

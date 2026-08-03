@@ -39,6 +39,17 @@ const keyword = ref('');
 const currentPage = ref(1);
 const PAGE_SIZE = 10;
 
+/** 从后端错误对象提取可读文案 */
+function pickErrMsg(err: unknown, fallback: string): string {
+  const anyErr = err as any;
+  return (
+    anyErr?.response?.data?.msg ??
+    anyErr?.response?.data?.message ??
+    anyErr?.message ??
+    fallback
+  );
+}
+
 async function loadUsers() {
   loading.value = true;
   try {
@@ -50,47 +61,24 @@ async function loadUsers() {
       },
     });
     users.value = res.items ?? [];
-    // 后端可能返回 total=0 或不返回 total，兜底用当前条数
+    // 优先使用服务端返回的 total；不返回时降级为当前页条数（分页 UI 会退化为单页）
     const resTotal = Number(res.total);
-    total.value = resTotal > 0 ? resTotal : users.value.length;
-  } catch {
-    // 后端未启动时展示演示数据
-    users.value = [
-      {
-        id: 1001,
-        username: 'superadmin',
-        displayName: '超级管理员',
-        email: 'superadmin@test.com',
-        phone: '',
-        status: 'active',
-        provider: 'LOCAL',
-        lastLoginAt: '',
-      },
-      {
-        id: 1002,
-        username: 'kfmanager',
-        displayName: '客服管理员',
-        email: 'kfmanager@test.com',
-        phone: '',
-        status: 'active',
-        provider: 'LOCAL',
-        lastLoginAt: '',
-      },
-      {
-        id: 1003,
-        username: 'kfstaff',
-        displayName: '普通客服',
-        email: 'kfstaff@test.com',
-        phone: '',
-        status: 'active',
-        provider: 'LOCAL',
-        lastLoginAt: '',
-      },
-    ];
-    total.value = users.value.length;
+    total.value =
+      Number.isFinite(resTotal) && resTotal > 0 ? resTotal : users.value.length;
+  } catch (error) {
+    console.warn('[user] loadUsers failed', error);
+    users.value = [];
+    total.value = 0;
+    message.error(pickErrMsg(error, '用户列表加载失败'));
   } finally {
     loading.value = false;
   }
+}
+
+/** 分页切换：命名 handler 便于在模板中调用，避免在模板表达式里给 ref 重新赋值 */
+function onPageChange(page: number) {
+  currentPage.value = page;
+  loadUsers();
 }
 
 onMounted(loadUsers);
@@ -143,7 +131,7 @@ const AVATAR_COLORS = [
   '#8b5cf6',
   '#ec4899',
   '#06b6d4',
-];
+] as const;
 function avatarColor(name: string): string {
   const code = name.codePointAt(0) || 0;
   return (
@@ -217,6 +205,10 @@ function openEdit(user: UserVO) {
 async function submitForm() {
   try {
     await formRef.value?.validate();
+  } catch {
+    return; // 表单校验失败
+  }
+  try {
     if (isEdit.value && editingId.value) {
       const { password: _pwd, ...updatePayload } = form.value;
       await authClient.put(`/users/${editingId.value}`, updatePayload);
@@ -227,32 +219,78 @@ async function submitForm() {
     }
     modalVisible.value = false;
     loadUsers();
-  } catch {
-    /* 表单校验或接口失败 */
+  } catch (error) {
+    console.warn('[user] submit failed', error);
+    message.error(pickErrMsg(error, '保存失败'));
   }
 }
 
 // ===== 用户操作 =====
 async function toggleStatus(user: UserVO) {
-  const action = user.status === 'active' ? 'disable' : 'enable';
-  await authClient.post(`/users/${user.id}/${action}`).catch(() => null);
-  user.status = user.status === 'active' ? 'disabled' : 'active';
-  message.success(
-    `用户 ${user.username} 已${action === 'disable' ? '禁用' : '启用'}`,
-  );
+  const willDisable = user.status === 'active';
+  const action = willDisable ? 'disable' : 'enable';
+  try {
+    await authClient.post(`/users/${user.id}/${action}`);
+    user.status = willDisable ? 'disabled' : 'active';
+    message.success(`用户 ${user.username} 已${willDisable ? '禁用' : '启用'}`);
+  } catch (error) {
+    console.warn('[user] toggle status failed', error);
+    message.error(pickErrMsg(error, '状态切换失败'));
+  }
+}
+
+/**
+ * 生成一个符合复杂度要求的随机初始密码：≥ 8 位，含大写/小写/数字/特殊字符。
+ * 客户端生成 + 后端校验；后端如返回自身生成的密码，前端应改为回显后端值。
+ */
+function genTempPassword(): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digit = '23456789';
+  const special = '!@#$%^&*';
+  const all = upper + lower + digit + special;
+  const pick = (pool: string): string =>
+    pool.charAt(Math.floor(Math.random() * pool.length));
+  // 保证大小写/数字/特殊字符各至少 1 个，再补足到 10 位
+  const parts: string[] = [
+    pick(upper),
+    pick(lower),
+    pick(digit),
+    pick(special),
+  ];
+  for (let i = 0; i < 6; i++) parts.push(pick(all));
+  // Fisher–Yates 洗牌，避免固定位置泄露字符类型
+  for (let i = parts.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = parts[i] ?? '';
+    parts[i] = parts[j] ?? tmp;
+    parts[j] = tmp;
+  }
+  return parts.join('');
 }
 
 function resetPwd(user: UserVO) {
+  const tempPwd = genTempPassword();
   Modal.confirm({
     title: `重置 ${user.username} 的密码`,
-    content: '重置后密码为 Test@123456，请告知用户及时修改。',
+    content: `重置后新密码为 ${tempPwd}，请复制并告知用户及时修改。`,
     onOk: async () => {
-      await authClient
-        .post(`/users/${user.id}/reset-password`, {
-          newPassword: 'Test@123456',
-        })
-        .catch(() => null);
-      message.success('密码已重置为 Test@123456');
+      try {
+        const res: any = await authClient.post(
+          `/users/${user.id}/reset-password`,
+          {
+            newPassword: tempPwd,
+          },
+        );
+        // 若后端返回自己生成的密码，以回显为准，避免提示的密码与后端实际设置不一致
+        const echoed: unknown = res?.password ?? res?.newPassword;
+        const finalPwd =
+          typeof echoed === 'string' && echoed.length > 0 ? echoed : tempPwd;
+        message.success(`新密码：${finalPwd}`);
+      } catch (error) {
+        console.warn('[user] reset password failed', error);
+        message.error(pickErrMsg(error, '密码重置失败'));
+      }
     },
   });
 }
@@ -262,9 +300,14 @@ function deleteUser(user: UserVO) {
     title: `确认删除用户 ${user.username}？`,
     okType: 'danger',
     onOk: async () => {
-      await authClient.delete(`/users/${user.id}`).catch(() => null);
-      message.success('用户已删除');
-      loadUsers();
+      try {
+        await authClient.delete(`/users/${user.id}`);
+        message.success('用户已删除');
+        loadUsers();
+      } catch (error) {
+        console.warn('[user] delete failed', error);
+        message.error(pickErrMsg(error, '用户删除失败'));
+      }
     },
   });
 }
@@ -325,10 +368,7 @@ function deleteUser(user: UserVO) {
         pageSize: PAGE_SIZE,
         current: currentPage,
         showTotal: (t: number) => `共 ${t} 条`,
-        onChange: (p: number) => {
-          currentPage = p;
-          loadUsers();
-        },
+        onChange: onPageChange,
       }"
     >
       <template #bodyCell="{ column, record }">
@@ -436,7 +476,7 @@ function deleteUser(user: UserVO) {
         >
           <Input
             v-model:value="form.username"
-            placeholder="登录账号（英文，3~50 位）"
+            placeholder="登录账号（英文,3~50 位）"
             :disabled="isEdit"
           />
         </FormItem>
@@ -469,13 +509,13 @@ function deleteUser(user: UserVO) {
             {
               pattern:
                 /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':\\|,.<>/?]).{8,}$/,
-              message: '至少8位，须含大写字母、数字和特殊字符',
+              message: '至少8位,须含大写字母、数字和特殊字符',
             },
           ]"
         >
           <Input.Password
             v-model:value="form.password"
-            placeholder="至少8位，须含大写字母、数字和特殊字符"
+            placeholder="至少8位,须含大写字母、数字和特殊字符"
           />
         </FormItem>
       </Form>

@@ -141,18 +141,42 @@ const testExtractedJson = computed(() => {
   }
 });
 
+/** 按 JSON Schema 声明的 type 返回一个合理的初始值，避免把 "" 硬塞进 number/boolean 字段导致服务端校验失败 */
+function defaultForType(type: unknown): unknown {
+  switch (type) {
+    case 'array': {
+      return [];
+    }
+    case 'boolean': {
+      return false;
+    }
+    case 'integer':
+    case 'number': {
+      return 0;
+    }
+    case 'object': {
+      return {};
+    }
+    // string 与未知 type 兜底为空字符串
+    default: {
+      return '';
+    }
+  }
+}
+
 function openTestModal(t: ToolDTO) {
   testingTool.value = t;
   testResult.value = null;
   testParamError.value = '';
   try {
-    const schema = JSON.parse(t.paramSchema || '{}');
-    const initParams: Record<string, string> = {};
-    for (const key of Object.keys(schema)) {
-      initParams[key] = '';
+    const schema = JSON.parse(t.paramSchema || '{}') as Record<string, any>;
+    const initParams: Record<string, unknown> = {};
+    for (const [key, spec] of Object.entries(schema)) {
+      initParams[key] = defaultForType(spec?.type);
     }
     testParamsJson.value = JSON.stringify(initParams, null, 2);
-  } catch {
+  } catch (error) {
+    console.warn('[dit-tools] parse paramSchema failed', error);
     testParamsJson.value = '{}';
   }
   testModalVisible.value = true;
@@ -327,17 +351,23 @@ async function save() {
 }
 
 function confirmDelete(t: ToolDTO) {
+  if (!t.id) {
+    message.error('工具 ID 缺失，无法删除');
+    return;
+  }
+  const toolId = t.id;
   Modal.confirm({
     title: `删除工具「${t.name}」？`,
     content: '删除后已绑定的意图工具将失效',
     okType: 'danger',
     async onOk() {
       try {
-        await deleteToolApi(t.id ?? 0);
+        await deleteToolApi(toolId);
         message.success('已删除');
-        if (selectedToolId.value === t.id) selectedToolId.value = null;
+        if (selectedToolId.value === toolId) selectedToolId.value = null;
         await loadTools();
-      } catch {
+      } catch (error) {
+        console.warn('[dit-tools] delete failed', error);
         message.error('删除失败，请重试');
       }
     },
@@ -345,7 +375,8 @@ function confirmDelete(t: ToolDTO) {
 }
 
 function selectTool(t: ToolDTO) {
-  const id = t.id ?? 0;
+  if (!t.id) return;
+  const id = t.id;
   selectedToolId.value = selectedToolId.value === id ? null : id;
 }
 </script>
