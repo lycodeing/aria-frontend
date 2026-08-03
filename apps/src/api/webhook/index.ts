@@ -10,6 +10,7 @@ export interface WebhookVO {
   customHeaders?: Record<string, string>;
   messageTemplate?: string;
   isEnabled: number; // 1=启用, 0=禁用
+  scopes: string[]; // 订阅的事件范围（WebhookScope 枚举名）
 }
 
 /** 列出所有 Webhook 配置 */

@@ -1,3 +1,5 @@
+import type { CsatOverviewData } from '#/api/csat';
+
 /**
  * Dashboard 统计 API。
  *
@@ -215,4 +217,24 @@ export function getComplexityDistributionApi(): Promise<
 /** 获取座席工作量统计 */
 export function getAgentWorkloadApi(): Promise<AgentWorkloadItem[]> {
   return conversationClient.get('/dashboard/agent-workload');
+}
+
+// ─── 当前座席个人数据（"我的数据"页面） ────────────────────────────────────────
+
+/** 当前座席个人概览（会话量+效率均值） */
+export function getMyOverviewApi(): Promise<DashboardOverviewData> {
+  return conversationClient.get('/dashboard/my-overview');
+}
+
+/** 当前座席个人工作量（总会话数/进行中会话数） */
+export function getMyWorkloadApi(): Promise<AgentWorkloadItem> {
+  return conversationClient.get('/dashboard/my-workload');
+}
+
+/** 当前座席个人 CSAT 概览（支持时间范围） */
+export function getMyCsatOverviewApi(
+  range?: TimeRange,
+): Promise<CsatOverviewData> {
+  const params = range ? toTimeRangeParams(range) : undefined;
+  return conversationClient.get('/dashboard/my-csat-overview', { params });
 }

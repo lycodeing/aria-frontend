@@ -10,11 +10,16 @@
   "dashboard": {
     "title": "Dashboard",
     "analytics": "Analytics",
-    "workspace": "Workspace"
+    "workspace": "Workspace",
+    "myData": "My Data"
+  },
+  "session": {
+    "title": "Session",
+    "agent": "Agent Workbench",
+    "history": "Session History"
   },
   "customerservice": {
     "title": "Customer Service",
-    "chat": "Live Chat",
     "knowledge": "Knowledge Base",
     "agent": "Agent Workbench",
     "aiModels": "AI Model Config"

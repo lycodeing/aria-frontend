@@ -19,6 +19,8 @@ import dayjs from 'dayjs';
 
 import { listSlaBreachesApi } from '#/api/sla/index';
 
+import SlaTabs from './components/SlaTabs.vue';
+
 // ===== 筛选状态 =====
 const filterSessionId = ref('');
 const filterBreachType = ref<string | undefined>(undefined);
@@ -108,6 +110,8 @@ onMounted(loadList);
 
 <template>
   <Page>
+    <SlaTabs />
+
     <!-- 筛选栏 -->
     <Space wrap style="margin-bottom: 16px">
       <Input
