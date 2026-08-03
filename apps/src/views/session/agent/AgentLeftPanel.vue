@@ -4,7 +4,7 @@ import type { ClosedSessionItem, ClosedView, SessionData } from './types';
 import type { QueueItem } from '#/composables/useSessionQueue';
 
 import { Icon } from '@iconify/vue';
-import { Button, Progress, Switch, Tag } from 'ant-design-vue';
+import { Progress, Switch, Tag } from 'ant-design-vue';
 
 const props = defineProps<{
   agentOnline: boolean;
@@ -53,7 +53,9 @@ function lastMsgPreview(s: SessionData): string {
     const m = s.msgs[i];
     if (!m) continue;
     if (!m.text || m.role === 'system' || m.role === 'tool') continue;
-    const prefix = m.role === 'agent' ? '我：' : m.role === 'ai' ? 'AI：' : '';
+    let prefix = '';
+    if (m.role === 'agent') prefix = '我：';
+    else if (m.role === 'ai') prefix = 'AI：';
     const text = m.text.length > 22 ? `${m.text.slice(0, 22)}…` : m.text;
     return `${prefix}${text}`;
   }
@@ -138,6 +140,14 @@ function progressGradient(waitMin: string): string {
     return 'linear-gradient(90deg, #10b981, #f59e0b, #ef4444)';
   if (p === 'medium') return 'linear-gradient(90deg, #10b981, #f59e0b)';
   return '#10b981';
+}
+
+/** 接入按钮背景渐变色（按等待优先级） */
+function acceptBtnGradient(waitMin: string): string {
+  const p = getPriority(waitMin);
+  if (p === 'urgent') return 'linear-gradient(90deg, #ef4444, #f97316)';
+  if (p === 'medium') return 'linear-gradient(90deg, #f59e0b, #fbbf24)';
+  return 'linear-gradient(90deg, #3b82f6, #06b6d4)';
 }
 
 /** 按优先级分组排序后的等待队列 */
@@ -261,16 +271,16 @@ function groupedWaitingQueue(
 
       <!-- Tab switcher -->
       <div
-        class="flex shrink-0 items-center gap-0.5 rounded-lg bg-slate-200 p-0.5 dark:bg-slate-700"
+        class="flex shrink-0 items-center gap-[2px] rounded-[10px] bg-[#e4e7ed] p-[3px] dark:bg-slate-700"
       >
         <button
           v-for="tab in queueStateTabs"
           :key="tab.key"
           :title="tab.label"
-          class="flex h-[28px] flex-1 items-center justify-center gap-1 rounded-md text-[12px] transition-colors"
+          class="flex h-[32px] flex-1 items-center justify-center gap-1 rounded-lg text-[12px] font-medium transition-all"
           :class="
             queueStateTab === tab.key
-              ? 'bg-blue-500 font-medium text-white'
+              ? 'bg-white text-[#3b82f6] shadow-sm dark:bg-slate-600 dark:text-blue-400'
               : 'bg-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
           "
           @click="
@@ -281,21 +291,27 @@ function groupedWaitingQueue(
           "
         >
           <Icon :icon="tab.icon" class="shrink-0" />
+          <span class="hidden sm:inline">{{ tab.label }}</span>
           <!-- AI 对话 Tab 角标 -->
           <span
             v-if="tab.key === 'ai' && aiQueue.length"
             class="flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px]"
             :class="
               queueStateTab === 'ai'
-                ? 'bg-white/30 text-white'
-                : 'bg-blue-500/10 text-blue-500'
+                ? 'bg-[#eff6ff] text-[#3b82f6]'
+                : 'bg-white text-slate-500'
             "
             >{{ aiQueue.length }}</span
           >
           <!-- 等待人工 Tab 红点 -->
           <span
             v-else-if="tab.key === 'waiting' && waitingQueue.length"
-            class="flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white"
+            class="flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px]"
+            :class="
+              queueStateTab === 'waiting'
+                ? 'bg-red-500 text-white'
+                : 'bg-red-500 text-white'
+            "
             >{{ waitingQueue.length }}</span
           >
           <!-- 人工接待中 Tab 角标 -->
@@ -304,8 +320,8 @@ function groupedWaitingQueue(
             class="flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px]"
             :class="
               queueStateTab === 'active'
-                ? 'bg-white/30 text-white'
-                : 'bg-blue-500/10 text-blue-500'
+                ? 'bg-[#eff6ff] text-[#3b82f6]'
+                : 'bg-white text-slate-500'
             "
             >{{ sessions.length }}</span
           >
@@ -481,17 +497,15 @@ function groupedWaitingQueue(
                     ></div>
                   </div>
 
-                  <!-- 接入按钮 -->
-                  <Button
-                    type="primary"
-                    size="small"
-                    block
-                    class="mt-2.5 !bg-blue-500 !border-blue-500 hover:!bg-blue-600"
+                  <!-- 接入按钮：原生按钮 + 药丸渐变，避免被 antd 默认样式覆盖 -->
+                  <button
+                    class="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-full px-4 py-2 text-[12px] font-semibold text-white shadow-md transition-all duration-200 hover:-translate-y-px hover:shadow-lg active:translate-y-0"
+                    :style="{ background: acceptBtnGradient(item.waitMin) }"
                     @click="emit('acceptQueue', item)"
                   >
-                    <template #icon><Icon icon="lucide:headphones" /></template>
+                    <Icon icon="lucide:headphones" class="text-[13px]" />
                     接入会话
-                  </Button>
+                  </button>
                 </div>
               </div>
             </template>
