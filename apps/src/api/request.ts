@@ -21,29 +21,30 @@ import { refreshTokenApi } from './core';
 
 const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
 
+/**
+ * 重新认证逻辑（模块级，供 axios 拦截器与 SSE/WS 等非 axios 链路复用）。
+ * 清空 token 后按 loginExpiredMode 走 modal 或 logout。
+ */
+export async function doReAuthenticate() {
+  console.warn('Access token or refresh token is invalid or expired. ');
+  const accessStore = useAccessStore();
+  const authStore = useAuthStore();
+  accessStore.setAccessToken(null);
+  if (
+    preferences.app.loginExpiredMode === 'modal' &&
+    accessStore.isAccessChecked
+  ) {
+    accessStore.setLoginExpired(true);
+  } else {
+    await authStore.logout();
+  }
+}
+
 function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   const client = new RequestClient({
     ...options,
     baseURL,
   });
-
-  /**
-   * 重新认证逻辑
-   */
-  async function doReAuthenticate() {
-    console.warn('Access token or refresh token is invalid or expired. ');
-    const accessStore = useAccessStore();
-    const authStore = useAuthStore();
-    accessStore.setAccessToken(null);
-    if (
-      preferences.app.loginExpiredMode === 'modal' &&
-      accessStore.isAccessChecked
-    ) {
-      accessStore.setLoginExpired(true);
-    } else {
-      await authStore.logout();
-    }
-  }
 
   /**
    * 刷新token逻辑

@@ -31,7 +31,7 @@ const routes: RouteRecordRaw[] = [
       {
         name: 'SessionHistory',
         path: '/session/history',
-        component: () => import('#/views/_core/fallback/coming-soon.vue'),
+        component: () => import('#/views/session/history/index.vue'),
         meta: {
           authority: ['super_admin', 'kf_manager'],
           icon: 'lucide:message-square',

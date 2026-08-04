@@ -3,7 +3,10 @@ import type { ClosedSessionItem, ClosedView, SessionData } from './types';
 
 import type { QueueItem } from '#/composables/useSessionQueue';
 
+import { computed, ref } from 'vue';
+
 import { Icon } from '@iconify/vue';
+import { useElementSize } from '@vueuse/core';
 import { Progress, Switch, Tag } from 'ant-design-vue';
 
 const props = defineProps<{
@@ -15,7 +18,7 @@ const props = defineProps<{
   maxConcurrent: number;
   queuePage: number;
   queueSearch: string;
-  queueStateTab: 'active' | 'ai' | 'closed' | 'waiting';
+  queueStateTab: 'active' | 'ai' | 'waiting';
   queueTotalPages: number;
   sessions: SessionData[];
   sseConnected: boolean;
@@ -32,16 +35,21 @@ const emit = defineEmits<{
   toggleOnline: [val: boolean];
   'update:queuePage': [val: number];
   'update:queueSearch': [val: string];
-  'update:queueStateTab': [val: 'active' | 'ai' | 'closed' | 'waiting'];
+  'update:queueStateTab': [val: 'active' | 'ai' | 'waiting'];
   viewAiSession: [item: QueueItem];
   viewClosed: [item: ClosedSessionItem];
 }>();
 
+// ===== 容器宽度检测（用于窄面板时隐藏 Tab 文字）=====
+const panelRef = ref<HTMLElement | null>(null);
+const { width: panelWidth } = useElementSize(panelRef);
+// 面板宽度 > 200px 时显示 Tab 文字，否则只显示图标
+const showTabLabels = computed(() => panelWidth.value > 200);
+
 const queueStateTabs = [
-  { key: 'ai', label: 'AI 对话', icon: 'lucide:bot' },
-  { key: 'waiting', label: '等待人工', icon: 'lucide:clock' },
+  { key: 'ai', label: '智能', icon: 'lucide:bot' },
+  { key: 'waiting', label: '排队', icon: 'lucide:clock' },
   { key: 'active', label: '人工', icon: 'lucide:headphones' },
-  { key: 'closed', label: '结束', icon: 'lucide:archive' },
 ];
 
 /**
@@ -196,6 +204,7 @@ function groupedWaitingQueue(
 
 <template>
   <aside
+    ref="panelRef"
     class="flex h-full w-full flex-col gap-3 bg-[#f8fafc] p-4 dark:bg-slate-900/50"
   >
     <!-- Agent status card -->
@@ -298,14 +307,11 @@ function groupedWaitingQueue(
               : 'bg-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
           "
           @click="
-            emit(
-              'update:queueStateTab',
-              tab.key as 'ai' | 'active' | 'closed' | 'waiting',
-            )
+            emit('update:queueStateTab', tab.key as 'ai' | 'active' | 'waiting')
           "
         >
           <Icon :icon="tab.icon" class="shrink-0" />
-          <span class="hidden sm:inline">{{ tab.label }}</span>
+          <span v-show="showTabLabels">{{ tab.label }}</span>
           <!-- AI 对话 Tab 角标 -->
           <span
             v-if="tab.key === 'ai' && aiQueue.length"
@@ -445,7 +451,7 @@ function groupedWaitingQueue(
                     <!-- 头像 + 状态点 -->
                     <div class="relative shrink-0">
                       <div
-                        class="flex h-9 w-9 items-center justify-center rounded-lg text-[14px] font-medium text-white shadow-sm ring-2 ring-white dark:ring-slate-800"
+                        class="flex h-8 w-8 items-center justify-center rounded-lg text-[13px] font-medium text-white shadow-sm ring-2 ring-white dark:ring-slate-800"
                         :style="{ background: item.color }"
                       >
                         {{ item.name[0] }}
@@ -660,47 +666,6 @@ function groupedWaitingQueue(
           >
             <Icon icon="lucide:inbox" class="mb-2 text-2xl text-slate-300" />
             <p class="text-[12px] text-[#9ca3af]">暂无进行中的会话</p>
-          </div>
-        </template>
-
-        <!-- 已结束 Tab -->
-        <template v-else-if="queueStateTab === 'closed'">
-          <div v-if="closedSessions.length" class="space-y-1.5">
-            <div
-              v-for="item in closedSessions"
-              :key="item.id"
-              class="flex cursor-pointer items-center gap-2 rounded-xl p-2.5 transition-all hover:shadow-sm"
-              :class="
-                closedView?.session.id === item.id
-                  ? 'bg-blue-50 dark:bg-blue-900/20'
-                  : 'bg-white hover:bg-blue-50 dark:bg-slate-800 dark:hover:bg-slate-700'
-              "
-              @click="emit('viewClosed', item)"
-            >
-              <div
-                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[13px] font-medium text-slate-400 dark:bg-slate-700"
-              >
-                {{ item.nameChar }}
-              </div>
-              <div class="min-w-0 flex-1">
-                <p
-                  class="text-[13px] font-medium text-[#0a0a0b] dark:text-slate-100"
-                >
-                  {{ item.name }}
-                </p>
-                <p class="text-[11px] text-[#9ca3af]">{{ item.endedAt }}</p>
-              </div>
-              <Tag color="default" class="shrink-0 !text-[11px]">{{
-                item.tag
-              }}</Tag>
-            </div>
-          </div>
-          <div
-            v-else
-            class="flex flex-col items-center justify-center py-8 text-center"
-          >
-            <Icon icon="lucide:archive" class="mb-2 text-2xl text-slate-300" />
-            <p class="text-[12px] text-[#9ca3af]">暂无已结束会话</p>
           </div>
         </template>
       </div>

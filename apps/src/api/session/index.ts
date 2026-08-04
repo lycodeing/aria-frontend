@@ -275,29 +275,138 @@ export interface SessionSseEvent {
   toAgentId?: null | string;
 }
 
+/**
+ * fetch + ReadableStream 建立的 SSE 连接句柄，替代原生 EventSource。
+ * 原生 EventSource 无法读取 HTTP 状态码，握手 401 时只抛 error 事件，
+ * 无法区分"token 过期"与"网络抖动"，导致盲重连。改用 fetch 后可在握手
+ * 阶段精确识别 401 并走 onUnauthorized，其余错误走 onError 由调用方重试。
+ */
+export interface SseConnectionHandle {
+  close(): void;
+}
+
 export function subscribeSessionEvents(
   onEvent: (event: SessionSseEvent) => void,
   onError?: () => void,
   onOpen?: () => void,
-): EventSource {
+  onUnauthorized?: () => void,
+): SseConnectionHandle {
   // 从 Pinia store 取座席 token，附加到 URL query param 实现鉴权
   const accessStore = useAccessStore();
   const token = accessStore.accessToken ?? '';
   const url = token
     ? `/conversation/api/v1/sessions/events?token=${encodeURIComponent(token)}`
     : '/conversation/api/v1/sessions/events';
-  const es = new EventSource(url);
-  es.addEventListener('open', () => onOpen?.());
-  es.addEventListener('message', (e) => {
+
+  const abortCtrl = new AbortController();
+  const { signal } = abortCtrl;
+  let reader: null | ReadableStreamDefaultReader<Uint8Array> = null;
+  let closed = false;
+
+  // 异步建立连接并解析事件流；不 await，立即返回句柄
+  void (async () => {
     try {
-      const data = JSON.parse(e.data);
-      onEvent(data);
-    } catch {
-      // 忽略心跳等非 JSON 数据
+      const response = await fetch(url, {
+        headers: { Accept: 'text/event-stream' },
+        signal,
+      });
+
+      if (response.status === 401) {
+        onUnauthorized?.();
+        return;
+      }
+      if (!response.ok) {
+        onError?.();
+        return;
+      }
+      if (!response.body) {
+        onError?.();
+        return;
+      }
+
+      onOpen?.();
+      reader = response.body.getReader();
+      await parseSseStream(reader, signal, (data) => {
+        try {
+          onEvent(JSON.parse(data) as SessionSseEvent);
+        } catch {
+          // 忽略心跳等非 JSON 数据
+        }
+      });
+      // 流正常结束（服务端关闭）→ 视为断连，交由调用方重试
+      if (!closed) onError?.();
+    } catch (error: unknown) {
+      // 主动 close() 触发的 abort 不视为错误
+      if (error instanceof Error && error.name === 'AbortError') return;
+      if (!closed) onError?.();
+    } finally {
+      if (reader) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* 已关闭则忽略 */
+        }
+      }
     }
-  });
-  if (onError) es.addEventListener('error', onError);
-  return es;
+  })();
+
+  return {
+    close() {
+      closed = true;
+      abortCtrl.abort();
+    },
+  };
+}
+
+/**
+ * 最小 WHATWG SSE 解析：仅处理默认 message 事件的 data 行拼接。
+ * 规范要点：空行分隔事件、多条 data 行用 \n 拼接、字段值前导单空格需剥离、
+ * `:` 注释行（心跳）跳过、`event:`/`id:`/`retry:` 忽略。
+ */
+async function parseSseStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+  onMessage: (data: string) => void,
+): Promise<void> {
+  const decoder = new TextDecoder();
+  let lineBuffer = '';
+  let dataLines: string[] = [];
+
+  const flush = (): void => {
+    if (dataLines.length > 0) {
+      onMessage(dataLines.join('\n'));
+      dataLines = [];
+    }
+  };
+
+  while (!signal.aborted) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    lineBuffer += decoder.decode(value, { stream: true });
+    const rawLines = lineBuffer.split('\n');
+    // 最后一段可能不完整，留到下次循环拼接
+    lineBuffer = rawLines.pop() ?? '';
+
+    for (const rawLine of rawLines) {
+      const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+
+      if (line === '') {
+        flush();
+        continue;
+      }
+      if (line.startsWith(':')) continue; // 注释/心跳
+      if (line.startsWith('data:')) {
+        const rest = line.slice('data:'.length);
+        dataLines.push(rest.startsWith(' ') ? rest.slice(1) : rest);
+        continue;
+      }
+      // event: / id: / retry: 等字段按规范忽略
+    }
+  }
+
+  // 流末尾兜底 flush，避免最后一条事件未带空行边界而丢失
+  flush();
 }
 
 // -------------------------------------------------------
@@ -436,15 +545,73 @@ export async function getAiSummaryApi(
 /**
  * 创建 AI 总结流式 SSE 连接（与 subscribeSessionEvents 保持相同的 token 鉴权模式）。
  * token 在函数内部从 Pinia store 读取，调用方无需感知鉴权细节。
- * 返回 EventSource 实例，调用方负责在适当时机调用 close()。
+ * 返回 SseConnectionHandle，调用方负责在适当时机调用 close()。
+ *
+ * 与 subscribeSessionEvents 一致：用 fetch + ReadableStream 替代原生 EventSource，
+ * 握手 401 时走 onUnauthorized（token 过期 → 退出登录），其余错误走 onError。
+ * onMessage 收到的是 SSE data 字段的原始字符串（可能是 `[DONE]` 或 JSON 信封），
+ * 由调用方自行判断。
  */
-export function createAiSummaryEventSource(sessionId: string): EventSource {
+export function createAiSummaryEventSource(
+  sessionId: string,
+  onMessage: (data: string) => void,
+  onError?: () => void,
+  onUnauthorized?: () => void,
+): SseConnectionHandle {
   const accessStore = useAccessStore();
   const token = accessStore.accessToken ?? '';
   const url = token
     ? `/conversation/api/v1/sessions/${sessionId}/ai-summary/stream?token=${encodeURIComponent(token)}`
     : `/conversation/api/v1/sessions/${sessionId}/ai-summary/stream`;
-  return new EventSource(url);
+
+  const abortCtrl = new AbortController();
+  const { signal } = abortCtrl;
+  let reader: null | ReadableStreamDefaultReader<Uint8Array> = null;
+  let closed = false;
+
+  void (async () => {
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: 'text/event-stream' },
+        signal,
+      });
+
+      if (response.status === 401) {
+        onUnauthorized?.();
+        return;
+      }
+      if (!response.ok) {
+        onError?.();
+        return;
+      }
+      if (!response.body) {
+        onError?.();
+        return;
+      }
+
+      reader = response.body.getReader();
+      await parseSseStream(reader, signal, onMessage);
+      if (!closed) onError?.();
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') return;
+      if (!closed) onError?.();
+    } finally {
+      if (reader) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* 已关闭则忽略 */
+        }
+      }
+    }
+  })();
+
+  return {
+    close() {
+      closed = true;
+      abortCtrl.abort();
+    },
+  };
 }
 
 // -------------------------------------------------------
@@ -476,4 +643,110 @@ export async function getReplySuggestionsApi(
     undefined,
     { signal },
   );
+}
+
+// -------------------------------------------------------
+// 会话查询（管理端，/session/history 页面）
+// -------------------------------------------------------
+
+/** 会话查询列表项 */
+export interface SessionRecord {
+  sessionId: string;
+  visitorName: string;
+  agentId: null | string;
+  agentName: null | string;
+  status: 'ACTIVE' | 'AI_CHAT' | 'CLOSED' | 'WAITING';
+  tag: null | string;
+  transferReason: null | string;
+  startedAt: null | string;
+  acceptedAt: null | string;
+  endedAt: null | string;
+  closedBy: 'AGENT' | 'SYSTEM' | 'VISITOR' | null;
+  msgCount: number;
+  csatScore: null | number;
+  csatComment: null | string;
+  durationSec: null | number;
+}
+
+/** 会话查询分页结果 */
+export interface SessionQueryResult {
+  total: number;
+  page: number; // 0-based
+  size: number;
+  items: SessionRecord[];
+}
+
+/** 会话查询参数 */
+export interface SessionQueryParams {
+  page?: number; // 0-based
+  size?: number;
+  startDate?: string;
+  endDate?: string;
+  status?: string; // 逗号分隔多选
+  agentId?: string;
+  agentIds?: string; // 逗号分隔多选客服 ID
+  keyword?: string;
+  tag?: string;
+  closedBy?: string;
+}
+
+/** 分页查询会话记录（管理端） */
+export async function querySessionsApi(
+  params: SessionQueryParams,
+): Promise<SessionQueryResult> {
+  return agentClient.get('/admin/sessions/query', { params });
+}
+
+/** 会话消息记录（从 DB 读取，不依赖 Redis） */
+export interface SessionMessage {
+  role: string;
+  content: string;
+  seq: null | number;
+  timestamp: null | number;
+  toolName: null | string;
+  toolRequestId: null | string;
+}
+
+/** 获取会话消息记录（管理端，从 DB 读取） */
+export async function getSessionMessagesApi(
+  sessionId: string,
+): Promise<SessionMessage[]> {
+  return agentClient.get(`/admin/sessions/${sessionId}/messages`);
+}
+
+/** 客服列表项（下拉选项） */
+export interface AgentOption {
+  id: number;
+  username: string;
+  name: string; // 显示名称（后端 displayName，缺省回退 username）
+}
+
+/** 客服分页搜索结果（后端 auth PageResult 形态） */
+interface AgentSearchResult {
+  total: number;
+  page: number;
+  size: number;
+  items: { displayName?: null | string; id: number; username: string }[];
+}
+
+/**
+ * 搜索客服列表（供会话查询页面筛选下拉使用）。
+ *
+ * 默认返回前 10 条，keyword 为空时给出默认列表，输入时按关键词过滤。
+ * 后端返回 auth PageResult 形态，此处解包为下拉选项数组，
+ * 并将 displayName 归一化为 name（缺省回退 username）。
+ */
+export async function listAgentOptionsApi(
+  keyword?: string,
+  size = 10,
+): Promise<AgentOption[]> {
+  const res = await agentClient.get<AgentSearchResult>(
+    '/admin/sessions/agents',
+    { params: { keyword, page: 0, size } },
+  );
+  return (res.items ?? []).map((u) => ({
+    id: u.id,
+    username: u.username,
+    name: u.displayName || u.username,
+  }));
 }

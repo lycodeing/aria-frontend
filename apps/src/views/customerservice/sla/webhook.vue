@@ -1,13 +1,15 @@
 <script lang="ts" setup>
 import type { WebhookVO } from '#/api/webhook/index';
 
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 
 import { Page } from '@vben/common-ui';
 
 import { Icon } from '@iconify/vue';
 import {
   Button,
+  Collapse,
+  CollapsePanel,
   Form,
   FormItem,
   Input,
@@ -16,8 +18,10 @@ import {
   Select,
   SelectOption,
   Switch,
-  Textarea,
+  Tag,
 } from 'ant-design-vue';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
 
 import {
   createWebhookApi,
@@ -347,6 +351,126 @@ const scopeLabelMap: Record<string, string> = {
   CSAT_RATED: '客户评价',
 };
 
+// ===== 模板变量注册表 =====
+// 与后端 AbstractWebhookSender.buildVariables / WebhookEventContextFactory 对齐
+interface TemplateVar {
+  name: string; // 变量名（不含 ${} 包裹）
+  label: string; // 中文说明
+  example: string; // 预览用的示例值
+}
+
+// 通用变量（所有事件类型均可使用）
+const baseVariables: TemplateVar[] = [
+  { name: 'sessionId', label: '会话ID', example: 'S20260804-001' },
+  { name: 'visitorName', label: '访客名称', example: '张三' },
+  { name: 'eventType', label: '事件类型', example: 'CREATED' },
+];
+
+// 各事件范围专属变量
+const scopeVariables: Record<string, TemplateVar[]> = {
+  SLA_BREACH: [
+    { name: 'policyName', label: 'SLA策略名称', example: '金牌客服SLA' },
+    { name: 'breachTypeLabel', label: '违规类型(中文)', example: '首响超时' },
+    { name: 'breachType', label: '违规类型', example: 'FRT' },
+    { name: 'targetSec', label: '目标时长(秒)', example: '30' },
+    { name: 'actualSec', label: '实际时长(秒)', example: '52' },
+    { name: 'breachAt', label: '违规时间', example: '2026-08-04 10:23:45' },
+    { name: 'stage', label: '阶段', example: 'WAIT' },
+  ],
+  SESSION_CREATED: [{ name: 'channel', label: '渠道', example: 'AI_CHAT' }],
+  SESSION_TRANSFERRED: [
+    { name: 'transferReason', label: '转接原因', example: '用户请求人工' },
+    { name: 'tag', label: '标签', example: '售前咨询' },
+    { name: 'fromAgentId', label: '原客服ID', example: 'agent_001' },
+    { name: 'toAgentId', label: '目标客服ID', example: 'agent_002' },
+  ],
+  SESSION_CLOSED: [{ name: 'closedBy', label: '关闭方', example: 'AGENT' }],
+  CSAT_RATED: [
+    { name: 'score', label: '评分', example: '5' },
+    { name: 'comment', label: '评价内容', example: '服务很好，响应很快' },
+    { name: 'csatId', label: '评价ID', example: 'CSAT-1024' },
+    { name: 'channel', label: '渠道', example: 'AI_CHAT' },
+  ],
+};
+
+// 默认模板（与后端 WebhookDefaultTemplate.text 一致）。
+// 模板里的 ${xxx} 是发给后端做插值的字面量占位符，不是 JS 模板字符串，故用单引号。
+
+const defaultTemplates: Record<string, string> = {
+  SLA_BREACH:
+    '⚠️ **SLA 违规告警**\n\n---\n\n**会话ID**：${sessionId}\n**访客**：${visitorName}\n**策略**：${policyName}\n\n---\n\n**违规类型**：${breachTypeLabel}\n**目标**：${targetSec}s ｜ **实际**：${actualSec}s',
+  SESSION_CREATED:
+    '📢 **新会话**\n\n**访客**：${visitorName}\n**会话ID**：${sessionId}',
+  SESSION_TRANSFERRED:
+    '🔄 **转人工**\n\n**访客**：${visitorName}\n**会话ID**：${sessionId}',
+  SESSION_CLOSED: '🔒 **会话关闭**\n\n**会话ID**：${sessionId}',
+  CSAT_RATED:
+    '⭐ **客户评价**\n\n**会话ID**：${sessionId}\n**评分**：${score} 星\n**评价**：${comment}',
+};
+
+// 根据已选 scopes 计算可用变量（通用 + 各 scope 专属，去重）
+const availableVariables = computed<TemplateVar[]>(() => {
+  const result = [...baseVariables];
+  const seen = new Set(baseVariables.map((v) => v.name));
+  for (const scope of form.scopes) {
+    for (const v of scopeVariables[scope] ?? []) {
+      if (!seen.has(v.name)) {
+        seen.add(v.name);
+        result.push(v);
+      }
+    }
+  }
+  return result;
+});
+
+// 已选 scope 的默认模板文本（多 scope 用分隔线串联）
+const defaultTemplateText = computed(() =>
+  form.scopes
+    .map((s) => defaultTemplates[s])
+    .filter(Boolean)
+    .join('\n\n---\n\n'),
+);
+
+// 变量名 → 展示用的 ${name} 字面量（避免在模板里写转义反引号触发解析错误）
+function varToken(name: string): string {
+  return `\${${name}}`;
+}
+
+// ===== 模板编辑器：光标插入变量 =====
+const templateTextareaRef = ref<HTMLTextAreaElement | null>(null);
+
+function insertVariable(varName: string) {
+  const token = `\${${varName}}`;
+  const textarea = templateTextareaRef.value;
+  const text = form.messageTemplate || '';
+  if (!textarea) {
+    form.messageTemplate = text + token;
+    return;
+  }
+  const start = textarea.selectionStart ?? text.length;
+  const end = textarea.selectionEnd ?? text.length;
+  form.messageTemplate = text.slice(0, start) + token + text.slice(end);
+  nextTick(() => {
+    const newPos = start + token.length;
+    textarea.focus();
+    textarea.setSelectionRange(newPos, newPos);
+  });
+}
+
+// ===== Markdown 预览 =====
+marked.use({ breaks: true, gfm: true });
+
+const previewHtml = computed(() => {
+  const template = form.messageTemplate.trim();
+  if (!template) return '';
+  // 用示例值替换变量
+  let filled = template;
+  for (const v of availableVariables.value) {
+    filled = filled.split(`\${${v.name}}`).join(v.example);
+  }
+  return DOMPurify.sanitize(marked.parse(filled, { async: false }) as string);
+});
+
 onMounted(loadList);
 </script>
 
@@ -616,7 +740,7 @@ onMounted(loadList);
       v-model:open="modalOpen"
       :title="editingId ? '编辑 Webhook' : '新增 Webhook'"
       :confirm-loading="submitting"
-      width="520px"
+      width="820px"
       @ok="submit"
     >
       <Form layout="vertical" style="margin-top: 16px" :model="form">
@@ -683,11 +807,100 @@ onMounted(loadList);
           </div>
         </FormItem>
         <FormItem label="消息模板">
-          <Textarea
-            v-model:value="form.messageTemplate"
-            :rows="3"
-            placeholder="留空使用默认模板"
-          />
+          <div
+            style="margin-bottom: 8px; font-size: 12px; color: rgb(0 0 0 / 45%)"
+          >
+            使用 <code>${变量名}</code> 语法插入变量；支持 Markdown
+            格式（钉钉/企微原生渲染，飞书为纯文本）。留空使用默认模板。
+          </div>
+
+          <!-- 可用变量 chip -->
+          <div
+            v-if="availableVariables.length"
+            class="mb-2 flex flex-wrap items-center gap-1.5"
+          >
+            <span class="text-[12px] text-slate-500">可用变量：</span>
+            <Tag
+              v-for="v in availableVariables"
+              :key="v.name"
+              class="cursor-pointer select-none"
+              color="blue"
+              :title="`${v.label}（点击插入）`"
+              @click="insertVariable(v.name)"
+            >
+              {{ varToken(v.name) }}
+            </Tag>
+          </div>
+          <div v-else class="mb-2 text-[12px] text-amber-500">
+            未选择事件范围，无法提供变量提示
+          </div>
+
+          <!-- 左右分栏：编辑 + 预览 -->
+          <div class="grid grid-cols-2 gap-3">
+            <!-- 编辑区 -->
+            <div>
+              <div class="mb-1 text-[12px] font-medium text-slate-500">
+                编辑
+              </div>
+              <textarea
+                ref="templateTextareaRef"
+                v-model="form.messageTemplate"
+                :rows="9"
+                placeholder="留空使用默认模板&#10;&#10;支持 Markdown，例如：&#10;### SLA 告警&#10;会话：${sessionId}&#10;访客：${visitorName}"
+                class="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-[13px] leading-relaxed text-slate-700 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-400 focus:ring-1 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+              ></textarea>
+            </div>
+            <!-- 预览区 -->
+            <div>
+              <div class="mb-1 text-[12px] font-medium text-slate-500">
+                预览
+              </div>
+              <div
+                class="min-h-[180px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] leading-relaxed dark:border-slate-600 dark:bg-slate-900/50"
+              >
+                <div
+                  v-if="previewHtml"
+                  class="markdown-preview-body"
+                  v-html="previewHtml"
+                ></div>
+                <div
+                  v-else
+                  class="flex h-full min-h-[160px] items-center justify-center text-center text-[12px] text-slate-400"
+                >
+                  <div>
+                    <Icon
+                      icon="lucide:eye-off"
+                      class="mb-1 text-[20px] opacity-50"
+                    />
+                    <div>留空将使用默认模板</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 默认模板参考 -->
+          <Collapse
+            v-if="defaultTemplateText"
+            :bordered="false"
+            class="mt-2 template-default-collapse"
+            size="small"
+          >
+            <CollapsePanel key="default" header="查看默认模板">
+              <pre
+                class="whitespace-pre-wrap break-all rounded-md bg-slate-50 p-2.5 font-mono text-[12px] text-slate-600 dark:bg-slate-900/50 dark:text-slate-300"
+                >{{ defaultTemplateText }}</pre
+              >
+              <Button
+                size="small"
+                type="link"
+                class="mt-1 px-0"
+                @click="form.messageTemplate = ''"
+              >
+                使用默认模板（清空自定义）
+              </Button>
+            </CollapsePanel>
+          </Collapse>
         </FormItem>
         <FormItem label="是否启用">
           <Switch
@@ -700,3 +913,117 @@ onMounted(loadList);
     </Modal>
   </Page>
 </template>
+
+<style scoped>
+/* Markdown 预览样式 */
+.markdown-preview-body :deep(h1),
+.markdown-preview-body :deep(h2),
+.markdown-preview-body :deep(h3),
+.markdown-preview-body :deep(h4) {
+  margin: 0.6em 0 0.3em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.markdown-preview-body :deep(h1) {
+  font-size: 1.2em;
+}
+
+.markdown-preview-body :deep(h2) {
+  font-size: 1.1em;
+}
+
+.markdown-preview-body :deep(h3) {
+  font-size: 1em;
+}
+
+.markdown-preview-body :deep(p) {
+  margin: 0.3em 0;
+}
+
+.markdown-preview-body :deep(ul),
+.markdown-preview-body :deep(ol) {
+  padding-left: 1.4em;
+  margin: 0.3em 0;
+}
+
+.markdown-preview-body :deep(li) {
+  margin: 0.15em 0;
+}
+
+.markdown-preview-body :deep(code) {
+  padding: 0.1em 0.35em;
+  font-family: ui-monospace, monospace;
+  font-size: 0.88em;
+  background: rgb(0 0 0 / 6%);
+  border-radius: 3px;
+}
+
+html.dark .markdown-preview-body :deep(code) {
+  background: rgb(255 255 255 / 8%);
+}
+
+.markdown-preview-body :deep(pre) {
+  padding: 0.5em 0.7em;
+  margin: 0.4em 0;
+  overflow-x: auto;
+  font-size: 0.85em;
+  background: rgb(0 0 0 / 5%);
+  border-radius: 6px;
+}
+
+html.dark .markdown-preview-body :deep(pre) {
+  background: rgb(255 255 255 / 6%);
+}
+
+.markdown-preview-body :deep(pre code) {
+  padding: 0;
+  background: none;
+}
+
+.markdown-preview-body :deep(blockquote) {
+  padding-left: 0.8em;
+  margin: 0.4em 0;
+  color: inherit;
+  border-left: 3px solid rgb(0 0 0 / 12%);
+  opacity: 0.85;
+}
+
+html.dark .markdown-preview-body :deep(blockquote) {
+  border-left-color: rgb(255 255 255 / 15%);
+}
+
+.markdown-preview-body :deep(strong) {
+  font-weight: 600;
+}
+
+.markdown-preview-body :deep(a) {
+  color: #1677ff;
+  text-decoration: none;
+}
+
+.markdown-preview-body :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.markdown-preview-body :deep(table) {
+  font-size: 0.9em;
+  border-collapse: collapse;
+}
+
+.markdown-preview-body :deep(th),
+.markdown-preview-body :deep(td) {
+  padding: 0.3em 0.5em;
+  border: 1px solid rgb(0 0 0 / 12%);
+}
+
+html.dark .markdown-preview-body :deep(th),
+html.dark .markdown-preview-body :deep(td) {
+  border-color: rgb(255 255 255 / 12%);
+}
+
+/* Collapse 去掉默认背景，贴合弹窗 */
+.template-default-collapse :deep(.ant-collapse-content) {
+  background: transparent;
+}
+</style>

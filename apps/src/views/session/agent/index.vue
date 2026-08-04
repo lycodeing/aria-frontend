@@ -373,7 +373,7 @@ const activeSession = computed(() => sessions.value.find((s) => s.active));
 const concurrent = computed(() => sessions.value.length);
 
 // ===== 队列状态 Tab =====
-const queueStateTab = ref<'active' | 'ai' | 'closed' | 'waiting'>('waiting');
+const queueStateTab = ref<'active' | 'ai' | 'waiting'>('waiting');
 
 // ===== 已结束会话 =====
 const closedSessions = computed<ClosedSessionItem[]>(() =>
@@ -594,8 +594,8 @@ const transferTarget = ref('');
 const availableAgents = ref<OnlineAgentItem[]>([]);
 const loadingAgents = ref(false);
 
-watch(queueStateTab, (tab) => {
-  if (tab !== 'closed') closedView.value = null;
+watch(queueStateTab, () => {
+  closedView.value = null;
 });
 
 watch(transferVisible, async (visible) => {
@@ -895,8 +895,8 @@ onUnmounted(() => {
         <ResizablePanel
           ref="leftPanelRef"
           :default-size="20"
-          :min-size="12"
-          :max-size="30"
+          :min-size="16"
+          :max-size="32"
           collapsible
           @collapse="leftCollapsed = true"
           @expand="leftCollapsed = false"
@@ -983,8 +983,8 @@ onUnmounted(() => {
         <ResizablePanel
           ref="rightPanelRef"
           :default-size="20"
-          :min-size="12"
-          :max-size="30"
+          :min-size="16"
+          :max-size="32"
           collapsible
           @collapse="rightCollapsed = true"
           @expand="rightCollapsed = false"
