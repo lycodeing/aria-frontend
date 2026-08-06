@@ -30,7 +30,7 @@ const STORAGE_KEYS = {
 } as const;
 
 class PreferenceManager {
-  private cache: StorageManager;
+  private cache: null | StorageManager = null;
   private customPreferencesExtension: null | PreferencesExtension<any> = null;
   private customState = reactive<CustomPreferencesRecord>({});
   private debouncedSave: () => void;
@@ -39,10 +39,23 @@ class PreferenceManager {
   private isInitialized = false;
   private state: Preferences;
 
+  /**
+   * 获取已初始化的缓存实例。所有读写缓存的路径都在 initPreferences 之后调用，
+   * 若在此之前误调会抛出明确错误而非静默操作空 prefix 的 StorageManager。
+   */
+  private get storage(): StorageManager {
+    if (!this.cache) {
+      throw new Error(
+        '[PreferenceManager] cache 未初始化，请先调用 initPreferences()。',
+      );
+    }
+    return this.cache;
+  }
+
   constructor() {
-    this.cache = new StorageManager();
-    // 构造函数不再同步读取缓存，使用默认值初始化
-    // 真正的缓存加载在 initPreferences 中完成（已经是 async）
+    // 不在构造函数中创建 StorageManager：模块级单例在 import 时就会 new，
+    // 此时 namespace 尚未传入，空 prefix + LocalStorageDriver 会触发 warning
+    // 且 clear()/keys() 会误伤整个 localStorage。延迟到 initPreferences 中再建。
     this.state = reactive<Preferences>({ ...defaultPreferences });
     this.debouncedSave = useDebounceFn(() => this.saveToCache(), 150);
   }
@@ -52,7 +65,7 @@ class PreferenceManager {
    */
   clearCache = async () => {
     await Promise.all(
-      Object.values(STORAGE_KEYS).map((key) => this.cache.removeItem(key)),
+      Object.values(STORAGE_KEYS).map((key) => this.storage.removeItem(key)),
     );
   };
 
@@ -321,7 +334,7 @@ class PreferenceManager {
    * @returns 缓存的扩展偏好设置，如果不存在则返回 null
    */
   private async loadCustomFromCache(): Promise<CustomPreferencesRecord | null> {
-    return this.cache.getItem<CustomPreferencesRecord>(STORAGE_KEYS.CUSTOM);
+    return this.storage.getItem<CustomPreferencesRecord>(STORAGE_KEYS.CUSTOM);
   }
 
   /**
@@ -329,7 +342,7 @@ class PreferenceManager {
    * @returns 缓存的偏好设置，如果不存在则返回 null
    */
   private async loadFromCache(): Promise<null | Preferences> {
-    return this.cache.getItem<Preferences>(STORAGE_KEYS.MAIN);
+    return this.storage.getItem<Preferences>(STORAGE_KEYS.MAIN);
   }
 
   private replaceCustomPreferences(preferences: CustomPreferencesRecord) {
@@ -389,18 +402,18 @@ class PreferenceManager {
    */
   private async saveToCache() {
     try {
-      await this.cache.setItem(STORAGE_KEYS.MAIN, this.state);
-      await this.cache.setItem(STORAGE_KEYS.LOCALE, this.state.app.locale);
-      await this.cache.setItem(STORAGE_KEYS.THEME, this.state.theme.mode);
+      await this.storage.setItem(STORAGE_KEYS.MAIN, this.state);
+      await this.storage.setItem(STORAGE_KEYS.LOCALE, this.state.app.locale);
+      await this.storage.setItem(STORAGE_KEYS.THEME, this.state.theme.mode);
 
       if (this.customPreferencesExtension) {
-        await this.cache.setItem(STORAGE_KEYS.CUSTOM, {
+        await this.storage.setItem(STORAGE_KEYS.CUSTOM, {
           ...this.customState,
         });
         return;
       }
 
-      await this.cache.removeItem(STORAGE_KEYS.CUSTOM);
+      await this.storage.removeItem(STORAGE_KEYS.CUSTOM);
     } catch (error) {
       console.error('Failed to save preferences to cache:', error);
     }

@@ -8,6 +8,7 @@ import { computed, ref } from 'vue';
 
 import { message as antMessage } from 'ant-design-vue';
 
+import { doReAuthenticate } from '#/api/request';
 import { getAllSessionsApi, subscribeSessionEvents } from '#/api/session';
 import { formatWaitTime, toQueueItem } from '#/composables/useSessionQueue';
 
@@ -22,10 +23,10 @@ export interface SessionQueueChannel {
   readonly sessions: Readonly<Ref<QueueItem[]>>;
 
   /** 四个 Tab 直接绑定的 computed 切片 */
-  readonly aiQueue:      ComputedRef<QueueItem[]>;
+  readonly aiQueue: ComputedRef<QueueItem[]>;
   readonly waitingQueue: ComputedRef<QueueItem[]>;
-  readonly activeQueue:  ComputedRef<QueueItem[]>;
-  readonly closedQueue:  ComputedRef<QueueItem[]>;
+  readonly activeQueue: ComputedRef<QueueItem[]>;
+  readonly closedQueue: ComputedRef<QueueItem[]>;
 
   readonly sseConnected: Readonly<Ref<boolean>>;
   readonly sseStatus: Readonly<Ref<'closed' | 'connecting' | 'error' | 'open'>>;
@@ -59,12 +60,20 @@ const sseConnected = ref(false);
 const sseStatus = ref<'closed' | 'connecting' | 'error' | 'open'>('closed');
 
 // 四个 computed 切片（惰性求值）
-const aiQueue      = computed(() => sessions.value.filter(s => s.status === 'AI_CHAT'));
-const waitingQueue = computed(() => sessions.value.filter(s => s.status === 'WAITING'));
-const activeQueue  = computed(() => sessions.value.filter(s => s.status === 'ACTIVE'));
-const closedQueue  = computed(() => sessions.value.filter(s => s.status === 'CLOSED'));
+const aiQueue = computed(() =>
+  sessions.value.filter((s) => s.status === 'AI_CHAT'),
+);
+const waitingQueue = computed(() =>
+  sessions.value.filter((s) => s.status === 'WAITING'),
+);
+const activeQueue = computed(() =>
+  sessions.value.filter((s) => s.status === 'ACTIVE'),
+);
+const closedQueue = computed(() =>
+  sessions.value.filter((s) => s.status === 'CLOSED'),
+);
 
-let eventSource: EventSource | null = null;
+let eventSource: null | { close(): void } = null;
 let sseRetryCount = 0;
 let sseRetryTimer: null | ReturnType<typeof setTimeout> = null;
 let waitTimer: null | ReturnType<typeof setInterval> = null;
@@ -161,6 +170,17 @@ function _connect(): void {
       sseConnected.value = true;
       sseStatus.value = 'open';
     },
+    () => {
+      // SSE 握手 401：token 过期，不再重试，清 token 走 logout/modal。
+      // basic.vue 的 accessToken watcher 会自动 dispose channel，
+      // 用户重新登录后 token 重建会再次 init()。
+      if (eventSource !== es) return;
+      es.close();
+      eventSource = null;
+      sseConnected.value = false;
+      sseStatus.value = 'closed';
+      void doReAuthenticate();
+    },
   );
 
   eventSource = es;
@@ -229,11 +249,23 @@ export function useSessionQueueChannel(): SessionQueueChannel {
       if (idx !== -1) sessions.value.splice(idx, 1);
     },
 
-    onEnqueue(handler) { enqueueHandlers.add(handler); },
-    offEnqueue(handler) { enqueueHandlers.delete(handler); },
-    onClosed(handler) { closedHandlers.add(handler); },
-    offClosed(handler) { closedHandlers.delete(handler); },
-    onTransfer(handler) { transferHandlers.add(handler); },
-    offTransfer(handler) { transferHandlers.delete(handler); },
+    onEnqueue(handler) {
+      enqueueHandlers.add(handler);
+    },
+    offEnqueue(handler) {
+      enqueueHandlers.delete(handler);
+    },
+    onClosed(handler) {
+      closedHandlers.add(handler);
+    },
+    offClosed(handler) {
+      closedHandlers.delete(handler);
+    },
+    onTransfer(handler) {
+      transferHandlers.add(handler);
+    },
+    offTransfer(handler) {
+      transferHandlers.delete(handler);
+    },
   };
 }

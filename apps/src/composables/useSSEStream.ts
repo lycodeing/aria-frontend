@@ -25,6 +25,8 @@ import type { CsatRequestPayload } from '#/api/csat/types';
  */
 import { ref } from 'vue';
 
+import { doReAuthenticate } from '#/api/request';
+
 // ---- payload 类型（与后端 payload/*.java record 一一对应）----
 
 export interface TokenPayload {
@@ -126,6 +128,11 @@ export function useSSEStream(
         signal,
       });
 
+      if (response.status === 401) {
+        // token 过期：走统一的重新认证流程（清 token + logout/modal）
+        void doReAuthenticate();
+        return;
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       if (!response.body) throw new Error('No response body');
 

@@ -37,6 +37,7 @@ const emit = defineEmits<{
   closeSession: [];
   copyMsg: [text: string];
   exitClosed: [];
+  feedback: [m: Msg];
   reconnectSession: [];
   send: [];
   takeoverAi: [];
@@ -577,6 +578,14 @@ watch(
                 @click.stop="emit('copyMsg', m.text)"
               >
                 <Icon icon="lucide:copy" class="h-3 w-3" />
+              </button>
+              <button
+                v-if="m.role === 'ai' && m.text"
+                class="text-[#d4d8e3] transition hover:text-[#9ca3af]"
+                title="反馈"
+                @click.stop="emit('feedback', m)"
+              >
+                <Icon icon="lucide:flag" class="h-3 w-3" />
               </button>
             </div>
           </div>

@@ -1,7 +1,8 @@
-import type { VisitorHistorySession } from '#/api/session';
+import type { SseConnectionHandle, VisitorHistorySession } from '#/api/session';
 
 import { onUnmounted, ref } from 'vue';
 
+import { doReAuthenticate } from '#/api/request';
 import {
   createAiSummaryEventSource,
   getAiSummaryApi,
@@ -33,8 +34,8 @@ export function useVisitorHistory() {
    */
   const summaryMap = ref<Record<string, SummaryState>>({});
 
-  /** 活跃的 EventSource（同时最多一条，避免并发流） */
-  let activeEs: EventSource | null = null;
+  /** 活跃的 SSE 连接句柄（同时最多一条，避免并发流） */
+  let activeEs: null | SseConnectionHandle = null;
 
   async function loadHistory(
     visitorName: string,
@@ -113,39 +114,49 @@ export function useVisitorHistory() {
     summaryMap.value[sessionId] = { text: '', streaming: true, done: false };
 
     // I-05 修复：token 由 createAiSummaryEventSource 内部读取，composable 不再直接依赖 accessStore
-    const es = createAiSummaryEventSource(sessionId);
-    activeEs = es;
-
-    es.addEventListener('message', (e) => {
-      if (e.data === '[DONE]') {
+    const es = createAiSummaryEventSource(
+      sessionId,
+      (data) => {
+        if (data === '[DONE]') {
+          const state = summaryMap.value[sessionId];
+          if (state) {
+            state.streaming = false;
+            state.done = true;
+          }
+          es.close();
+          activeEs = null;
+          return;
+        }
+        try {
+          const chunk = JSON.parse(data) as { delta: string };
+          const state = summaryMap.value[sessionId];
+          if (state) {
+            state.text += chunk.delta;
+          }
+        } catch {
+          // 忽略非 JSON 心跳帧
+        }
+      },
+      () => {
         const state = summaryMap.value[sessionId];
         if (state) {
           state.streaming = false;
-          state.done = true;
         }
         es.close();
         activeEs = null;
-        return;
-      }
-      try {
-        const chunk = JSON.parse(e.data) as { delta: string };
+      },
+      () => {
+        // 握手 401：token 过期，停止流式并退出登录
         const state = summaryMap.value[sessionId];
         if (state) {
-          state.text += chunk.delta;
+          state.streaming = false;
         }
-      } catch {
-        // 忽略非 JSON 心跳帧
-      }
-    });
-
-    es.addEventListener('error', () => {
-      const state = summaryMap.value[sessionId];
-      if (state) {
-        state.streaming = false;
-      }
-      es.close();
-      activeEs = null;
-    });
+        es.close();
+        activeEs = null;
+        void doReAuthenticate();
+      },
+    );
+    activeEs = es;
   }
 
   /** 重新生成（强制清除缓存态，重走流式） */

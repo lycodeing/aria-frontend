@@ -23,5 +23,11 @@
     "knowledge": "知识库",
     "agent": "座席工作台",
     "aiModels": "AI 模型配置"
+  },
+  "stats": {
+    "title": "观测统计",
+    "intent": "意图分类命中率",
+    "rag": "RAG 检索质量",
+    "llmCost": "LLM Token 成本"
   }
 }
