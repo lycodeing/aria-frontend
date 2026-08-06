@@ -750,3 +750,38 @@ export async function listAgentOptionsApi(
     name: u.displayName || u.username,
   }));
 }
+
+// -------------------------------------------------------
+// 座席纠错反馈（座席工作台 AI 回复「反馈」按钮）
+// -------------------------------------------------------
+
+/** 反馈类型：意图错误 / 回答错误 / 好评 */
+export type FeedbackType = 'GOOD' | 'WRONG_ANSWER' | 'WRONG_INTENT';
+
+/**
+ * 座席纠错反馈请求体。
+ * agentId 由后端 Sa-Token 会话解析，前端不传。
+ * messageId 座席端无后端 seq 可用，传 null。
+ */
+export interface AgentFeedbackPayload {
+  sessionId: string;
+  /** 座席端无后端消息 seq，恒为 null */
+  messageId?: null | string;
+  feedbackType: FeedbackType;
+  /** 触发该 AI 回复的访客原始问题 */
+  originalQuery: string;
+  /** feedbackType=WRONG_INTENT 时必填 */
+  correctIntent?: string;
+  /** feedbackType=WRONG_ANSWER 时必填 */
+  correctAnswer?: string;
+}
+
+/**
+ * 提交座席纠错反馈（需 token）。
+ * 对接 conversation-service：POST /sessions/feedback（@SaCheckLogin）。
+ */
+export async function submitAgentFeedbackApi(
+  payload: AgentFeedbackPayload,
+): Promise<void> {
+  return agentClient.post('/sessions/feedback', payload);
+}
