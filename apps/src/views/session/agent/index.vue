@@ -4,8 +4,10 @@
 import type { ClosedSessionItem, ClosedView, Msg, SessionData } from './types';
 
 import type {
+  AgentFeedbackPayload,
   SessionQueueItem as ApiSessionItem,
   ChatToolCall,
+  FeedbackType,
   OnlineAgentItem,
   SessionSseEvent,
 } from '#/api/session';
@@ -26,6 +28,7 @@ import {
   Collapse,
   CollapsePanel,
   Drawer,
+  Input,
   message,
   Modal,
   Radio,
@@ -38,6 +41,7 @@ import {
   closeSessionApi,
   getOnlineAgentsApi,
   getSessionHistoryApi,
+  submitAgentFeedbackApi,
   transferSessionApi,
 } from '#/api/session';
 import { useAgentWebSocket } from '#/composables/useAgentWebSocket';
@@ -594,6 +598,87 @@ const transferTarget = ref('');
 const availableAgents = ref<OnlineAgentItem[]>([]);
 const loadingAgents = ref(false);
 
+// ===== 座席反馈弹窗 =====
+const feedbackOpen = ref(false);
+const feedbackSubmitting = ref(false);
+const feedbackType = ref<FeedbackType>('WRONG_INTENT');
+const feedbackOriginalQuery = ref('');
+const feedbackAnswerText = ref(''); // 被反馈的 AI 回复原文
+const feedbackCorrectIntent = ref('');
+const feedbackCorrectAnswer = ref('');
+
+/** 打开反馈弹窗：派生该 AI 回复对应的访客原始问题 */
+function openFeedback(m: Msg) {
+  const s = activeSession.value;
+  if (!s) {
+    message.warning('请先选择会话');
+    return;
+  }
+  const msgs = s.msgs;
+  const idx = msgs.findIndex((x) => x.id === m.id);
+  let query = '';
+  for (let i = idx - 1; i >= 0; i--) {
+    if (msgs[i]?.role === 'user') {
+      query = msgs[i]?.text ?? '';
+      break;
+    }
+  }
+  feedbackType.value = 'WRONG_INTENT';
+  feedbackOriginalQuery.value = query;
+  feedbackAnswerText.value = m.text;
+  feedbackCorrectIntent.value = '';
+  feedbackCorrectAnswer.value = '';
+  feedbackOpen.value = true;
+}
+
+/** 提交反馈：按类型做条件必填校验 */
+async function submitFeedback() {
+  const s = activeSession.value;
+  if (!s) return;
+  if (!feedbackOriginalQuery.value.trim()) {
+    message.warning('未能识别原始问题，请补充');
+    return;
+  }
+  if (
+    feedbackType.value === 'WRONG_INTENT' &&
+    !feedbackCorrectIntent.value.trim()
+  ) {
+    message.warning('请填写正确意图');
+    return;
+  }
+  if (
+    feedbackType.value === 'WRONG_ANSWER' &&
+    !feedbackCorrectAnswer.value.trim()
+  ) {
+    message.warning('请填写正确答案');
+    return;
+  }
+
+  const payload: AgentFeedbackPayload = {
+    sessionId: s.id,
+    messageId: null,
+    feedbackType: feedbackType.value,
+    originalQuery: feedbackOriginalQuery.value.trim(),
+  };
+  if (feedbackType.value === 'WRONG_INTENT') {
+    payload.correctIntent = feedbackCorrectIntent.value.trim();
+  }
+  if (feedbackType.value === 'WRONG_ANSWER') {
+    payload.correctAnswer = feedbackCorrectAnswer.value.trim();
+  }
+
+  feedbackSubmitting.value = true;
+  try {
+    await submitAgentFeedbackApi(payload);
+    message.success('反馈已提交，感谢你的纠错');
+    feedbackOpen.value = false;
+  } catch {
+    message.error('反馈提交失败，请重试');
+  } finally {
+    feedbackSubmitting.value = false;
+  }
+}
+
 watch(queueStateTab, () => {
   closedView.value = null;
 });
@@ -968,6 +1053,7 @@ onUnmounted(() => {
             @exit-closed="closedView = null"
             @takeover-ai="takeoverAiSession"
             @copy-msg="copyMsgText"
+            @feedback="openFeedback"
           />
         </ResizablePanel>
 
@@ -1194,5 +1280,61 @@ onUnmounted(() => {
         </Collapse>
       </Spin>
     </Drawer>
+
+    <!-- 座席纠错反馈 Modal -->
+    <Modal
+      v-model:open="feedbackOpen"
+      title="回答反馈"
+      :confirm-loading="feedbackSubmitting"
+      ok-text="提交"
+      cancel-text="取消"
+      @ok="submitFeedback"
+    >
+      <div class="flex flex-col gap-3 py-1">
+        <div>
+          <div class="mb-1 text-[13px] text-slate-500">反馈类型</div>
+          <RadioGroup v-model:value="feedbackType">
+            <Radio value="WRONG_INTENT">意图错误</Radio>
+            <Radio value="WRONG_ANSWER">回答错误</Radio>
+            <Radio value="GOOD">好评</Radio>
+          </RadioGroup>
+        </div>
+
+        <div>
+          <div class="mb-1 text-[13px] text-slate-500">访客原始问题</div>
+          <Input.TextArea
+            v-model:value="feedbackOriginalQuery"
+            :rows="2"
+            placeholder="访客的原始问题"
+          />
+        </div>
+
+        <div v-if="feedbackAnswerText">
+          <div class="mb-1 text-[13px] text-slate-500">被反馈的 AI 回复</div>
+          <div
+            class="max-h-24 overflow-auto rounded-md bg-slate-50 p-2 text-[12px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+          >
+            {{ feedbackAnswerText }}
+          </div>
+        </div>
+
+        <div v-if="feedbackType === 'WRONG_INTENT'">
+          <div class="mb-1 text-[13px] text-slate-500">正确意图</div>
+          <Input
+            v-model:value="feedbackCorrectIntent"
+            placeholder="应识别为的意图"
+          />
+        </div>
+
+        <div v-if="feedbackType === 'WRONG_ANSWER'">
+          <div class="mb-1 text-[13px] text-slate-500">正确答案</div>
+          <Input.TextArea
+            v-model:value="feedbackCorrectAnswer"
+            :rows="3"
+            placeholder="应回复的正确内容"
+          />
+        </div>
+      </div>
+    </Modal>
   </Page>
 </template>
