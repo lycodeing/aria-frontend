@@ -23,5 +23,11 @@
     "knowledge": "Knowledge Base",
     "agent": "Agent Workbench",
     "aiModels": "AI Model Config"
+  },
+  "stats": {
+    "title": "Observability",
+    "intent": "Intent Hit Rate",
+    "rag": "RAG Quality",
+    "llmCost": "LLM Token Cost"
   }
 }
