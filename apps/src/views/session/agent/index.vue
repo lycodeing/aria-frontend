@@ -618,8 +618,14 @@ function openFeedback(m: Msg) {
   const idx = msgs.findIndex((x) => x.id === m.id);
   let query = '';
   for (let i = idx - 1; i >= 0; i--) {
-    if (msgs[i]?.role === 'user') {
-      query = msgs[i]?.text ?? '';
+    const prev = msgs[i];
+    // 跳过后端序列化的 SystemMessage { text = "..." } 伪 user 消息，
+    // 只取真正的访客提问作为原始问题
+    if (
+      prev?.role === 'user' &&
+      !prev.text.trimStart().startsWith('SystemMessage {')
+    ) {
+      query = prev.text;
       break;
     }
   }
